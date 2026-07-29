@@ -28,8 +28,12 @@ export type SourceType =
   | "market_data"
   | "news";
 
-/** Filer type, resolved from the forms a company actually files. */
-export type FilerType = "domestic" | "foreign";
+/**
+ * Filer type, decided by which annual form a company actually files.
+ * domestic = 10-K, foreign = 20-F, canadian = 40-F (Multijurisdictional
+ * Disclosure System).
+ */
+export type FilerType = "domestic" | "foreign" | "canadian";
 
 /** Accounting taxonomy a figure was extracted from. */
 export type Taxonomy = "us-gaap" | "ifrs-full" | "dei";
@@ -79,6 +83,28 @@ export interface Company {
   sicCode: string | null;
   sector: string | null;
   fiscalYearEnd: string | null;
+  /** ISO 4217 code the filer reports in. Null when undetermined. */
+  reportingCurrency: string | null;
+}
+
+/** One possible match for an ambiguous query. Never silently chosen. */
+export interface Candidate {
+  cik: string;
+  ticker: string;
+  name: string;
+}
+
+export type ResolutionOutcome = "resolved" | "ambiguous" | "not_found";
+
+/**
+ * Result of resolving user input to a filer. When the input matches more than
+ * one entity the outcome is "ambiguous" and the interface must ask.
+ */
+export interface Resolution {
+  outcome: ResolutionOutcome;
+  query: string;
+  company: Company | null;
+  candidates: Candidate[];
 }
 
 export interface Filing {
@@ -88,6 +114,30 @@ export interface Filing {
   filedDate: string;
   periodOfReport: string | null;
   primaryDocUrl: string;
+}
+
+/** An exhibit attached to a filing, e.g. the EX-99.1 earnings release. */
+export interface ExhibitRef {
+  exhibitType: string;
+  description: string | null;
+  url: string;
+}
+
+/** A filing in the manifest, with absolute URLs and its accession number. */
+export interface FilingRef {
+  accessionNo: string;
+  cik: string;
+  /** As filed, including any amendment suffix: "10-K/A". */
+  form: string;
+  /** The form with any amendment suffix removed: "10-K". */
+  baseForm: string;
+  isAmendment: boolean;
+  filedDate: string;
+  periodOfReport: string | null;
+  primaryDocUrl: string;
+  filingIndexUrl: string;
+  items: string[];
+  exhibits: ExhibitRef[];
 }
 
 export type ReportStatus =

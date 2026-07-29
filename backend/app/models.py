@@ -40,10 +40,16 @@ class SourceType(StrEnum):
 
 
 class FilerType(StrEnum):
-    """Domestic filers file 10-K; foreign private issuers file 20-F or 40-F."""
+    """Decided by which annual form a filer actually files, never by guesswork.
+
+    DOMESTIC files 10-K. FOREIGN (a foreign private issuer) files 20-F.
+    CANADIAN files 40-F under the Multijurisdictional Disclosure System, which
+    permits Canadian-form disclosure and therefore needs its own handling.
+    """
 
     DOMESTIC = "domestic"
     FOREIGN = "foreign"
+    CANADIAN = "canadian"
 
 
 class Taxonomy(StrEnum):
@@ -121,10 +127,78 @@ class Company(BaseModel):
     name: str
     filer_type: FilerType
     sic_code: str | None = None
-    sector: str | None = None
-    fiscal_year_end: str | None = Field(
-        default=None, description="MMDD, as reported in dei:CurrentFiscalYearEndDate."
+    sector: str | None = Field(
+        default=None, description="SIC description, as EDGAR reports it."
     )
+    fiscal_year_end: str | None = Field(
+        default=None, description="MMDD, as EDGAR reports it in submissions."
+    )
+    reporting_currency: str | None = Field(
+        default=None,
+        description="ISO 4217 code the filer reports in. None when undetermined.",
+    )
+
+
+class Candidate(BaseModel):
+    """One possible match for an ambiguous query. Never silently chosen."""
+
+    model_config = ConfigDict(frozen=True)
+
+    cik: str
+    ticker: str
+    name: str
+
+
+class ResolutionOutcome(StrEnum):
+    RESOLVED = "resolved"
+    AMBIGUOUS = "ambiguous"
+    NOT_FOUND = "not_found"
+
+
+class Resolution(BaseModel):
+    """Result of resolving user input to a filer.
+
+    When the input matches more than one entity the outcome is AMBIGUOUS and
+    `candidates` is populated. The system does not pick one.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    outcome: ResolutionOutcome
+    query: str
+    company: Company | None = None
+    candidates: tuple[Candidate, ...] = ()
+
+
+class ExhibitRef(BaseModel):
+    """An exhibit attached to a filing, e.g. the EX-99.1 earnings release."""
+
+    model_config = ConfigDict(frozen=True)
+
+    exhibit_type: str
+    description: str | None = None
+    url: HttpUrl
+
+
+class FilingRef(BaseModel):
+    """A filing in the manifest, with absolute URLs and its accession number."""
+
+    model_config = ConfigDict(frozen=True)
+
+    accession_no: str
+    cik: str
+    #: As filed, including the amendment suffix: "10-K/A".
+    form: str
+    #: The form with any amendment suffix removed: "10-K".
+    base_form: str
+    is_amendment: bool
+    filed_date: dt.date
+    period_of_report: dt.date | None = None
+    primary_doc_url: HttpUrl
+    filing_index_url: HttpUrl
+    #: 8-K item numbers, as EDGAR reports them.
+    items: tuple[str, ...] = ()
+    exhibits: tuple[ExhibitRef, ...] = ()
 
 
 class Filing(BaseModel):

@@ -12,9 +12,14 @@ create extension if not exists "pgcrypto";
 -- Enumerated types
 -- ---------------------------------------------------------------------------
 
+-- domestic files 10-K, foreign files 20-F, canadian files 40-F under the
+-- Multijurisdictional Disclosure System.
 do $$ begin
-  create type filer_type as enum ('domestic', 'foreign');
+  create type filer_type as enum ('domestic', 'foreign', 'canadian');
 exception when duplicate_object then null; end $$;
+
+-- For databases created before 'canadian' existed.
+alter type filer_type add value if not exists 'canadian';
 
 do $$ begin
   create type source_type as enum (
@@ -57,6 +62,8 @@ create table if not exists companies (
   sic_code         text,
   sector           text,
   fiscal_year_end  text,
+  -- ISO 4217. Null when it could not be determined from XBRL units.
+  reporting_currency text,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
 
@@ -65,6 +72,9 @@ create table if not exists companies (
   constraint companies_fiscal_year_end_is_mmdd
     check (fiscal_year_end is null or fiscal_year_end ~ '^[0-9]{4}$')
 );
+
+-- For databases created before reporting_currency existed.
+alter table companies add column if not exists reporting_currency text;
 
 create unique index if not exists companies_ticker_key on companies (upper(ticker));
 create index if not exists companies_sic_code_idx on companies (sic_code);
