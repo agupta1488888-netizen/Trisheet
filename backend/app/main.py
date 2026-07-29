@@ -26,29 +26,28 @@ API_VERSION = "0.1.0"
 HEALTH_PATH = "/health"
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    settings = get_settings()
-    configure_logging(settings.log_level)
-
-    if not settings.edgar_configured:
-        # EDGAR is the only hard dependency. Warn loudly rather than crash, so
-        # that /health can report the condition instead of the process dying.
-        logger.warning(
-            "EDGAR contact email is not set; SEC requests will be refused",
-            extra={"setting": "EDGAR_CONTACT_EMAIL"},
-        )
-
-    logger.info(
-        "Tearsheet backend started", extra={"environment": settings.environment}
-    )
-    yield
-    logger.info("Tearsheet backend stopped")
-
-
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Builds the application. Accepts settings so tests can inject their own."""
     resolved = settings if settings is not None else get_settings()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        configure_logging(resolved.log_level)
+
+        if not resolved.edgar_configured:
+            # EDGAR is the only hard dependency. Warn loudly rather than crash,
+            # so /health can report the condition instead of the process dying.
+            logger.warning(
+                "EDGAR contact email is not set; SEC requests will be refused",
+                extra={"setting": "EDGAR_CONTACT_EMAIL"},
+            )
+
+        logger.info(
+            "Tearsheet backend started",
+            extra={"environment": resolved.environment},
+        )
+        yield
+        logger.info("Tearsheet backend stopped")
 
     app = FastAPI(
         title=API_TITLE,

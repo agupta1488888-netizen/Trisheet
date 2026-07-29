@@ -2,12 +2,13 @@
 # Python 3.11.
 
 fastapi==0.140.13
-uvicorn[standard]==0.51.0
+uvicorn[standard]==0.52.0
 pydantic==2.13.4
 pydantic-settings==2.14.2
 httpx==0.28.1
 pandas==3.0.5
-numpy==2.5.1
+# numpy 2.5 requires Python >= 3.12. 2.4.6 is the latest that supports 3.11.
+numpy==2.4.6
 lxml==6.1.1
 tenacity==9.1.4
 supabase==2.31.0

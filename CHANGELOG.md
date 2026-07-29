@@ -57,6 +57,17 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `.env.example` documenting every variable, `.gitignore`, root `README.md`
   and `docs/`.
 
+### Fixed
+
+- `backend/deps`: numpy pinned to 2.4.6, not 2.5.1. numpy 2.5 requires Python
+  3.12 and `CLAUDE.md` mandates 3.11, so the original pin was unresolvable.
+  uvicorn corrected to 0.52.0.
+- `backend/main`: the lifespan handler read process settings instead of the
+  settings injected into `create_app`, so a test that injected an unconfigured
+  EDGAR contact never exercised the warning path.
+- `backend`: `StrEnum` and `datetime.UTC` adopted, clearing ruff `UP042`
+  and `UP017`.
+
 ### Notes
 
 - `backend/app/logging_config.py` and `backend/pyproject.toml` are additions to

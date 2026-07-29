@@ -11,7 +11,7 @@ someone has to remember to run.
 from __future__ import annotations
 
 import datetime as dt
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
@@ -29,7 +29,7 @@ class SourceTier(IntEnum):
     NEWS = 4
 
 
-class SourceType(str, Enum):
+class SourceType(StrEnum):
     SEC_FILING = "sec_filing"
     SEC_XBRL = "sec_xbrl"
     COMPANY_SITE = "company_site"
@@ -39,20 +39,20 @@ class SourceType(str, Enum):
     NEWS = "news"
 
 
-class FilerType(str, Enum):
+class FilerType(StrEnum):
     """Domestic filers file 10-K; foreign private issuers file 20-F or 40-F."""
 
     DOMESTIC = "domestic"
     FOREIGN = "foreign"
 
 
-class Taxonomy(str, Enum):
+class Taxonomy(StrEnum):
     US_GAAP = "us-gaap"
     IFRS_FULL = "ifrs-full"
     DEI = "dei"
 
 
-class ReportStatus(str, Enum):
+class ReportStatus(StrEnum):
     QUEUED = "queued"
     RESOLVING = "resolving"
     EXTRACTING = "extracting"
