@@ -13,7 +13,8 @@ disallow_any_explicit = false
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["supabase.*"]
+# Neither ships type information; both are used behind our own typed wrappers.
+module = ["supabase.*", "lxml.*"]
 ignore_missing_imports = true
 
 [tool.ruff]
