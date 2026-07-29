@@ -30,6 +30,8 @@ next-env.d.ts
 .turbo/
 .vercel/
 .cache/
+# Cached EDGAR responses. Immutable and re-fetchable; never committed.
+.edgar_cache/
 
 # Editor and OS
 .DS_Store
