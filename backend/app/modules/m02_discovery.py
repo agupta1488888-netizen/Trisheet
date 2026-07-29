@@ -21,6 +21,7 @@ Responsibility
 Public interface
     build_manifest(company, client, include_exhibits) -> list[FilingRef]
     superseded_filings(company, client) -> list[FilingRef]
+    as_filings(refs) -> list[Filing]
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ from app.config import (
     SEC_ARCHIVES_BASE_URL,
     SEC_SUBMISSIONS_SHARD_URL_TEMPLATE,
 )
-from app.models import Company, ExhibitRef, FilingRef
+from app.models import Company, ExhibitRef, Filing, FilingRef
 from app.services.edgar import (
     EdgarClient,
     EdgarError,
@@ -378,6 +379,27 @@ async def build_manifest(
         },
     )
     return authoritative
+
+
+def as_filings(refs: list[FilingRef]) -> list[Filing]:
+    """Narrows the manifest to the `Filing` shape the extraction modules take.
+
+    m03 and m04 only need to address a document; the amendment flag, exhibits
+    and 8-K items that FilingRef carries are this module's concern and m08's,
+    not theirs. Converting here keeps that asymmetry in one place rather than
+    forcing every consumer to know about both shapes.
+    """
+    return [
+        Filing(
+            accession_no=ref.accession_no,
+            cik=ref.cik,
+            form=ref.form,
+            filed_date=ref.filed_date,
+            period_of_report=ref.period_of_report,
+            primary_doc_url=ref.primary_doc_url,
+        )
+        for ref in refs
+    ]
 
 
 async def superseded_filings(

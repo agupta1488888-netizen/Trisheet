@@ -14,6 +14,7 @@ from app.models import Company, FilerType
 from app.modules.m02_discovery import (
     DiscoveryError,
     apply_amendment_precedence,
+    as_filings,
     build_manifest,
     parse_exhibits,
     superseded_filings,
@@ -446,6 +447,30 @@ async def test_an_unreadable_index_does_not_lose_the_filing(
 
     assert len(manifest) == 1
     assert manifest[0].exhibits == ()
+
+
+# --- Handover to the extraction modules -------------------------------------
+
+
+def test_as_filings_preserves_identity_and_addressing() -> None:
+    refs = _refs(
+        [
+            ("0000320187-25-000020", "10-K/A", "2025-09-30", "2025-05-31"),
+            ("0000320187-25-000012", "8-K", "2025-06-26", ""),
+        ]
+    )
+
+    filings = as_filings(refs)
+
+    assert [filing.accession_no for filing in filings] == [
+        "0000320187-25-000020",
+        "0000320187-25-000012",
+    ]
+    # The amendment suffix survives: m03 dedupes on form and needs to see it.
+    assert filings[0].form == "10-K/A"
+    assert filings[0].period_of_report == dt.date(2025, 5, 31)
+    assert filings[1].period_of_report is None
+    assert str(filings[0].primary_doc_url).endswith("/doc.htm")
 
 
 # --- Helpers ----------------------------------------------------------------
