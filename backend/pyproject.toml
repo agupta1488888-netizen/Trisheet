@@ -1,0 +1,32 @@
+[project]
+name = "tearsheet-backend"
+version = "0.1.0"
+description = "Company profiles, sourced from filings."
+requires-python = ">=3.11"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+warn_return_any = true
+disallow_any_explicit = false
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["supabase.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "ANN", "T20"]
+# T20 bans print(); logging is always structured and goes through logging_config.
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

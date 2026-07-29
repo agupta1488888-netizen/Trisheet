@@ -1,0 +1,9 @@
+# Normalise line endings so the repository is identical on Windows, macOS and
+# the Linux builders on Vercel and Railway.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+*.xlsx binary

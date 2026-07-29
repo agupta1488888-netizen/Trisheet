@@ -1,0 +1,172 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ---------------------------------------------------------------------------
+   Tearsheet design language.
+
+   Every shadcn token below is remapped onto the Tearsheet palette so that
+   stock components inherit this document's language instead of the default
+   SaaS look. Do not reintroduce shadcn's neutral oklch ramp.
+   --------------------------------------------------------------------------- */
+
+@theme inline {
+  /* Tearsheet palette, exposed as first-class utilities:
+     bg-paper, text-ink, border-rule, text-certified, text-market, text-flag */
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-rule: var(--rule);
+  --color-certified: var(--certified);
+  --color-market: var(--market);
+  --color-flag: var(--flag);
+
+  /* Typography. Display = Fraunces, body = IBM Plex Sans, data = IBM Plex Mono. */
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
+  --font-display: var(--font-fraunces);
+  --font-heading: var(--font-fraunces);
+
+  /* shadcn surface tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Research documents are set on a grid of hairlines, not rounded cards.
+     Radius is near-square by design. Do not raise it. */
+  --radius-sm: 0px;
+  --radius-md: 1px;
+  --radius-lg: var(--radius);
+  --radius-xl: 3px;
+  --radius-2xl: 4px;
+  --radius-3xl: 5px;
+  --radius-4xl: 6px;
+}
+
+:root {
+  /* Source palette, per CLAUDE.md */
+  --paper: #fbfaf7;
+  --ink: #14201c;
+  --rule: #e2ded4;
+  --certified: #1f4d3d;
+  --market: #3e5c7a;
+  --flag: #9e3b26;
+
+  /* Derived surfaces: a single step deeper than paper, same hue family. */
+  --wash: #f3f1ea;
+  --ink-muted: #5a6560;
+
+  --radius: 2px;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--paper);
+  --card-foreground: var(--ink);
+  --popover: var(--paper);
+  --popover-foreground: var(--ink);
+  --primary: var(--certified);
+  --primary-foreground: var(--paper);
+  --secondary: var(--wash);
+  --secondary-foreground: var(--ink);
+  --muted: var(--wash);
+  --muted-foreground: var(--ink-muted);
+  --accent: var(--wash);
+  --accent-foreground: var(--ink);
+  --destructive: var(--flag);
+  --border: var(--rule);
+  --input: var(--rule);
+  --ring: var(--certified);
+
+  --chart-1: var(--certified);
+  --chart-2: var(--market);
+  --chart-3: var(--flag);
+  --chart-4: var(--ink-muted);
+  --chart-5: var(--ink);
+
+  --sidebar: var(--paper);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--certified);
+  --sidebar-primary-foreground: var(--paper);
+  --sidebar-accent: var(--wash);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--rule);
+  --sidebar-ring: var(--certified);
+}
+
+/* Light is the canonical mode. This block exists only so a forced dark
+   context degrades into the same palette inverted, never into stock shadcn. */
+.dark {
+  --paper: #101815;
+  --ink: #edeae1;
+  --rule: #2a3733;
+  --certified: #7fb59f;
+  --market: #90aecb;
+  --flag: #d0765d;
+  --wash: #182320;
+  --ink-muted: #9aa5a0;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "kern", "liga";
+  }
+  html {
+    @apply font-sans;
+  }
+  /* Section titles and the company name are set in the display face. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+}
+
+/* Figures are always right-aligned, monospace and tabular. Apply to any cell
+   or span that carries a number. */
+@utility figure {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Accession numbers, XBRL tags and tickers: monospace but not right-aligned. */
+@utility ref {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
