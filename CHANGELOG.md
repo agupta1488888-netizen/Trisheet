@@ -17,6 +17,54 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — EDGAR foundation (2026-07-29)
+
+- `models`: `FilerType.CANADIAN` for 40-F filers under the Multijurisdictional
+  Disclosure System, `Company.reporting_currency`, `Resolution` / `Candidate`
+  for ambiguous input, and `FilingRef` / `ExhibitRef` for the manifest. Schema
+  and `frontend/lib/types.ts` updated in step, both idempotently.
+- `edgar`: async httpx client enforcing the User-Agent, a process-wide token
+  bucket at 10 req/s, retries on 429 and 5xx with exponential backoff and
+  Retry-After taking precedence, and an on-disk cache that is permanent for
+  filings and ttl-bound for the ticker index and XBRL concepts. Failures are
+  typed; 404 is never retried. Cache hits bypass the limiter.
+- `m01`: resolves a ticker or a company name. Ambiguous input returns
+  candidates and resolves nothing; share classes of one filer still resolve.
+  Filer type comes from the annual form most recently filed, so a company that
+  migrated between form types is classified by what it files now, and a filer
+  with no annual report is refused rather than defaulted. Reporting currency is
+  read from the filer's own XBRL units, taking the code backing the most facts
+  so a convenience translation cannot outvote the real one.
+- `m02`: filing manifest with shard following, permitted-form filtering,
+  amendment precedence, and EX-99.1 / EX-99.2 exhibits read from the index type
+  column. Superseded filings stay reachable via `superseded_filings`.
+  `as_filings` narrows the manifest to the `Filing` shape m03 and m04 take.
+- `cli`: `python -m app.cli resolve|discover <query>`, writing to stdout so the
+  ban on `print()` stays absolute in application code.
+- 55 tests across the EDGAR client, m01 and m02, covering the limiter under
+  concurrency, retry and cache behaviour, ambiguity, filer-type detection and
+  amendment precedence.
+
+### Notes — live verification (2026-07-29)
+
+Run against live EDGAR. Results worth recording because two contradict the
+brief:
+
+- NKE — domestic, 10-K, USD, fiscal year ending 31 May. 419 filings after
+  precedence, 32 annual reports, EX-99.1 resolved on real 8-K indexes.
+- TSM — foreign, 20-F, TWD. 1117 filings, 1092 of them 6-K.
+- SHOP — **domestic, 10-K, USD, not Canadian/40-F.** Shopify filed 20-F for
+  2015, 40-F for 2016 through 2023, and has filed 10-K since. Classifying it
+  by its latest annual form is correct; the 40-F expectation is out of date.
+- CNI — canadian, 40-F, CAD. Added as the live check of the 40-F path that
+  SHOP no longer provides.
+- ENB — domestic, 10-K, **CAD**. Confirms filer type and reporting currency are
+  independent: a 10-K filer need not report in USD.
+
+TSM's monthly 6-K filings carry no EX-99.x exhibit — the content sits in the
+primary document. Verified against raw indexes, so the empty exhibit list is
+accurate rather than a parser miss.
+
 ### Added
 
 - Project constitution in `CLAUDE.md`: non-negotiable architectural rules,
