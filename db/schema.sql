@@ -37,6 +37,20 @@ do $$ begin
   create type taxonomy as enum ('us-gaap', 'ifrs-full', 'dei');
 exception when duplicate_object then null; end $$;
 
+-- How a fact came to exist. Part of provenance: a reader who disputes a figure
+-- needs to know whether it was read off a filing, parsed out of prose or
+-- computed before they know which part of the pipeline to distrust.
+do $$ begin
+  create type extraction_method as enum (
+    'xbrl_company_facts',
+    'xbrl_dimensional',
+    'narrative',
+    'calculated',
+    'market_data',
+    'not_disclosed'
+  );
+exception when duplicate_object then null; end $$;
+
 do $$ begin
   create type report_status as enum (
     'queued',
@@ -48,6 +62,24 @@ do $$ begin
     'complete',
     'failed'
   );
+exception when duplicate_object then null; end $$;
+
+-- How far the pipeline goes. Depth changes how many periods are extracted and
+-- which optional modules run; it never changes a provenance rule.
+do $$ begin
+  create type analysis_depth as enum ('brief', 'standard', 'full');
+exception when duplicate_object then null; end $$;
+
+-- Where one pipeline step got to. 'skipped' is not 'failed': an optional
+-- source with nothing to give is a finding about the filer, not an error.
+do $$ begin
+  create type step_state as enum (
+    'pending', 'running', 'done', 'skipped', 'failed'
+  );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type artifact_kind as enum ('pdf', 'xlsx');
 exception when duplicate_object then null; end $$;
 
 -- ---------------------------------------------------------------------------
@@ -116,9 +148,43 @@ create table if not exists reports (
     check (status <> 'failed' or error_message is not null)
 );
 
+-- Run accounting. Added nullable because a report that already ran has no way
+-- to know what it cost, and guessing is exactly what this system does not do.
+--
+-- These columns are what the monitoring endpoint aggregates. They are stored
+-- per report rather than recomputed on read because a report's cost is a fact
+-- about that run: re-deriving it later from a price list that has since changed
+-- would quietly restate history.
+alter table reports add column if not exists depth analysis_depth not null default 'standard';
+alter table reports add column if not exists started_at timestamptz;
+-- End-to-end wall time. The latency figure; p95 is taken over this column.
+alter table reports add column if not exists duration_ms integer;
+alter table reports add column if not exists fact_count integer;
+alter table reports add column if not exists figure_count integer;
+alter table reports add column if not exists cited_figure_count integer;
+-- Citation coverage as m11 measured it, 0-1. Never recomputed downstream.
+alter table reports add column if not exists coverage_ratio numeric;
+alter table reports add column if not exists compliance_passed boolean;
+alter table reports add column if not exists input_tokens integer;
+alter table reports add column if not exists output_tokens integer;
+-- Model spend for this report, in US dollars, priced at the rates in force
+-- when the run happened.
+alter table reports add column if not exists cost_usd numeric;
+
+alter table reports drop constraint if exists reports_coverage_ratio_range;
+alter table reports add constraint reports_coverage_ratio_range
+  check (coverage_ratio is null or coverage_ratio between 0 and 1);
+
+alter table reports drop constraint if exists reports_duration_not_negative;
+alter table reports add constraint reports_duration_not_negative
+  check (duration_ms is null or duration_ms >= 0);
+
 create index if not exists reports_ticker_created_idx
   on reports (upper(ticker), created_at desc);
 create index if not exists reports_status_idx on reports (status);
+-- The monitoring window is "settled runs, newest first".
+create index if not exists reports_completed_at_idx
+  on reports (completed_at desc nulls last);
 
 -- ---------------------------------------------------------------------------
 -- facts
@@ -142,12 +208,22 @@ create table if not exists facts (
   period_end     date        not null,
   fiscal_year    integer,
 
+  -- Segmentation. Null for a consolidated figure, which is what the sum of its
+  -- segments must match. Set together or not at all.
+  segment_axis   text,
+  segment_member text,
+  segment_label  text,
+
   -- Provenance. Not one of these is nullable, by design.
-  tier           smallint    not null,
-  source_type    source_type not null,
-  source_url     text        not null,
-  accession_no   text        not null,
-  filed_date     date        not null,
+  tier              smallint          not null,
+  source_type       source_type       not null,
+  source_url        text              not null,
+  accession_no      text              not null,
+  filed_date        date              not null,
+  extraction_method extraction_method not null,
+  -- How far down the tag fallback ladder the figure was found. 1.0 is an exact
+  -- hit on the metric's preferred tag; a NOT_DISCLOSED marker carries 0.
+  confidence        numeric           not null,
 
   -- Extraction trail.
   resolved_tag   text,
@@ -158,6 +234,7 @@ create table if not exists facts (
   created_at     timestamptz not null default now(),
 
   constraint facts_tier_range check (tier between 1 and 4),
+  constraint facts_confidence_range check (confidence between 0 and 1),
   -- A derived figure is rendered with its formula, or it is not rendered.
   constraint facts_calculated_has_formula
     check (not is_calculated or formula is not null),
@@ -165,17 +242,39 @@ create table if not exists facts (
   constraint facts_display_value_not_blank check (length(trim(display_value)) > 0),
   constraint facts_source_url_not_blank check (length(trim(source_url)) > 0),
   constraint facts_accession_no_not_blank check (length(trim(accession_no)) > 0),
-  -- One value per metric per period per report. NULLS NOT DISTINCT so that
-  -- instant facts, which have no period_start, cannot be inserted twice.
+  -- A member without its axis is unattributable.
+  constraint facts_segment_axis_and_member
+    check ((segment_axis is null) = (segment_member is null)),
+  -- Nothing is estimated: a fact marked not disclosed carries no value.
+  constraint facts_not_disclosed_has_no_value
+    check (extraction_method <> 'not_disclosed' or value is null),
+  -- One value per metric per period per segment per report. NULLS NOT DISTINCT
+  -- so that instant facts, which have no period_start, and consolidated facts,
+  -- which have no segment, cannot be inserted twice.
   -- Requires Postgres 15 or later.
   constraint facts_unique_metric_period
-    unique nulls not distinct (report_id, metric, period_end, period_start)
+    unique nulls not distinct (
+      report_id, metric, period_end, period_start, segment_axis, segment_member
+    )
 );
+
+-- For databases created before these columns existed. New columns are added
+-- nullable first, then filled, because an existing row has no way to know how
+-- it was extracted — and guessing is exactly what this system does not do.
+alter table facts add column if not exists segment_axis text;
+alter table facts add column if not exists segment_member text;
+alter table facts add column if not exists segment_label text;
+alter table facts add column if not exists extraction_method extraction_method;
+alter table facts add column if not exists confidence numeric;
 
 create index if not exists facts_report_metric_idx on facts (report_id, metric);
 create index if not exists facts_report_tier_idx on facts (report_id, tier);
 create index if not exists facts_accession_idx on facts (accession_no);
 create index if not exists facts_period_end_idx on facts (report_id, period_end desc);
+create index if not exists facts_report_fiscal_year_idx
+  on facts (report_id, fiscal_year);
+create index if not exists facts_segment_idx
+  on facts (report_id, metric, segment_axis);
 
 -- ---------------------------------------------------------------------------
 -- market_cache
@@ -213,9 +312,96 @@ create table if not exists run_logs (
     check (level in ('DEBUG', 'INFO', 'WARNING', 'ERROR'))
 );
 
+-- Step accounting, first class.
+--
+-- The same step event is also written into `context.step`, which is the shape
+-- the browser's progress feed parses. That is deliberate duplication with one
+-- reason each way: aggregation wants columns it can index and percentile over,
+-- and Realtime wants one row the client can render without a join. Both are
+-- written from the same struct in app/services/runlog.py, so they cannot
+-- disagree.
+alter table run_logs add column if not exists step text;
+alter table run_logs add column if not exists state step_state;
+alter table run_logs add column if not exists duration_ms integer;
+-- What the step produced: 142 facts, 31 filings. Never a percentage.
+alter table run_logs add column if not exists count integer;
+
+alter table run_logs drop constraint if exists run_logs_duration_not_negative;
+alter table run_logs add constraint run_logs_duration_not_negative
+  check (duration_ms is null or duration_ms >= 0);
+
+-- A settled step states how long it took. A step still running has no duration
+-- yet, and one that never started has none to state.
+alter table run_logs drop constraint if exists run_logs_settled_has_duration;
+alter table run_logs add constraint run_logs_settled_has_duration
+  check (
+    state is null
+    or state in ('pending', 'running')
+    or duration_ms is not null
+  );
+
 create index if not exists run_logs_report_created_idx
   on run_logs (report_id, created_at desc);
 create index if not exists run_logs_level_idx on run_logs (level);
+create index if not exists run_logs_step_idx on run_logs (step, state);
+
+-- ---------------------------------------------------------------------------
+-- artifacts
+--
+-- The rendered outputs. Rows exist only for artifacts that were built; an
+-- artifact that could not be rendered is reported on the report, not stored
+-- here as an empty row.
+-- ---------------------------------------------------------------------------
+
+create table if not exists artifacts (
+  id            uuid primary key default gen_random_uuid(),
+  report_id     uuid          not null references reports (id) on delete cascade,
+  kind          artifact_kind not null,
+  -- Path within the storage bucket. The URL may expire; this does not.
+  storage_path  text          not null,
+  url           text,
+  size_bytes    integer       not null,
+  content_type  text          not null,
+  created_at    timestamptz   not null default now(),
+
+  constraint artifacts_size_positive check (size_bytes > 0),
+  -- One current artifact of each kind per report. A re-run replaces it.
+  constraint artifacts_unique_kind unique (report_id, kind)
+);
+
+create index if not exists artifacts_report_idx on artifacts (report_id);
+
+-- ---------------------------------------------------------------------------
+-- report_runs
+--
+-- The monitoring view, for humans reading the database directly. The /metrics
+-- endpoint does not read this: it aggregates the underlying rows in Python, so
+-- that the figures it publishes and the figures here are computed from the same
+-- columns rather than by two dialects that could drift.
+-- ---------------------------------------------------------------------------
+
+create or replace view report_runs as
+select
+  r.id,
+  r.ticker,
+  r.cik,
+  r.status,
+  r.depth,
+  r.created_at,
+  r.completed_at,
+  r.duration_ms,
+  r.fact_count,
+  r.figure_count,
+  r.cited_figure_count,
+  r.coverage_ratio,
+  r.compliance_passed,
+  r.input_tokens,
+  r.output_tokens,
+  r.cost_usd,
+  (select count(*) from artifacts a where a.report_id = r.id) as artifact_count,
+  (select count(*) from run_logs l
+    where l.report_id = r.id and l.state = 'failed') as failed_steps
+from reports r;
 
 -- ---------------------------------------------------------------------------
 -- updated_at maintenance
@@ -250,6 +436,7 @@ alter table reports      enable row level security;
 alter table facts        enable row level security;
 alter table market_cache enable row level security;
 alter table run_logs     enable row level security;
+alter table artifacts    enable row level security;
 
 drop policy if exists companies_read on companies;
 create policy companies_read on companies
@@ -267,4 +454,51 @@ drop policy if exists facts_read on facts;
 create policy facts_read on facts
   for select to anon, authenticated using (true);
 
--- market_cache and run_logs carry no policies: no browser role can read them.
+drop policy if exists artifacts_read on artifacts;
+create policy artifacts_read on artifacts
+  for select to anon, authenticated using (true);
+
+-- run_logs is readable because the progress feed streams it over Realtime.
+-- It carries no figures — only step names, states and counts — so nothing here
+-- exposes a fact that has not passed the provenance gate.
+drop policy if exists run_logs_read on run_logs;
+create policy run_logs_read on run_logs
+  for select to anon, authenticated using (true);
+
+-- market_cache carries no policy: no browser role can read it.
+
+-- ---------------------------------------------------------------------------
+-- Realtime
+--
+-- The progress feed subscribes to run_logs inserts and reports updates. Both
+-- must be in the publication or the browser silently falls back to polling.
+-- ---------------------------------------------------------------------------
+
+do $$ begin
+  alter publication supabase_realtime add table run_logs;
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter publication supabase_realtime add table reports;
+exception when duplicate_object then null; end $$;
+
+-- An UPDATE payload carries only the changed columns unless the row's replica
+-- identity is full. The feed reads status and error_message off the payload,
+-- so it needs the whole row.
+alter table reports replica identity full;
+
+-- ---------------------------------------------------------------------------
+-- Storage
+--
+-- One public bucket for rendered reports. Public because a tearsheet is a
+-- document meant to be handed to someone; nothing in it is private that was not
+-- already public on EDGAR. Writes come only from the service role.
+-- ---------------------------------------------------------------------------
+
+insert into storage.buckets (id, name, public)
+values ('reports', 'reports', true)
+on conflict (id) do update set public = excluded.public;
+
+drop policy if exists report_artifacts_read on storage.objects;
+create policy report_artifacts_read on storage.objects
+  for select to anon, authenticated using (bucket_id = 'reports');
