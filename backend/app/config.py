@@ -1151,6 +1151,13 @@ PEER_TARGET_COUNT = 8
 #: Hard ceiling on peers returned, however many rungs contributed.
 PEER_MAX_COUNT = 12
 
+#: Peers given a full financial and valuation comparison. Smaller than
+#: PEER_MAX_COUNT on purpose: a comparison reads the peer's own filings and
+#: fetches its own quote, so it costs a full extraction per name rather than a
+#: mention in a proxy. An analyst's comp table is a handful of names, not the
+#: whole ladder.
+PEER_COMPARISON_MAX_COUNT = 5
+
 #: Names harvested from one document before the scan gives up. A proxy that
 #: mentions two hundred companies is not naming a peer group.
 PEER_MAX_NAMES_PER_DOCUMENT = 60

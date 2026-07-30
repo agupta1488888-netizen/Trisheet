@@ -68,6 +68,8 @@ from app.models import (
     FilingRef,
     GeneratedReport,
     PeerSet,
+    PeerValuationPoint,
+    PeerValuationSeries,
     ProseBlock,
     Report,
     ReportCharts,
@@ -80,7 +82,7 @@ from app.models import (
     SegmentMixSeries,
     SeriesMeta,
 )
-from app.modules import m04_narrative
+from app.modules import m04_narrative, m08_peers
 from app.services import storage
 
 if TYPE_CHECKING:
@@ -373,6 +375,7 @@ class AssemblyInput:
     compliance: ComplianceReport
     prose: GeneratedReport | None = None
     peers: PeerSet | None = None
+    peer_comparison: m08_peers.PeerComparison | None = None
     events: Sequence[DevelopmentEvent] = ()
     artifacts: Sequence[ArtifactRef] = ()
 
@@ -872,17 +875,20 @@ def _segment_table(index: _Index, cited: list[str]) -> FigureTable | None:
 def _peers_section(
     inputs: AssemblyInput, index: _Index, cited: list[str]
 ) -> DocumentSection:
-    """Comparable companies, each with how it was chosen."""
+    """Comparable companies: how each was chosen, and how they compare."""
     rows: list[FigureRow] = []
     for metric, fact in sorted(index.latest.items()):
-        if not metric.startswith("peer."):
+        # Scoped to the selection-note facts specifically. The comparison
+        # table's own facts also start with "peer." and are rendered
+        # separately by `_peer_comparison_table`, not as a flat list here.
+        if not metric.startswith("peer.company."):
             continue
         cited.append(fact.fact_id)
         rows.append(
             FigureRow(label=fact.label, fact_ids=(fact.fact_id,))
         )
 
-    tables: tuple[FigureTable, ...] = ()
+    tables: list[FigureTable] = []
     if rows:
         note = "How each peer was selected is stated beside it."
         if inputs.peers is not None and inputs.peers.has_fiscal_year_mismatch:
@@ -890,22 +896,83 @@ def _peers_section(
                 f"{note} One or more peers closes its books at a materially "
                 "different time, which is disclosed on the peer."
             )
-        tables = (
+        tables.append(
             FigureTable(
                 id="peers-list",
                 caption="Comparable companies",
                 periods=("Selection",),
                 rows=tuple(rows),
                 unit_note=note,
-            ),
+            )
         )
+
+    comparison_table = _peer_comparison_table(inputs.peer_comparison, cited)
+    if comparison_table is not None:
+        tables.append(comparison_table)
 
     return DocumentSection(
         id=SectionId.PEERS,
         title=_SECTION_TITLES[SectionId.PEERS],
         unavailable_reason=None if tables else _UNAVAILABLE[SectionId.PEERS],
         prose=_prose_blocks(inputs, SectionId.PEERS, cited),
-        tables=tables,
+        tables=tuple(tables),
+    )
+
+
+def _peer_comparison_table(
+    comparison: m08_peers.PeerComparison | None, cited: list[str]
+) -> FigureTable | None:
+    """Revenue, margin and growth for the subject and each peer, side by side.
+
+    Columns are companies rather than fiscal periods — `FigureTable.periods`
+    is reused as the column headers, the same way `peers-list` above reuses it
+    for "Selection". Each row's `fact_ids` line up positionally with those
+    columns; a company missing a figure gets None in that slot; the frontend
+    already reads a None fact id as a blank cell, not a zero.
+    """
+    if comparison is None or not comparison.rows:
+        return None
+
+    metric_rows: tuple[
+        tuple[str, Callable[[m08_peers.PeerComparisonRow], Fact | None]], ...
+    ] = (
+        ("Revenue", lambda row: row.revenue),
+        ("Net margin", lambda row: row.net_margin),
+        ("Operating margin", lambda row: row.operating_margin),
+        ("Revenue growth, year on year", lambda row: row.revenue_growth),
+    )
+
+    rows: list[FigureRow] = []
+    for label, getter in metric_rows:
+        fact_ids: list[str | None] = []
+        any_present = False
+        for row in comparison.rows:
+            fact = getter(row)
+            if fact is None:
+                fact_ids.append(None)
+                continue
+            cited.append(fact.fact_id)
+            fact_ids.append(fact.fact_id)
+            any_present = True
+        if any_present:
+            rows.append(FigureRow(label=label, fact_ids=tuple(fact_ids)))
+
+    if not rows:
+        return None
+
+    note = (
+        "Each company's own figures, read from its own SEC filings the same "
+        "way the subject's are."
+    )
+    if comparison.notes:
+        note = f"{note} {' '.join(comparison.notes)}"
+
+    return FigureTable(
+        id="peers-comparison",
+        caption="Financial comparison",
+        periods=tuple(row.ticker for row in comparison.rows),
+        rows=tuple(rows),
+        unit_note=note,
     )
 
 
@@ -983,9 +1050,47 @@ def _charts(inputs: AssemblyInput, index: _Index) -> ReportCharts:
         revenue_margin=_revenue_margin_series(index),
         segment_mix=_segment_mix_series(index),
         cash_flow=_cash_flow_series(index),
-        # Peer multiples would need market data for every peer, which would
-        # mean a quote request per comparable. Absent rather than approximated.
-        peer_valuation=None,
+        peer_valuation=_peer_valuation_series(inputs.peer_comparison),
+    )
+
+
+def _peer_valuation_series(
+    comparison: m08_peers.PeerComparison | None,
+) -> PeerValuationSeries | None:
+    """Price to earnings and EV to EBITDA for the subject and its peers.
+
+    Values are already the multiple m08 computed — "times", not currency —
+    so they are read straight off the fact rather than passed through
+    `_scaled`, which would apply the currency-millions scaling this series
+    does not use.
+    """
+    if comparison is None:
+        return None
+
+    points: list[PeerValuationPoint] = []
+    ids: list[str] = []
+
+    for row in comparison.rows:
+        pe, ev = row.price_to_earnings, row.ev_to_ebitda
+        if pe is None and ev is None:
+            continue
+        ids.extend(fact.fact_id for fact in (pe, ev) if fact is not None)
+        points.append(
+            PeerValuationPoint(
+                ticker=row.ticker,
+                name=row.name,
+                is_subject=row.is_subject,
+                price_to_earnings=pe.value if pe is not None else None,
+                ev_to_ebitda=ev.value if ev is not None else None,
+            )
+        )
+
+    if not points:
+        return None
+
+    return PeerValuationSeries(
+        meta=SeriesMeta(unit_label="Times", fact_ids=tuple(ids)),
+        points=tuple(points),
     )
 
 

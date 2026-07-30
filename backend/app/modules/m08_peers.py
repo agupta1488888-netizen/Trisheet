@@ -47,12 +47,14 @@ Degradation
 Public interface
     select_peers(company, manifest, client) -> PeerSet
     peer_facts(peer_set) -> list[Fact]
+    build_peer_comparison(company, peer_set, subject_facts, client) -> PeerComparison
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -62,12 +64,14 @@ from lxml import etree
 
 from app.config import (
     AMENDMENT_FORM_SUFFIX,
+    ANALYSIS_ZERO_TOLERANCE,
     ANNUAL_FORM_TO_FILER_TYPE,
     ATOM_NAMESPACE,
     COMPETITION_MARKERS,
     DAYS_IN_YEAR,
     FISCAL_YEAR_END_TOLERANCE_DAYS,
     MAX_FILING_TEXT_BYTES,
+    PEER_COMPARISON_MAX_COUNT,
     PEER_CONTEXT_WINDOW_CHARS,
     PEER_GROUP_MARKERS,
     PEER_LLM_MAX_SUGGESTIONS,
@@ -78,8 +82,11 @@ from app.config import (
     PEER_NAME_STOPWORDS,
     PEER_TARGET_COUNT,
     PROXY_FORM,
+    RATIO_DECIMAL_PLACES,
     SIC_BROWSE_PAGE_SIZE,
     SIC_BROWSE_TTL_SECONDS,
+    TIMES_DISPLAY_TEMPLATE,
+    UNIT_TIMES,
 )
 from app.models import (
     Company,
@@ -93,7 +100,14 @@ from app.models import (
     SourceTier,
     SourceType,
 )
-from app.modules.m01_resolver import IndexEntry, load_index, normalise_name
+from app.modules import m02_discovery, m03_financials, m05_market
+from app.modules.m01_resolver import (
+    IndexEntry,
+    load_company,
+    load_index,
+    normalise_name,
+)
+from app.modules.m07_analysis import compute_derived_metrics
 from app.services import document, llm
 from app.services.edgar import (
     EdgarClient,
@@ -1035,3 +1049,361 @@ def peer_facts(peer_set: PeerSet, subject: Company) -> list[Fact]:
             )
 
     return facts
+
+
+# --- Peer comparison: financials and valuation, side by side ----------------
+
+
+@dataclass(frozen=True, slots=True)
+class PeerComparisonRow:
+    """One company's line in the comparison table: the subject or a peer.
+
+    Revenue, margin and growth are read from that company's own SEC filings —
+    the subject's from facts already extracted upstream, a peer's from a fresh
+    read of its own filings, exactly as m03 and m07 build them for the
+    subject. Valuation multiples additionally need a live quote, which is why
+    they carry tier 3 while the financials beside them stay tier 1: the row is
+    only as trustworthy as its shakiest cell, and a reader should be able to
+    tell which cells those are.
+    """
+
+    ticker: str
+    name: str
+    is_subject: bool
+    revenue: Fact | None = None
+    net_margin: Fact | None = None
+    operating_margin: Fact | None = None
+    revenue_growth: Fact | None = None
+    price_to_earnings: Fact | None = None
+    ev_to_ebitda: Fact | None = None
+
+    @property
+    def facts(self) -> tuple[Fact, ...]:
+        return tuple(
+            fact
+            for fact in (
+                self.revenue,
+                self.net_margin,
+                self.operating_margin,
+                self.revenue_growth,
+                self.price_to_earnings,
+                self.ev_to_ebitda,
+            )
+            if fact is not None
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PeerComparison:
+    """The comparison table: the subject's row, then each peer that answered.
+
+    A peer that could not be compared is not silently missing a row — its
+    ticker and the reason are in `notes`, the same way a ladder rung that
+    named nothing is reported in `PeerSet.notes` rather than left unexplained.
+    """
+
+    rows: tuple[PeerComparisonRow, ...]
+    notes: tuple[str, ...] = ()
+
+    @property
+    def facts(self) -> list[Fact]:
+        """Every fact behind the table, for the provenance gate and the rail."""
+        return [fact for row in self.rows for fact in row.facts]
+
+
+#: (source metric, row attribute) for the figures copied onto each row.
+_COMPARISON_METRICS: tuple[tuple[str, str], ...] = (
+    ("income.revenue", "revenue"),
+    ("margin.net", "net_margin"),
+    ("margin.operating", "operating_margin"),
+    ("growth.income.revenue.yoy", "revenue_growth"),
+)
+
+#: How each valuation multiple reads when relabelled onto a row.
+_VALUATION_LABELS: dict[str, str] = {
+    "price_to_earnings": "Price to earnings",
+    "ev_to_ebitda": "EV to EBITDA",
+}
+
+
+async def build_peer_comparison(
+    company: Company,
+    peer_set: PeerSet,
+    subject_facts: Sequence[Fact],
+    client: EdgarClient,
+    *,
+    max_peers: int = PEER_COMPARISON_MAX_COUNT,
+) -> PeerComparison:
+    """Revenue, margin, growth and valuation for the subject and its peers.
+
+    Every company's financials come from its own SEC filings, read the same
+    way the subject's are: m03 extracts, m07 derives the ratios. Nothing here
+    invents a number a filer did not report, and a peer whose filings cannot
+    be read is dropped with a stated reason rather than shown with a gap
+    quietly filled in.
+
+    Valuation multiples need one more thing a filing cannot give: a live
+    price. That figure comes from m05, the one module permitted to hold one,
+    which is the only reason a fact in this table is ever tier 3.
+
+    Args:
+        company: The subject. Its own comparison row is built from facts
+            already extracted upstream, so the subject costs no extra fetch.
+        peer_set: Peers from `select_peers`, in the order they were accepted.
+        subject_facts: The subject's own facts, reported and derived, from
+            earlier in the same run.
+        client: The shared EDGAR client.
+        max_peers: How many peers to fetch a full comparison for. A full
+            filing read per comparable is not free, and an analyst's comp
+            table is a handful of names, not the whole ladder.
+
+    Returns:
+        A row for the subject and for every peer that could be read. Never
+        raises: a company that cannot be compared costs its own row, not the
+        table.
+    """
+    rows: list[PeerComparisonRow] = [
+        _row_from_facts(
+            ticker=company.ticker,
+            name=company.name,
+            is_subject=True,
+            facts=subject_facts,
+        )
+    ]
+    notes: list[str] = []
+
+    for peer in peer_set.peers[:max_peers]:
+        row = await _peer_comparison_row(client, peer)
+        if row is None:
+            notes.append(
+                f"{peer.ticker}: could not read comparable figures from its "
+                "own filings."
+            )
+            continue
+        rows.append(row)
+
+    logger.info(
+        "Peer comparison built",
+        extra={
+            "cik": company.cik,
+            "rows": len(rows),
+            "peers_attempted": min(len(peer_set.peers), max_peers),
+        },
+    )
+    return PeerComparison(rows=tuple(rows), notes=tuple(notes))
+
+
+async def _peer_comparison_row(
+    client: EdgarClient, peer: Peer
+) -> PeerComparisonRow | None:
+    """One peer's comparison row, built the same way the subject's is.
+
+    Returns None on any failure to read the peer's own filings or to extract
+    a usable figure from them — a filer with nothing to show is not shown
+    with blanks standing in for it.
+    """
+    try:
+        peer_company = await load_company(client, peer.cik, ticker=peer.ticker)
+        manifest = await m02_discovery.build_manifest(
+            peer_company, client, include_exhibits=False
+        )
+    except (EdgarError, m02_discovery.DiscoveryError) as cause:
+        logger.warning(
+            "Could not build a filing manifest for a peer comparison",
+            extra={"cik": peer.cik, "ticker": peer.ticker, "error": str(cause)},
+        )
+        return None
+
+    reported = await m03_financials.extract_financials(
+        peer_company, m02_discovery.as_filings(manifest)
+    )
+    if not any(fact.value is not None for fact in reported):
+        logger.info(
+            "No reported figures for peer comparison",
+            extra={"cik": peer.cik, "ticker": peer.ticker},
+        )
+        return None
+
+    facts: list[Fact] = [
+        *reported,
+        *compute_derived_metrics(reported, sic_code=peer_company.sic_code),
+    ]
+    # Market data is optional everywhere in this system; a peer with no quote
+    # still gets its financial cells, just no valuation multiple.
+    facts.extend(await m05_market.fetch_market_data(peer_company))
+
+    return _row_from_facts(
+        ticker=peer.ticker, name=peer.name, is_subject=False, facts=facts
+    )
+
+
+def _row_from_facts(
+    *, ticker: str, name: str, is_subject: bool, facts: Sequence[Fact]
+) -> PeerComparisonRow:
+    """Builds one row from a company's own facts, relabelled for this table.
+
+    Relabelling gives each figure a metric name unique to this company within
+    the report — the same reason `peer_facts` embeds a ticker in its own
+    metric template — so a peer's revenue and the subject's revenue are two
+    facts, not one overwriting the other in the fact store.
+    """
+    latest = _latest_by_metric(facts)
+
+    values = {
+        attribute: _relabel(latest.get(metric), ticker, metric)
+        for metric, attribute in _COMPARISON_METRICS
+    }
+
+    return PeerComparisonRow(
+        ticker=ticker,
+        name=name,
+        is_subject=is_subject,
+        price_to_earnings=_price_to_earnings(latest, ticker),
+        ev_to_ebitda=_ev_to_ebitda(latest, ticker),
+        **values,
+    )
+
+
+def _latest_by_metric(facts: Sequence[Fact]) -> dict[str, Fact]:
+    """The most recent, non-segment fact for each metric a company reported."""
+    latest: dict[str, Fact] = {}
+    for fact in facts:
+        if fact.value is None or fact.segment_member is not None:
+            continue
+        incumbent = latest.get(fact.metric)
+        if incumbent is None or fact.period_end > incumbent.period_end:
+            latest[fact.metric] = fact
+    return latest
+
+
+def _relabel(fact: Fact | None, ticker: str, metric: str) -> Fact | None:
+    """Renames a fact into this table's namespace, without changing its value.
+
+    Provenance is untouched — same source, same tier, same accession. Only the
+    identity changes, which is what lets the same metric from two different
+    companies sit in one shared report without one overwriting the other.
+    """
+    if fact is None:
+        return None
+    return fact.model_copy(
+        update={
+            "metric": f"peer.comparison.{ticker}.{metric}",
+            "label": f"{ticker} — {fact.label}",
+        }
+    )
+
+
+def _ratio(numerator: float, denominator: float) -> float | None:
+    """A quotient, or None when the denominator is too near zero to mean much.
+
+    Uses the same tolerance m07 divides by rather than a second one invented
+    here, so "too close to zero to divide by" means the same thing everywhere
+    arithmetic happens in this system.
+    """
+    if abs(denominator) < ANALYSIS_ZERO_TOLERANCE:
+        return None
+    result = numerator / denominator
+    return result if math.isfinite(result) else None
+
+
+def _valuation_fact(
+    *,
+    ticker: str,
+    metric: str,
+    value: float | None,
+    formula: str,
+    sources: Sequence[Fact],
+) -> Fact | None:
+    """One valuation multiple, tiered and anchored the way m07 derives a fact.
+
+    Tier is the highest — least trusted — tier among the inputs: a multiple
+    built from a filing and a live quote is only as sound as the quote. The
+    anchor (source, accession, filed date) is whichever input is freshest,
+    which is always the quote here — a multiple is "as of" the price, not the
+    filing beneath it.
+    """
+    if value is None or not math.isfinite(value):
+        return None
+
+    anchor = max(sources, key=lambda f: (f.filed_date, f.accession_no))
+    rounded = round(value, RATIO_DECIMAL_PLACES)
+
+    return Fact(
+        metric=f"peer.comparison.{ticker}.{metric}",
+        label=f"{ticker} — {_VALUATION_LABELS[metric]}",
+        value=rounded,
+        display_value=TIMES_DISPLAY_TEMPLATE.format(value=rounded),
+        unit=UNIT_TIMES,
+        period_start=None,
+        period_end=anchor.period_end,
+        fiscal_year=None,
+        tier=SourceTier(max(int(source.tier) for source in sources)),
+        source_type=anchor.source_type,
+        source_url=str(anchor.source_url),
+        accession_no=anchor.accession_no,
+        filed_date=anchor.filed_date,
+        extraction_method=ExtractionMethod.CALCULATED,
+        confidence=min(source.confidence for source in sources),
+        is_calculated=True,
+        formula=formula,
+    )
+
+
+def _price_to_earnings(latest: dict[str, Fact], ticker: str) -> Fact | None:
+    """Market capitalisation over net income. None unless both are known."""
+    market_cap = latest.get("market.market_cap")
+    net_income = latest.get("income.net_income")
+    if market_cap is None or net_income is None:
+        return None
+    if market_cap.value is None or net_income.value is None:
+        return None
+
+    value = _ratio(market_cap.value, net_income.value)
+    return _valuation_fact(
+        ticker=ticker,
+        metric="price_to_earnings",
+        value=value,
+        formula=(
+            f"market capitalisation as of {market_cap.filed_date.isoformat()} "
+            "÷ net income FY"
+            f"{net_income.fiscal_year or net_income.period_end.year}"
+        ),
+        sources=(market_cap, net_income),
+    )
+
+
+def _ev_to_ebitda(latest: dict[str, Fact], ticker: str) -> Fact | None:
+    """Enterprise value over EBITDA. None unless every input is disclosed.
+
+    Enterprise value needs debt and cash as well as market capitalisation.
+    Where either is not disclosed, the multiple is not computed — treating an
+    undisclosed debt figure as zero would understate leverage while looking
+    like a complete answer, the same reasoning m07 applies to net debt itself.
+    """
+    market_cap = latest.get("market.market_cap")
+    ebitda = latest.get("derived.ebitda")
+    debt = latest.get("derived.total_debt")
+    cash = latest.get("balance.cash_and_equivalents")
+    if market_cap is None or ebitda is None or debt is None or cash is None:
+        return None
+    if (
+        market_cap.value is None
+        or ebitda.value is None
+        or debt.value is None
+        or cash.value is None
+    ):
+        return None
+
+    enterprise_value = market_cap.value + debt.value - cash.value
+    value = _ratio(enterprise_value, ebitda.value)
+    return _valuation_fact(
+        ticker=ticker,
+        metric="ev_to_ebitda",
+        value=value,
+        formula=(
+            f"(market capitalisation as of {market_cap.filed_date.isoformat()} "
+            "+ total debt − cash and equivalents) ÷ EBITDA FY"
+            f"{ebitda.fiscal_year or ebitda.period_end.year}"
+        ),
+        sources=(market_cap, ebitda, debt, cash),
+    )

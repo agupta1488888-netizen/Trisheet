@@ -138,6 +138,7 @@ class _Work:
     manifest: list[FilingRef] = field(default_factory=list)
     facts: list[Fact] = field(default_factory=list)
     peers: PeerSet | None = None
+    peer_comparison: m08_peers.PeerComparison | None = None
     events: list[DevelopmentEvent] = field(default_factory=list)
     prose: GeneratedReport | None = None
     compliance: ComplianceReport | None = None
@@ -467,6 +468,13 @@ async def _extract(
         work.peers = selected
         peer_derived = m08_peers.peer_facts(selected, company)
         work.facts.extend(peer_derived)
+
+        comparison = await m08_peers.build_peer_comparison(
+            company, selected, work.facts, client
+        )
+        work.peer_comparison = comparison
+        work.facts.extend(comparison.facts)
+
         if not selected.peers:
             outcome.skip(
                 "No filed source named a comparable company for this filer.",
@@ -597,6 +605,7 @@ async def _assemble(
                 compliance=compliance,
                 prose=work.prose,
                 peers=work.peers,
+                peer_comparison=work.peer_comparison,
                 events=work.events,
             )
         )
