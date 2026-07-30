@@ -24,7 +24,8 @@ def test_health_reports_ok() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["edgar_configured"] is True
+    # The wire contract is camel case, so the browser's types describe it.
+    assert body["edgarConfigured"] is True
 
 
 def test_health_reports_missing_edgar_contact() -> None:
@@ -33,4 +34,4 @@ def test_health_reports_missing_edgar_contact() -> None:
         response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json()["edgar_configured"] is False
+    assert response.json()["edgarConfigured"] is False
