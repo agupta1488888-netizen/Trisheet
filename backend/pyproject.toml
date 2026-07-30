@@ -13,8 +13,11 @@ disallow_any_explicit = false
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-# Neither ships type information; both are used behind our own typed wrappers.
-module = ["supabase.*", "lxml.*"]
+# None of these ship type information; all are used behind our own typed
+# wrappers. WeasyPrint is additionally imported inside the function that needs
+# it, because on a machine without its native text libraries the import itself
+# raises — see m12_assembler.assemble_pdf.
+module = ["supabase.*", "lxml.*", "weasyprint.*"]
 ignore_missing_imports = true
 
 [tool.ruff]
