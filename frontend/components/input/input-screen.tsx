@@ -3,9 +3,11 @@
 /**
  * The input screen.
  *
- * Restrained by intent: no hero, no gradient, no illustration. A masthead, a
- * field, a depth choice, four examples. The page's only job is to take a
- * ticker and get out of the way.
+ * A masthead, a hero statement, the field, a sample of the finished product,
+ * and the three claims a reader can go verify. Every visual choice still
+ * answers to the same rule as the report itself: hairlines instead of cards,
+ * tabular monospace figures, no gradient, no glow — a research document's
+ * idea of premium, not a SaaS landing page's.
  *
  * The data functions are injected, so the same screen runs against the backend
  * and against fixtures without a branch inside it.
@@ -24,6 +26,8 @@ import type {
   TickerSuggestion,
 } from "@/lib/types";
 import { TickerForm } from "@/components/input/ticker-form";
+import { ReportPreview } from "@/components/input/report-preview";
+import { TrustSection } from "@/components/input/trust-section";
 
 export interface InputScreenProps {
   search?: (query: string) => Promise<readonly TickerSuggestion[]>;
@@ -76,17 +80,42 @@ export function InputScreen({
   return (
     <main
       id="main"
-      className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center px-5 py-20 sm:px-8"
+      className="mx-auto flex max-w-3xl flex-col px-5 py-16 sm:px-8 sm:py-20"
     >
-      <header>
-        <h1 className="text-4xl text-ink">Tearsheet</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Company profiles, sourced from filings.
-        </p>
+      <header className="flex items-center gap-2.5">
+        <span
+          aria-hidden="true"
+          className="ref flex size-7 shrink-0 items-center justify-center border border-ink text-sm text-ink"
+        >
+          T
+        </span>
+        <span className="text-lg text-ink">Trisheet</span>
       </header>
 
-      <div className="mt-12 border-t border-rule pt-10">
+      <div className="mt-14 sm:mt-20">
+        <p className="text-[0.72rem] tracking-wide text-certified uppercase">
+          Equity research · sourced from filings
+        </p>
+        <h1 className="mt-3 max-w-2xl text-4xl leading-tight text-ink sm:text-5xl">
+          The company profile that shows its work.
+        </h1>
+        <p className="mt-4 max-w-xl text-base leading-relaxed text-muted-foreground">
+          Every figure traces back to the SEC filing it came from — the
+          accession number, the page, the exact tag. Nothing estimated.
+          Nothing recalled from memory.
+        </p>
+      </div>
+
+      <div className="mt-12 max-w-xl border-t border-rule pt-10">
         <TickerForm search={search} resolve={resolve} onResolved={start} />
+      </div>
+
+      <div className="mt-16 sm:mt-20">
+        <ReportPreview />
+      </div>
+
+      <div className="mt-16 sm:mt-20">
+        <TrustSection />
       </div>
 
       <footer className="mt-16 border-t border-rule pt-4">
