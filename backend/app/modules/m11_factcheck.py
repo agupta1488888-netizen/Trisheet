@@ -134,11 +134,23 @@ _NON_FIGURE_PATTERNS = (
     # Accession numbers, as filed.
     re.compile(r"\b\d{10}-\d{2}-\d{6}\b"),
     # Dates. A day of the month is not a figure about the business, and an
-    # unmasked ISO date reads as three separate numbers.
+    # unmasked ISO date reads as three separate numbers. The day allows an
+    # ordinal suffix ("June 30th") — prose writes dates that way, and the
+    # digits are still not a figure either way.
     re.compile(r"\b\d{4}-\d{2}-\d{2}\b"),
-    re.compile(rf"\b(?:{_MONTHS})\.?\s+\d{{1,2}},?\s+\d{{4}}\b", re.IGNORECASE),
-    re.compile(rf"\b\d{{1,2}}\s+(?:{_MONTHS})\.?\s+\d{{4}}\b", re.IGNORECASE),
-    re.compile(rf"\b(?:{_MONTHS})\.?\s+\d{{1,2}}\b", re.IGNORECASE),
+    re.compile(
+        rf"\b(?:{_MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+(?:{_MONTHS})\.?\s+\d{{4}}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b(?:{_MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?\b", re.IGNORECASE
+    ),
+    # Clock times ("2:00 p.m."). Not a figure about the business.
+    re.compile(r"\b\d{1,2}:\d{2}\s*(?:[ap]\.?m\.?)?\b", re.IGNORECASE),
     # Form names: 10-K, 10-Q, 8-K, 20-F, 40-F, 6-K, DEF 14A, S-1.
     re.compile(r"\b(?:DEF\s+14A|[A-Z]?\d{1,2}-[A-Z]{1,2}(?:/A)?)\b"),
     # 8-K item numbers, which look like decimals.
@@ -146,6 +158,8 @@ _NON_FIGURE_PATTERNS = (
     # Quarters and fiscal-year labels.
     re.compile(r"\bQ[1-4]\b", re.IGNORECASE),
     re.compile(r"\bFY\s?\d{2,4}\b", re.IGNORECASE),
+    # A trading-range window ("52-week"). Not a figure about the business.
+    re.compile(r"\b\d{1,3}-week\b", re.IGNORECASE),
     # Section references in the interface's own voice.
     re.compile(r"\bsection\s+\d\b", re.IGNORECASE),
 )
@@ -251,11 +265,19 @@ def _numbers_in(display_value: str) -> list[float]:
 
 
 def _fact_numbers(fact: Fact) -> tuple[float, ...]:
-    """Every number a fact can legitimately be quoted as."""
+    """Every number a fact can legitimately be quoted as.
+
+    A negative fact — an outflow, a decrease — is offered at its magnitude as
+    well as its signed value. Prose conventionally carries the direction in
+    the verb ("cash used was 488,000,000", "outflows narrowed to...") rather
+    than repeating a literal minus sign, and both are faithful statements of
+    the same fact.
+    """
     numbers: list[float] = []
     if fact.value is not None:
         numbers.append(fact.value)
     numbers.extend(_numbers_in(fact.display_value))
+    numbers.extend(-n for n in numbers if n < 0)
     return tuple(numbers)
 
 

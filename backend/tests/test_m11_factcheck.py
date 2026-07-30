@@ -162,6 +162,8 @@ class TestFindFigures:
             "Item 2.02 was furnished.",
             "Results for Q3 FY2025 were filed.",
             "Accession 0000320193-24-000123 carries the figures.",
+            "Nike will report results on Tuesday, June 30th at 2:00 p.m.",
+            "That price sits near the bottom of a 52-week range.",
         ],
     )
     def test_ignores_text_that_carries_digits_but_states_no_figure(
@@ -219,6 +221,32 @@ class TestFiguresSourced:
 
         assert not result.passed
         assert not check(result, CheckName.FIGURES_SOURCED).passed
+
+    def test_an_outflow_stated_at_its_magnitude_is_accepted(self) -> None:
+        """A cash outflow is a negative fact, but prose carries the direction
+        in the verb rather than repeating the minus sign.
+
+        Found live: m10 wrote "net cash used in investing activities was
+        488,000,000" for a fact whose value was -488,000,000, and this failed
+        figures_sourced before _fact_numbers offered the magnitude as well as
+        the signed value.
+        """
+        fact = make_fact(
+            metric="cashflow.investing",
+            value=-488_000_000.0,
+            display_value="-488,000,000",
+        )
+        prose = report(
+            section((
+                "Net cash used in investing activities was 488,000,000.",
+                (fact.fact_id,),
+            ))
+        )
+
+        result = verify(prose, [fact])
+
+        assert result.passed
+        assert check(result, CheckName.FIGURES_SOURCED).passed
 
     def test_a_year_the_facts_cover_is_not_treated_as_a_figure(self) -> None:
         fact = make_fact()
