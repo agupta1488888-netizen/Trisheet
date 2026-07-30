@@ -37,6 +37,14 @@ export default function RootLayout({
       <body
         className={`${fraunces.variable} ${plexSans.variable} ${plexMono.variable}`}
       >
+        {/* First thing in the tab order on every page. Visible only once
+            focused, which is the only time it is useful. */}
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:border focus:border-certified focus:bg-paper focus:px-3 focus:py-2 focus:text-sm focus:text-ink"
+        >
+          Skip to content
+        </a>
         {children}
       </body>
     </html>

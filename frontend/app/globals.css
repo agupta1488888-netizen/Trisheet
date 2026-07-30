@@ -22,6 +22,19 @@
   --color-market: var(--market);
   --color-flag: var(--flag);
 
+  /* Derived surfaces, also first-class: bg-wash, text-ink-muted. */
+  --color-wash: var(--wash);
+  --color-ink-muted: var(--ink-muted);
+
+  /* Chart series ramp. Six is the ceiling: past that a stacked bar stops
+     being readable and the answer is fewer series, not more colours. */
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-series-6: var(--series-6);
+
   /* Typography. Display = Fraunces, body = IBM Plex Sans, data = IBM Plex Mono. */
   --font-sans: var(--font-plex-sans);
   --font-mono: var(--font-plex-mono);
@@ -85,6 +98,20 @@
   --wash: #f3f1ea;
   --ink-muted: #5a6560;
 
+  /* Chart series: the palette's three neutral-safe hues, each with a lighter
+     step, so adjacent bands in a stack alternate hue rather than lightness and
+     stay separable in greyscale and to the common colour vision deficiencies.
+
+     --flag is deliberately absent. It means conflict, warning or restatement,
+     and a segment of revenue is none of those. A reserved colour that also
+     appears decoratively stops being a signal. */
+  --series-1: #1f4d3d;
+  --series-2: #3e5c7a;
+  --series-3: #7a6a4f;
+  --series-4: #7d9c8c;
+  --series-5: #93a8bd;
+  --series-6: #b0a382;
+
   --radius: 2px;
 
   --background: var(--paper);
@@ -133,6 +160,13 @@
   --flag: #d0765d;
   --wash: #182320;
   --ink-muted: #9aa5a0;
+
+  --series-1: #7fb59f;
+  --series-2: #90aecb;
+  --series-3: #bda98a;
+  --series-4: #4d7a68;
+  --series-5: #5c7c99;
+  --series-6: #7d6f56;
 }
 
 @layer base {
@@ -145,6 +179,33 @@
   }
   html {
     @apply font-sans;
+    scroll-behavior: smooth;
+  }
+
+  /* Focus is always visible and always the same shape, so a keyboard reader
+     never has to hunt for where they are. Certified green, because focus is
+     the interface asserting something, and that is the assertive colour. */
+  :focus-visible {
+    outline: 2px solid var(--certified);
+    outline-offset: 2px;
+    border-radius: 1px;
+  }
+
+  /* A reader who has asked for less motion gets none. This is a blanket rule
+     rather than a per-component decision so nothing can be added later that
+     quietly ignores it. Chart animation is off for everyone regardless. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
   /* Section titles and the company name are set in the display face. */
   h1,

@@ -1,11 +1,22 @@
-import { ProvenanceRail } from "@/components/report/provenance-rail";
+import { fetchReport, fetchReportDocument } from "@/lib/api";
+import { ProgressScreen } from "@/components/progress/progress-screen";
+import { ReportUnavailable } from "@/components/report/report-unavailable";
+import { ReportView } from "@/components/report/report-view";
 
 /**
- * Report view. Structural shell only — data loading is wired in phase 1.
+ * The report route.
  *
- * The layout is fixed here on purpose: the provenance rail is a persistent
- * column beside the report. It is never collapsed into a footer.
+ * One id, three outcomes: the run is still going and the reader watches it;
+ * the run finished and the document renders; or the report cannot be reached
+ * and the page says why. There is no fourth branch that renders a blank screen
+ * or a stack trace.
+ *
+ * Status is fetched on the server so a finished report paints without a client
+ * round trip. The progress screen refreshes this route once its run settles,
+ * which is what promotes the first outcome into the second.
  */
+export const dynamic = "force-dynamic";
+
 export default async function ReportPage({
   params,
 }: {
@@ -13,17 +24,26 @@ export default async function ReportPage({
 }) {
   const { id } = await params;
 
-  return (
-    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-10 px-6 py-16 lg:grid-cols-[1fr_18rem]">
-      <main>
-        <h1 className="text-3xl">Report</h1>
-        <p className="ref mt-1 text-sm text-muted-foreground">{id}</p>
-        <div className="mt-8 border-t border-rule pt-8">
-          <p className="text-muted-foreground">Not disclosed</p>
-        </div>
-      </main>
+  const report = await fetchReport(id);
+  if (!report.ok) {
+    return <ReportUnavailable error={report.error} />;
+  }
 
-      <ProvenanceRail sources={[]} />
-    </div>
-  );
+  if (report.data.status !== "complete") {
+    return (
+      <ProgressScreen
+        reportId={id}
+        ticker={report.data.ticker}
+        initialStatus={report.data.status}
+        initialErrorMessage={report.data.errorMessage}
+      />
+    );
+  }
+
+  const document = await fetchReportDocument(id);
+  if (!document.ok) {
+    return <ReportUnavailable error={document.error} />;
+  }
+
+  return <ReportView document={document.data} />;
 }

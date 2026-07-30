@@ -6,7 +6,14 @@
  * an expected failure.
  */
 
-import type { ApiError } from "@/lib/types";
+import type {
+  AnalysisDepth,
+  ApiError,
+  Report,
+  ReportDocument,
+  Resolution,
+  TickerSuggestion,
+} from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -94,4 +101,71 @@ export async function apiRequest<T>(
   }
 
   return { ok: true, data: payload as T };
+}
+
+/* ---------------------------------------------------------------------------
+   Endpoints
+
+   One function per backend route. Each states its own failure behaviour;
+   nothing here throws.
+   --------------------------------------------------------------------------- */
+
+/**
+ * Autocomplete against the EDGAR ticker index.
+ *
+ * Returns an empty list on any failure rather than a result type. A suggestion
+ * list that cannot load is not an error the reader needs to act on — they can
+ * still type a ticker and submit it, and the resolver has the final say.
+ */
+export async function searchTickers(
+  query: string,
+  limit: number,
+): Promise<readonly TickerSuggestion[]> {
+  const result = await apiRequest<{ suggestions: TickerSuggestion[] }>(
+    `/resolve/suggest?q=${encodeURIComponent(query)}&limit=${limit}`,
+  );
+  return result.ok ? result.data.suggestions : [];
+}
+
+/**
+ * Resolves free text to a filer. An ambiguous query is a successful response
+ * carrying candidates, not a failure — the interface asks rather than guessing.
+ */
+export async function resolveTicker(
+  query: string,
+): Promise<ApiResult<Resolution>> {
+  return apiRequest<Resolution>("/resolve", {
+    method: "POST",
+    body: JSON.stringify({ query }),
+  });
+}
+
+/** Queues a report. The run itself is followed on the progress screen. */
+export async function createReport(
+  cik: string,
+  ticker: string,
+  depth: AnalysisDepth,
+): Promise<ApiResult<Report>> {
+  return apiRequest<Report>("/reports", {
+    method: "POST",
+    body: JSON.stringify({ cik, ticker, depth }),
+  });
+}
+
+export async function fetchReport(
+  reportId: string,
+): Promise<ApiResult<Report>> {
+  return apiRequest<Report>(`/reports/${reportId}`, { cache: "no-store" });
+}
+
+/**
+ * The assembled document. Only meaningful once the report is complete; the
+ * backend returns a typed error before then.
+ */
+export async function fetchReportDocument(
+  reportId: string,
+): Promise<ApiResult<ReportDocument>> {
+  return apiRequest<ReportDocument>(`/reports/${reportId}/document`, {
+    cache: "no-store",
+  });
 }
