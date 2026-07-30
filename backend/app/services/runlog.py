@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 from app.models import (
     AnalysisDepth,
     ArtifactRef,
+    Company,
     ProgressStep,
     Report,
     ReportStatus,
@@ -60,6 +61,7 @@ _Write = Callable[["Client"], object]
 REPORTS_TABLE = "reports"
 RUN_LOGS_TABLE = "run_logs"
 ARTIFACTS_TABLE = "artifacts"
+COMPANIES_TABLE = "companies"
 
 #: Columns read back when rebuilding a `Report`. Explicit so a schema addition
 #: cannot silently start arriving as an unexpected key.
@@ -235,6 +237,37 @@ def create_report(
     return report
 
 
+def register_company(company: Company) -> None:
+    """Upserts the filer a report resolved to.
+
+    Called once m01 has resolved a real `Company`, which is necessarily after
+    `create_report` — the endpoint answers with a job id before resolution has
+    run, so a report's own `cik` cannot be required to already exist here.
+    Nothing else in the pipeline writes this table; a CIK reported on is
+    otherwise never recorded anywhere durable.
+    """
+    if not is_durable():
+        return
+
+    row = {
+        "cik": company.cik,
+        "ticker": company.ticker,
+        "name": company.name,
+        "filer_type": str(company.filer_type),
+        "sic_code": company.sic_code,
+        "sector": company.sector,
+        "fiscal_year_end": company.fiscal_year_end,
+        "reporting_currency": company.reporting_currency,
+    }
+    _try_write(
+        lambda client: (
+            client.table(COMPANIES_TABLE).upsert(row, on_conflict="cik").execute()
+        ),
+        "Company could not be registered",
+        {"cik": company.cik},
+    )
+
+
 def get_report(report_id: str) -> Report | None:
     """The current state of a report, or None when there is no such id."""
     if is_durable():
@@ -357,7 +390,9 @@ def record_step(report_id: str, event: StepEvent) -> None:
     _try_write(
         lambda client: client.table(RUN_LOGS_TABLE).insert(row).execute(),
         "Step could not be logged",
-        {"report_id": report_id, "module": event.module},
+        # Not "module" — collides with LogRecord's own reserved attribute of
+        # that name and would crash the error-reporting log call itself.
+        {"report_id": report_id, "pipeline_module": event.module},
     )
 
 

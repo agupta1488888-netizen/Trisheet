@@ -137,7 +137,11 @@ create index if not exists filings_cik_period_idx
 create table if not exists reports (
   id             uuid primary key default gen_random_uuid(),
   ticker         text          not null,
-  cik            text          references companies (cik) on delete set null,
+  -- Not a foreign key. The endpoint registers a report the instant it answers
+  -- with a job id — before resolution has run, so no companies row for this
+  -- cik necessarily exists yet. m01 upserts companies once it resolves; nothing
+  -- here may block on that order.
+  cik            text,
   status         report_status not null default 'queued',
   -- Set only when status is 'failed'. States what happened and what to do.
   error_message  text,
@@ -147,6 +151,9 @@ create table if not exists reports (
   constraint reports_failed_has_message
     check (status <> 'failed' or error_message is not null)
 );
+
+-- For databases created before this was a plain column. See comment above.
+alter table reports drop constraint if exists reports_cik_fkey;
 
 -- Run accounting. Added nullable because a report that already ran has no way
 -- to know what it cost, and guessing is exactly what this system does not do.

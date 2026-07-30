@@ -183,7 +183,10 @@ class _Tracker:
                 "Pipeline step failed",
                 extra={
                     "report_id": self.report_id,
-                    "module": module,
+                    # Not "module" — that name collides with LogRecord's own
+                    # reserved `module` attribute (the caller's source file)
+                    # and raises a KeyError that would mask this warning.
+                    "pipeline_module": module,
                     "duration_ms": elapsed,
                     "error": str(failure),
                 },
@@ -247,7 +250,7 @@ async def _optional(
     except Exception:  # noqa: BLE001 — the whole point of an optional step
         logger.info(
             "Optional step did not complete; the report continues without it",
-            extra={"report_id": tracker.report_id, "module": module},
+            extra={"report_id": tracker.report_id, "pipeline_module": module},
         )
 
 
@@ -383,6 +386,7 @@ async def _extract(
         # a failed report, not a report about an unnamed filer.
         company = await m01_resolver.load_company(client, cik, ticker)
         work.company = company
+        runlog.register_company(company)
         outcome.done()
 
     async with tracker.step("m02") as outcome:
