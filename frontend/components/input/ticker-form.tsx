@@ -95,7 +95,7 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
       >
         <label
           htmlFor={inputId}
-          className="text-[0.68rem] text-muted-foreground"
+          className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
         >
           Company
         </label>
@@ -135,7 +135,7 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
           <button
             type="submit"
             disabled={isResolving || query.trim() === ""}
-            className="border border-certified bg-certified px-5 py-2 text-sm text-paper transition-colors hover:border-ink hover:bg-ink disabled:cursor-not-allowed disabled:border-rule disabled:bg-transparent disabled:text-muted-foreground motion-reduce:transition-none"
+            className="rounded-xl bg-emerald-600 px-8 py-3.5 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none motion-reduce:transition-none"
           >
             {isResolving ? "Resolving…" : "Build profile"}
           </button>

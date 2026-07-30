@@ -26,22 +26,22 @@ export function DepthSelector({
 }) {
   return (
     <fieldset disabled={disabled} className="min-w-0">
-      <legend className="text-[0.68rem] text-muted-foreground">
+      <legend className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         Analysis depth
       </legend>
 
-      <div className="mt-2 grid grid-cols-1 border-t border-rule sm:grid-cols-3 sm:border-t-0">
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
         {DEPTH_OPTIONS.map((option) => {
           const isSelected = option.value === value;
           return (
             <label
               key={option.value}
               className={cn(
-                "group flex cursor-pointer flex-col gap-1 border-b border-rule px-0 py-3 sm:border-b-0 sm:border-t-2 sm:pr-6",
+                "group flex cursor-pointer flex-col gap-1.5 rounded-xl border-2 p-4 transition-colors motion-reduce:transition-none",
                 isSelected
-                  ? "sm:border-t-certified"
-                  : "sm:border-t-rule sm:hover:border-t-ink-muted",
-                "has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-certified",
+                  ? "border-emerald-500 bg-emerald-50"
+                  : "border-slate-200 bg-white hover:border-slate-300",
+                "has-[input:focus-visible]:outline has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-emerald-500",
                 disabled && "cursor-not-allowed opacity-50",
               )}
             >
@@ -59,7 +59,9 @@ export function DepthSelector({
                 <span
                   className={cn(
                     "text-sm",
-                    isSelected ? "font-medium text-ink" : "text-muted-foreground",
+                    isSelected
+                      ? "font-semibold text-emerald-800"
+                      : "font-medium text-ink",
                   )}
                 >
                   {option.label}

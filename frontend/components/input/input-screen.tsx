@@ -14,6 +14,7 @@
  */
 
 import { useCallback } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 import { AUTOCOMPLETE_MAX_RESULTS } from "@/lib/constants";
@@ -80,27 +81,40 @@ export function InputScreen({
 
   return (
     <main id="main" className="min-h-screen bg-slate-50">
-      <div className="bg-gradient-to-br from-emerald-600 via-teal-600 to-blue-700">
-        <div className="mx-auto max-w-6xl px-5 py-14 sm:px-8 sm:py-20">
-          <header className="flex items-center gap-2.5">
+      <div className="relative overflow-hidden">
+        <Image
+          src="/hero-background.jpg"
+          alt=""
+          aria-hidden="true"
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover"
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/78 to-slate-900/40" />
+
+        <div className="relative mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24">
+          <header className="flex items-center gap-3.5">
             <span
               aria-hidden="true"
-              className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/15 text-sm font-semibold text-white backdrop-blur"
+              className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-xl font-bold text-white shadow-lg backdrop-blur"
             >
               T
             </span>
-            <span className="text-lg font-medium text-white">Trisheet</span>
+            <span className="font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+              Trisheet
+            </span>
           </header>
 
-          <div className="mt-12 grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
+          <div className="mt-14 grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
             <div>
-              <p className="text-xs font-semibold tracking-wide text-emerald-100 uppercase">
+              <p className="text-xs font-semibold tracking-wide text-emerald-200 uppercase">
                 Equity research · sourced from filings
               </p>
-              <h1 className="mt-4 text-4xl leading-tight font-semibold text-white sm:text-5xl">
+              <h1 className="mt-4 text-5xl leading-tight font-semibold text-white sm:text-6xl">
                 The company profile that shows its work.
               </h1>
-              <p className="mt-5 max-w-xl text-base leading-relaxed text-emerald-50/90">
+              <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-100/90">
                 Every figure traces back to the SEC filing it came from — the
                 accession number, the page, the exact tag. Nothing estimated.
                 Nothing recalled from memory.
@@ -112,8 +126,8 @@ export function InputScreen({
         </div>
       </div>
 
-      <div className="mx-auto max-w-3xl px-5 sm:px-8">
-        <div className="-mt-10 rounded-3xl border border-slate-100 bg-white p-6 shadow-2xl shadow-slate-300/50 sm:-mt-14 sm:p-10">
+      <div className="mx-auto max-w-4xl px-5 sm:px-8">
+        <div className="-mt-12 rounded-3xl border border-slate-100 bg-white p-8 shadow-2xl shadow-slate-300/50 sm:-mt-16 sm:p-12">
           <TickerForm search={search} resolve={resolve} onResolved={start} />
         </div>
       </div>

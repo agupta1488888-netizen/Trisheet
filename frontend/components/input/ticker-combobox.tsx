@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -173,6 +174,11 @@ export function TickerCombobox({
 
   return (
     <div ref={containerRef} className="relative">
+      <Search
+        aria-hidden="true"
+        strokeWidth={2}
+        className="pointer-events-none absolute top-1/2 left-5 size-5 -translate-y-1/2 text-slate-400"
+      />
       <input
         id={inputId}
         type="text"
@@ -199,10 +205,11 @@ export function TickerCombobox({
         }}
         onKeyDown={onKeyDown}
         className={cn(
-          "ref h-12 w-full border-b border-rule bg-transparent px-0 text-xl text-ink",
-          "placeholder:font-sans placeholder:text-base placeholder:text-muted-foreground",
-          "outline-none focus-visible:border-certified",
+          "ref h-16 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 py-0 pr-5 pl-14 text-xl text-ink",
+          "placeholder:font-sans placeholder:text-lg placeholder:text-muted-foreground",
+          "outline-none transition-colors focus-visible:border-emerald-500 focus-visible:bg-white focus-visible:ring-4 focus-visible:ring-emerald-500/15",
           "disabled:cursor-not-allowed disabled:opacity-50",
+          "motion-reduce:transition-none",
         )}
       />
 
@@ -218,7 +225,7 @@ export function TickerCombobox({
         role="listbox"
         aria-label="Matching companies"
         hidden={!showList}
-        className="absolute inset-x-0 top-full z-20 max-h-72 overflow-y-auto border border-rule bg-paper"
+        className="absolute inset-x-0 top-full z-20 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-100 bg-white p-1.5 shadow-xl shadow-slate-300/40"
       >
         {suggestions.map((suggestion, position) => {
           const hint = suggestion.filerType
@@ -240,8 +247,8 @@ export function TickerCombobox({
                 setActiveIndex(position);
               }}
               className={cn(
-                "flex cursor-pointer items-baseline gap-3 px-3 py-2",
-                position === activeIndex && "bg-wash",
+                "flex cursor-pointer items-baseline gap-3 rounded-xl px-3.5 py-2.5",
+                position === activeIndex && "bg-emerald-50",
               )}
             >
               <span className="ref w-16 shrink-0 text-sm text-certified">

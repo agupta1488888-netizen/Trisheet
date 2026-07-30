@@ -19,8 +19,10 @@ export function ExampleChips({
 }) {
   return (
     <div>
-      <p className="text-[0.68rem] text-muted-foreground">Try</p>
-      <ul className="mt-2 flex flex-wrap gap-2">
+      <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        Try
+      </p>
+      <ul className="mt-2.5 flex flex-wrap gap-2">
         {EXAMPLE_TICKERS.map((example) => (
           <li key={example.ticker}>
             <button
@@ -30,7 +32,7 @@ export function ExampleChips({
                 onPick(example.ticker);
               }}
               title={`${example.name} · files ${example.form}`}
-              className="ref flex items-baseline gap-2 border border-rule px-2.5 py-1 text-sm text-ink transition-colors hover:border-certified hover:text-certified disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
+              className="ref flex items-baseline gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-ink transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
             >
               {example.ticker}
               <span className="text-[0.68rem] text-muted-foreground">
