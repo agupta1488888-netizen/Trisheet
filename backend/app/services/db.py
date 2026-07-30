@@ -6,16 +6,91 @@ the browser may import this module.
 
 Public interface
     get_client() -> Client
+    is_configured() -> bool
+    reset_client() -> None
+    DatabaseNotConfiguredError / DatabaseUnavailableError
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
+
+from app.config import get_settings
 
 if TYPE_CHECKING:
     from supabase import Client
 
+logger = logging.getLogger(__name__)
+
+
+class DatabaseError(Exception):
+    """Base class for every persistence failure. Callers catch this."""
+
+
+class DatabaseNotConfiguredError(DatabaseError):
+    """No Supabase URL or service role key is set, so there is nowhere to write."""
+
+
+class DatabaseUnavailableError(DatabaseError):
+    """Supabase is configured but could not be reached or refused the request."""
+
+
+_client: Client | None = None
+
+
+def is_configured() -> bool:
+    """True when both Supabase settings are present.
+
+    Callers use this to degrade rather than crash: persistence is a sink, not
+    a source, and only EDGAR is a hard dependency.
+    """
+    settings = get_settings()
+    return bool(
+        settings.supabase_url.strip()
+        and settings.supabase_service_role_key.get_secret_value().strip()
+    )
+
 
 def get_client() -> Client:
-    """Returns the shared Supabase client. Implemented in phase 1."""
-    raise NotImplementedError
+    """Returns the shared Supabase client, building it on first use.
+
+    Raises:
+        DatabaseNotConfiguredError: neither URL nor key was supplied.
+        DatabaseUnavailableError: the client could not be constructed.
+    """
+    global _client  # noqa: PLW0603 — one process-wide pooled client by design
+    if _client is not None:
+        return _client
+
+    if not is_configured():
+        message = (
+            "Supabase is not configured. Set SUPABASE_URL and "
+            "SUPABASE_SERVICE_ROLE_KEY before storing facts."
+        )
+        raise DatabaseNotConfiguredError(message)
+
+    settings = get_settings()
+    try:
+        from supabase import create_client
+
+        _client = create_client(
+            settings.supabase_url,
+            settings.supabase_service_role_key.get_secret_value(),
+        )
+    except ImportError as cause:
+        message = "The supabase package is not installed."
+        raise DatabaseUnavailableError(message) from cause
+    except Exception as cause:  # noqa: BLE001 — surfaced as a typed failure
+        # The URL and key are never logged; only that construction failed.
+        logger.error("Could not build the Supabase client", exc_info=cause)
+        message = f"Could not connect to Supabase: {cause}"
+        raise DatabaseUnavailableError(message) from cause
+
+    return _client
+
+
+def reset_client() -> None:
+    """Drops the cached client. Used by tests and on configuration reload."""
+    global _client  # noqa: PLW0603 — mirrors get_client
+    _client = None
