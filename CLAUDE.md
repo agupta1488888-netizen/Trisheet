@@ -160,8 +160,18 @@ Rules:
 
 ## Design system
 
-Do not use default shadcn styling unmodified. This must read as a research
-document, not a SaaS dashboard.
+The report view (`/r/[id]` and its components under `frontend/components/
+report/`) must read as a research document, not a SaaS dashboard. Do not use
+default shadcn styling unmodified there.
+
+The input screen (`/`, `frontend/components/input/`) is an explicit,
+deliberate exception, chosen 2026-07-31 after the original restrained
+version (matching the report-view rules below) read as flat: a colourful
+gradient hero, a decorative illustration, rounded cards with shadows,
+colourful icon badges — a mainstream "premium SaaS template" look. This
+split is intentional. Do not carry the input screen's treatment into the
+report view, and do not quietly restore the report view's restraint to the
+input screen without being asked.
 
 Typography
   Display  Fraunces          section titles, company name
@@ -176,7 +186,7 @@ Palette (light mode is the default; financial documents are read paper-white)
   --market     #3E5C7A   Tier 3, market data
   --flag       #9E3B26   conflicts, warnings, restatements
 
-Rules
+Rules — the report view
   - All figures right-aligned, monospace, tabular-nums.
   - Hairline rules to separate content. Not cards. Not shadows.
   - No gradients, no glassmorphism, no glow, no sparkle icons.
@@ -185,6 +195,14 @@ Rules
   - "Not disclosed" — never "N/A", never blank, never zero.
   - Errors state what happened and what to do, in the interface's voice.
     "No annual filing found for this CIK" not "Sorry, something went wrong."
+
+Rules — the input screen only
+  - Gradients, rounded-2xl/3xl cards, drop shadows and colourful icon badges
+    are permitted here, and only here.
+  - Figures still right-aligned, monospace, tabular-nums, even inside a
+    colourful card — that part of the identity does not lapse anywhere.
+  - Any sample/illustrative figure must be labelled as a sample and drawn
+    from an existing fixture data set — never presented as if it were live.
 
 Signature element
   The provenance rail: a persistent column beside the report where each

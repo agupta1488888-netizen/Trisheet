@@ -74,15 +74,16 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* Research documents are set on a grid of hairlines, not rounded cards.
-     Radius is near-square by design. Do not raise it. */
-  --radius-sm: 0px;
-  --radius-md: 1px;
-  --radius-lg: var(--radius);
-  --radius-xl: 3px;
-  --radius-2xl: 4px;
-  --radius-3xl: 5px;
-  --radius-4xl: 6px;
+  /* Rounded, shadowed cards by explicit direction (2026-07-31) — a deliberate
+     departure from the hairline/near-square language above, requested after
+     seeing the restrained version. See CLAUDE.md's design system section. */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 1.75rem;
+  --radius-4xl: 2rem;
 }
 
 :root {

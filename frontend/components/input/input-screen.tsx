@@ -3,11 +3,11 @@
 /**
  * The input screen.
  *
- * A masthead, a hero statement, the field, a sample of the finished product,
- * and the three claims a reader can go verify. Every visual choice still
- * answers to the same rule as the report itself: hairlines instead of cards,
- * tabular monospace figures, no gradient, no glow — a research document's
- * idea of premium, not a SaaS landing page's.
+ * Explicit design direction as of 2026-07-31: a colourful gradient hero, a
+ * decorative illustration, rounded cards with shadows — a mainstream
+ * "premium SaaS template" look, chosen after the prior hairline/no-gradient
+ * version read as flat. See CLAUDE.md's design system section, updated in
+ * the same change, for the rules this now actually follows.
  *
  * The data functions are injected, so the same screen runs against the backend
  * and against fixtures without a branch inside it.
@@ -28,6 +28,7 @@ import type {
 import { TickerForm } from "@/components/input/ticker-form";
 import { ReportPreview } from "@/components/input/report-preview";
 import { TrustSection } from "@/components/input/trust-section";
+import { HeroIllustration } from "@/components/input/hero-illustration";
 
 export interface InputScreenProps {
   search?: (query: string) => Promise<readonly TickerSuggestion[]>;
@@ -78,54 +79,61 @@ export function InputScreen({
   );
 
   return (
-    <main
-      id="main"
-      className="mx-auto flex max-w-3xl flex-col px-5 py-16 sm:px-8 sm:py-20"
-    >
-      <header className="flex items-center gap-2.5">
-        <span
-          aria-hidden="true"
-          className="ref flex size-7 shrink-0 items-center justify-center border border-ink text-sm text-ink"
-        >
-          T
-        </span>
-        <span className="text-lg text-ink">Trisheet</span>
-      </header>
+    <main id="main" className="min-h-screen bg-slate-50">
+      <div className="bg-gradient-to-br from-emerald-600 via-teal-600 to-blue-700">
+        <div className="mx-auto max-w-6xl px-5 py-14 sm:px-8 sm:py-20">
+          <header className="flex items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/15 text-sm font-semibold text-white backdrop-blur"
+            >
+              T
+            </span>
+            <span className="text-lg font-medium text-white">Trisheet</span>
+          </header>
 
-      <div className="mt-14 sm:mt-20">
-        <p className="text-[0.72rem] tracking-wide text-certified uppercase">
-          Equity research · sourced from filings
-        </p>
-        <h1 className="mt-3 max-w-2xl text-4xl leading-tight text-ink sm:text-5xl">
-          The company profile that shows its work.
-        </h1>
-        <p className="mt-4 max-w-xl text-base leading-relaxed text-muted-foreground">
-          Every figure traces back to the SEC filing it came from — the
-          accession number, the page, the exact tag. Nothing estimated.
-          Nothing recalled from memory.
-        </p>
+          <div className="mt-12 grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
+            <div>
+              <p className="text-xs font-semibold tracking-wide text-emerald-100 uppercase">
+                Equity research · sourced from filings
+              </p>
+              <h1 className="mt-4 text-4xl leading-tight font-semibold text-white sm:text-5xl">
+                The company profile that shows its work.
+              </h1>
+              <p className="mt-5 max-w-xl text-base leading-relaxed text-emerald-50/90">
+                Every figure traces back to the SEC filing it came from — the
+                accession number, the page, the exact tag. Nothing estimated.
+                Nothing recalled from memory.
+              </p>
+            </div>
+
+            <HeroIllustration />
+          </div>
+        </div>
       </div>
 
-      <div className="mt-12 max-w-xl border-t border-rule pt-10">
-        <TickerForm search={search} resolve={resolve} onResolved={start} />
+      <div className="mx-auto max-w-3xl px-5 sm:px-8">
+        <div className="-mt-10 rounded-3xl border border-slate-100 bg-white p-6 shadow-2xl shadow-slate-300/50 sm:-mt-14 sm:p-10">
+          <TickerForm search={search} resolve={resolve} onResolved={start} />
+        </div>
       </div>
 
-      <div className="mt-16 sm:mt-20">
+      <div className="mx-auto max-w-3xl px-5 py-16 sm:px-8 sm:py-20">
         <ReportPreview />
-      </div>
 
-      <div className="mt-16 sm:mt-20">
-        <TrustSection />
-      </div>
+        <div className="mt-16">
+          <TrustSection />
+        </div>
 
-      <footer className="mt-16 border-t border-rule pt-4">
-        <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
-          Figures are extracted from SEC filings and computed in Python. Nothing
-          is estimated. A figure that a company does not disclose reads
-          &ldquo;Not disclosed&rdquo;, and every number in the finished profile
-          carries a link to the filing it came from.
-        </p>
-      </footer>
+        <footer className="mt-16 border-t border-slate-200 pt-6">
+          <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
+            Figures are extracted from SEC filings and computed in Python.
+            Nothing is estimated. A figure that a company does not disclose
+            reads &ldquo;Not disclosed&rdquo;, and every number in the
+            finished profile carries a link to the filing it came from.
+          </p>
+        </footer>
+      </div>
     </main>
   );
 }

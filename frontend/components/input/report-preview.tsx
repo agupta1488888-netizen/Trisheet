@@ -28,16 +28,14 @@ const SOURCE = {
 };
 
 function Marker() {
-  return (
-    <sup className="ref ml-0.5 text-[0.62rem] text-certified">1</sup>
-  );
+  return <sup className="ref ml-0.5 text-[0.62rem] text-emerald-600">1</sup>;
 }
 
 export function ReportPreview() {
   return (
-    <figure className="border border-rule bg-wash/50 p-6 sm:p-8">
-      <figcaption className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule pb-3">
-        <span className="text-[0.66rem] tracking-wide text-muted-foreground uppercase">
+    <figure className="rounded-2xl border border-slate-100 bg-white p-6 shadow-xl shadow-slate-200/70 sm:p-8">
+      <figcaption className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
+        <span className="rounded-full bg-emerald-50 px-3 py-1 text-[0.66rem] font-semibold tracking-wide text-emerald-700 uppercase">
           Sample report
         </span>
         <span className="ref text-[0.7rem] text-muted-foreground">
@@ -47,11 +45,14 @@ export function ReportPreview() {
 
       <dl className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {METRICS.map((metric) => (
-          <div key={metric.label} className="flex flex-col gap-1">
+          <div
+            key={metric.label}
+            className="rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 p-4"
+          >
             <dt className="text-[0.64rem] text-muted-foreground">
               {metric.label}
             </dt>
-            <dd className="figure text-base text-ink sm:text-lg">
+            <dd className="figure text-lg text-ink">
               {metric.value}
               <Marker />
             </dd>
@@ -62,16 +63,16 @@ export function ReportPreview() {
         ))}
       </dl>
 
-      <p className="mt-5 border-t border-rule pt-4 text-sm leading-relaxed text-ink">
+      <p className="mt-5 border-t border-slate-100 pt-4 text-sm leading-relaxed text-ink">
         {SENTENCE}
         <Marker />
       </p>
 
-      <div className="mt-5 flex items-start gap-3 border-t border-rule pt-4">
+      <div className="mt-5 flex items-start gap-3 rounded-xl bg-slate-50 p-4">
         <FileText
           aria-hidden="true"
           strokeWidth={1.5}
-          className="mt-0.5 size-4 shrink-0 text-certified"
+          className="mt-0.5 size-4 shrink-0 text-emerald-600"
         />
         <div className="text-[0.7rem] leading-relaxed text-muted-foreground">
           <p className="ref text-ink">
