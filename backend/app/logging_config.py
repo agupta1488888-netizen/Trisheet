@@ -83,8 +83,14 @@ class JsonFormatter(logging.Formatter):
             if key not in _RESERVED_RECORD_KEYS and not key.startswith("_"):
                 payload[key] = value
 
-        if record.exc_info is not None:
-            payload["error"] = _format_exception(record.exc_info)
+        # `record.exc_info` holds whatever the caller passed. A caller deciding
+        # at runtime whether a failure warrants a traceback passes
+        # `exc_info=False`, which the stdlib stores unchanged — so the presence
+        # of a tuple is the test, not the absence of None.
+        if isinstance(record.exc_info, tuple):
+            formatted = _format_exception(record.exc_info)
+            if formatted is not None:
+                payload["error"] = formatted
 
         return json.dumps(payload, default=str, separators=(",", ":"))
 
