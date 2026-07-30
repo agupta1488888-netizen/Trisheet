@@ -305,10 +305,14 @@ def _build_event(
         )
     ]
 
-    for sentence in extract.results:
+    # Indexed rather than one shared metric: every sentence in the loop quotes
+    # the same filing, so without a per-sentence suffix they would all carry
+    # the same (metric, period_end) identity and collide on the fact store's
+    # uniqueness constraint the instant a release states more than one.
+    for index, sentence in enumerate(extract.results, start=1):
         facts.append(
             _textual_fact(
-                metric=DEVELOPMENT_RESULT_METRIC,
+                metric=f"{DEVELOPMENT_RESULT_METRIC}.{index}",
                 label="Reported in the earnings release",
                 display_value=_truncate(sentence),
                 filing=filing,
@@ -316,10 +320,10 @@ def _build_event(
             )
         )
 
-    for sentence in extract.guidance:
+    for index, sentence in enumerate(extract.guidance, start=1):
         facts.append(
             _textual_fact(
-                metric=DEVELOPMENT_GUIDANCE_METRIC,
+                metric=f"{DEVELOPMENT_GUIDANCE_METRIC}.{index}",
                 label="Guidance stated in the earnings release",
                 # Prefixed so a forward-looking statement cannot be rendered,
                 # quoted or cited as though it were a reported figure.
