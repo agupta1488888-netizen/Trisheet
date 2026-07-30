@@ -17,6 +17,144 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the pipeline, m03 through m12 (2026-07-30)
+
+The full run: a ticker in, a verified report out, over real EDGAR data.
+
+- `models`/`config`/`schema`: widened for every module below — segmented and
+  calculated `Fact`, `GeneratedReport`/`ComplianceReport`/`Violation` for what
+  m10 writes and m11 verifies, `Peer`/`DevelopmentEvent`/`ArtifactRef` for
+  peers, the timeline and assembly, and the `Report`/`ProgressStep` pair the
+  frontend polls. Every module's tag ladders, tolerances and provider chains
+  live in `config` rather than as literals in the modules that use them.
+- `m03`: financial statements via ordered XBRL tag ladders, us-gaap first then
+  ifrs-full, confidence charged per fallback rung. Deduplicates on (start, end,
+  form) keeping the latest filed date; an amendment wins over the original it
+  amends. Segments read from dimensional contexts, with cross-tabulated
+  contexts excluded rather than mistaken for one. A metric no tag answers for
+  is emitted as `NOT_DISCLOSED`, never omitted.
+- `m04`: narrative sections (business description, risk factors, operating
+  review), quoted rather than summarised, so the writer is shown the filer's
+  own words instead of being asked to recall them.
+- `m05`: market data behind a provider chain (yahoo, then stooq) — the one
+  module permitted to import a market client. Every emitted metric must carry
+  a section-5 prefix or it produces no fact at all; m06 and m11 each
+  independently refuse a Tier 3 fact in section 3 as well.
+- `m06`: the provenance write gate, enforced independently of whether storage
+  is reachable, plus the real Supabase persistence behind it. A database
+  outage costs `persisted=False`, never a fact.
+- `m07`: derived metrics — growth, CAGR, margins, ratios, sector-specific
+  groups by SIC code — as pure Python. No I/O, no LLM, no globals. Every
+  derived fact carries its formula.
+- `m08`: peer selection by a ladder of decreasing authority: the DEF 14A
+  compensation peer group, the competition discussion, SIC match, the model as
+  a last resort. Every candidate resolves to a live CIK before inclusion,
+  including the model's own suggestions.
+- `m09`: an 8-K/6-K developments timeline, filtered by item number. Earnings
+  releases are read from their EX-99.1 exhibit; guidance is stored under its
+  own prefixed metric so it can never be read downstream as a reported figure.
+- `m10`: prose generated from `Fact` objects alone, output as schema-
+  constrained JSON so sentences arrive with fact ids attached. A cited id
+  absent from the supplied payload is dropped and logged.
+- `m11`: the blocking verification gate — figures in prose checked against the
+  facts they cite, balance sheet and segment-sum tie-outs to tolerance, Tier 3
+  in section 3 failing the report outright regardless of whether m05/m06 could
+  have produced it.
+- `m12`: one `ReportDocument` rendered three ways (screen, PDF, XLSX), so a
+  figure cannot differ across renderings. The workbook's derived cells are live
+  Excel formulas over an assumptions tab, not baked-in numbers.
+- `services`: `document` (HTML to text, shared by m04 and m09), `llm` (the only
+  module that talks to the model), `storage` (Supabase Storage uploads),
+  `metrics` (success rate, latency, cost — counted from run records, never
+  estimated), `runlog` (the run's own status and step timing, distinct from
+  the facts m06 stores about the company).
+- `pipeline`: orchestrates m01 through m12 as one tracked run. EDGAR is the
+  only hard dependency; every later step degrades to SKIPPED/FAILED with a
+  reason rather than taking the run down. Exposed via `cli.py`
+  (`resolve|discover|report|matrix`) and the API in `main.py`.
+- 196 new tests across m03, m06, m07, m11 and the logging fix below, run
+  alongside the existing 55 from the EDGAR foundation phase — 251 total.
+
+### Fixed
+
+- `m03`: the balance sheet ties out against
+  `StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest`,
+  not the parent-only `StockholdersEquity` that was previously first on the
+  ladder. Found by running live against ENB: `Liabilities + StockholdersEquity`
+  was short of `Assets` by exactly `MinorityInterest` every year. Affects any
+  filer carrying noncontrolling interests, not only ENB.
+- `logging_config`: a `False` `exc_info` (a caller stating a caught failure
+  does *not* need a traceback) was unpacked as if it were a real exception
+  tuple, crashing the log call meant to record the failure. Now checked with
+  `isinstance(..., tuple)`.
+
+### Notes — live verification (2026-07-30)
+
+Run against live EDGAR with no database or model configured, to confirm the
+pipeline's degradation paths rather than just its happy path:
+
+- NKE, TSM, CNI, JPM, ENB, SHOP — 6/6 completed and passed verification.
+  Between them: a domestic 10-K, a 20-F, a 40-F, and ENB's CAD-reporting 10-K.
+- Every run: `m06` skipped storage (`persisted=False`), `m10` skipped prose
+  (no `ANTHROPIC_API_KEY`), `m12` skipped the PDF (no WeasyPrint system
+  libraries on this machine) — three independent optional dependencies, all
+  absent at once, and every report still completed and passed m11.
+- ENB failed `balance_sheet` before the fix above and passed after, on the
+  same live data, with no other change.
+
+### Added — frontend (2026-07-30)
+
+Built against typed fixtures, so every screen is verifiable before the pipeline
+is reachable from the browser. Only the routes under `/preview` import
+`lib/mock`; each of them renders a standing notice saying the figures are
+placeholders.
+
+- `frontend/types`: contracts for the report document — `AnalysisDepth`,
+  `TickerSuggestion`, `ProgressStep`, the seven `SECTION_ORDER` sections,
+  `FigureTable` / `ProseBlock` / `DevelopmentEvent` / `RiskItem`, the four chart
+  series, and `ComplianceSummary`. Chart values arrive in their display scale
+  and compliance counts arrive already counted, so the browser plots and
+  formats but never derives a figure.
+- `frontend/lib`: `provenance.ts` assigns a superscript marker per source in
+  first-appearance order and joins facts to the filing manifest; `format.ts`
+  turns final values into strings and scales nothing; `constants.ts` holds every
+  literal the interface renders.
+- `frontend/report`: the seven sections in brief order with the provenance rail
+  beside them. Figures are right-aligned monospace with a marker that links to
+  its reference card; pointing at a figure raises its card and pointing at a
+  card raises every figure drawn from it. Derived figures carry a "calculated"
+  label bearing the formula. A section that could not be built states why and
+  the rest of the report is unaffected.
+- `frontend/report`: the compliance strip — fact count, tier distribution,
+  citation coverage and the verification verdict, rendered from counts m11
+  supplies.
+- `frontend/charts`: revenue and margin trend, segment mix, cash flow against
+  capital expenditure, and peer valuation, on Recharts 3. Colours come from CSS
+  variables so charts follow the palette; animation is off; `--flag` is kept out
+  of the categorical ramp so it keeps meaning conflict rather than decoration.
+- `frontend/input`: a combobox following the ARIA pattern with debounced,
+  race-safe suggestions; a radio-group depth selector; four example chips
+  spanning a 10-K, a 20-F and a 40-F filer; and the disambiguation surface,
+  which asks rather than guessing when the resolver returns candidates.
+- `frontend/progress`: a monospace step feed driven by `run_logs` over Supabase
+  Realtime, correlated by `report_id`, reporting the real count each step
+  produced. Realtime is not a dependency — the hook falls back to polling and
+  the screen says which mode it is in. A skipped optional source reads as a
+  skip, not a failure.
+- `frontend`: skip link, a single visible focus treatment, a blanket
+  `prefers-reduced-motion` rule, and layouts that reflow to a narrow screen —
+  where the rail becomes a docked panel rather than a footer.
+- `frontend/preview`: fixture harness at `/preview` covering the input screen,
+  three progress runs and two reports — a dense domestic 10-K filer and a 20-F
+  filer with market data unavailable, which exercises "Not disclosed" and the
+  absent valuation chart.
+
+### Changed
+
+- `frontend/constants`: example tickers corrected against the live EDGAR
+  verification below. ENB files a 10-K, not a 40-F, so CNI is the 40-F example
+  and TSM the 20-F one.
+
 ### Added — EDGAR foundation (2026-07-29)
 
 - `models`: `FilerType.CANADIAN` for 40-F filers under the Multijurisdictional
