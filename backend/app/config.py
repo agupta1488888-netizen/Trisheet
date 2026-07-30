@@ -537,9 +537,15 @@ METRIC_SPECS: tuple[MetricSpec, ...] = (
         metric="balance.total_equity",
         label="Total equity",
         period_type="instant",
+        # StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+        # goes first: `balance.total_liabilities` is consolidated `Liabilities`,
+        # which carries noncontrolling-interest subsidiaries in full, so it only
+        # ties to Assets against the equity figure that also includes their
+        # NCI. `StockholdersEquity` (parent-only) is a fallback for filers with
+        # no NCI, who often tag only that one.
         us_gaap_tags=(
-            "StockholdersEquity",
             "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+            "StockholdersEquity",
         ),
         ifrs_tags=("Equity", "EquityAttributableToOwnersOfParent"),
     ),
