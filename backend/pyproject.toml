@@ -1,5 +1,5 @@
 [project]
-name = "tearsheet-backend"
+name = "trisheet-backend"
 version = "0.1.0"
 description = "Company profiles, sourced from filings."
 requires-python = ">=3.11"

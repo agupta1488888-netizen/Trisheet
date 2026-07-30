@@ -1,5 +1,5 @@
 /**
- * Typed client for the Tearsheet backend.
+ * Typed client for the Trisheet backend.
  *
  * Transport only. No business logic, no formatting, no derivation of figures.
  * Every call resolves to a discriminated result — this client never throws for

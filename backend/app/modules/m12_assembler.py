@@ -2,7 +2,7 @@
 
 Responsibility
     Turn a verified report into the forms it is consumed in: the JSON document
-    the browser renders, a PDF styled as an analyst tearsheet, and an XLSX
+    the browser renders, a PDF styled as an analyst trisheet, and an XLSX
     whose ratios are live formulas over the reported figures. Source references
     travel with every one of them — the provenance rail is not a screen-only
     feature.
@@ -1104,7 +1104,7 @@ def _cash_flow_series(index: _Index) -> CashFlowSeries | None:
 
 
 # --- PDF ---------------------------------------------------------------------
-# The printed tearsheet. Paper-white, hairline rules, figures right-aligned in
+# The printed trisheet. Paper-white, hairline rules, figures right-aligned in
 # a monospace face — a research document, not a dashboard. Every figure carries
 # a superscript marker resolved in the sources appendix, which is the printed
 # form of the provenance rail.
@@ -1118,7 +1118,7 @@ _PDF_STYLESHEET = """
   size: A4;
   margin: 18mm 16mm 20mm 16mm;
   @bottom-left {
-    content: "Tearsheet — sourced from SEC filings";
+    content: "Trisheet — sourced from SEC filings";
     font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
     font-size: 7pt;
     color: #6c7671;
@@ -1371,7 +1371,7 @@ def render_html(document: ReportDocument) -> str:
 
     parts.append(_render_sources(cards))
 
-    title = _escape(f"{document.company.name} — Tearsheet")
+    title = _escape(f"{document.company.name} — Trisheet")
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
         f"<title>{title}</title></head><body>"
@@ -1630,7 +1630,7 @@ def assemble_pdf(document: ReportDocument) -> bytes:
 # ratio moves — which is the point: a reader who disagrees with a margin can
 # see the division rather than take it on trust.
 
-_SHEET_COVER = "Tearsheet"
+_SHEET_COVER = "Trisheet"
 _SHEET_INCOME = "Income statement"
 _SHEET_BALANCE = "Balance sheet"
 _SHEET_CASHFLOW = "Cash flow"

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Tearsheet are recorded here.
+All notable changes to Trisheet are recorded here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -212,7 +212,7 @@ accurate rather than a parser miss.
 - `frontend`: Next.js 15.5 App Router scaffold on TypeScript strict, Tailwind
   CSS 4 and shadcn/ui (Radix primitives). Fraunces, IBM Plex Sans and IBM Plex
   Mono wired through `next/font/google` and exposed as CSS variables. The
-  Tearsheet palette replaces shadcn's neutral ramp at the token level, radii
+  Trisheet palette replaces shadcn's neutral ramp at the token level, radii
   are near-square, and `figure` / `ref` utilities carry the monospace
   tabular-nums treatment for all data.
 - `frontend`: structural shells for the input screen and report view, plus
@@ -262,4 +262,4 @@ accurate rather than a parser miss.
   pytest need a config file.
 - The `.dark` palette in `globals.css` is derived, not specified. Light is the
   canonical mode; the block exists so a forced dark context degrades into the
-  Tearsheet palette inverted rather than into stock shadcn neutrals.
+  Trisheet palette inverted rather than into stock shadcn neutrals.

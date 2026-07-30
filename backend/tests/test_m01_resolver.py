@@ -17,7 +17,7 @@ from app.modules.m01_resolver import (
 )
 from app.services.edgar import EdgarClient, ResponseCache, TokenBucket
 
-USER_AGENT = "Tearsheet tests@example.com"
+USER_AGENT = "Trisheet tests@example.com"
 
 TICKER_INDEX = {
     "0": {"cik_str": 320187, "ticker": "NKE", "title": "NIKE, Inc."},

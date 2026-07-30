@@ -5,15 +5,15 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ---------------------------------------------------------------------------
-   Tearsheet design language.
+   Trisheet design language.
 
-   Every shadcn token below is remapped onto the Tearsheet palette so that
+   Every shadcn token below is remapped onto the Trisheet palette so that
    stock components inherit this document's language instead of the default
    SaaS look. Do not reintroduce shadcn's neutral oklch ramp.
    --------------------------------------------------------------------------- */
 
 @theme inline {
-  /* Tearsheet palette, exposed as first-class utilities:
+  /* Trisheet palette, exposed as first-class utilities:
      bg-paper, text-ink, border-rule, text-certified, text-market, text-flag */
   --color-paper: var(--paper);
   --color-ink: var(--ink);

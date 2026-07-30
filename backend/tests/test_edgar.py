@@ -22,7 +22,7 @@ from app.services.edgar import (
     unpad_cik,
 )
 
-USER_AGENT = "Tearsheet tests@example.com"
+USER_AGENT = "Trisheet tests@example.com"
 
 
 def _client(
@@ -94,7 +94,7 @@ async def test_missing_contact_email_is_refused_before_the_request(
         raise AssertionError(message)
 
     client = EdgarClient(
-        user_agent="Tearsheet ",
+        user_agent="Trisheet ",
         cache=ResponseCache(tmp_path),
         limiter=TokenBucket(1_000),
         transport=httpx.MockTransport(handler),

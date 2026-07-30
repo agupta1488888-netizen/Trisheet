@@ -23,7 +23,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tearsheet",
+  title: "Trisheet",
   description: "Company profiles, sourced from filings.",
 };
 

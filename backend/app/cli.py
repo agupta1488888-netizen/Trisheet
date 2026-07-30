@@ -377,7 +377,7 @@ def _matrix_row(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m app.cli",
-        description="Tearsheet operator commands.",
+        description="Trisheet operator commands.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

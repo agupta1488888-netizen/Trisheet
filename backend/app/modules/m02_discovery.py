@@ -359,7 +359,7 @@ async def build_manifest(
     if not refs:
         message = (
             "No filings found for this company in the permitted form set. "
-            "Tearsheet builds profiles from periodic and current reports."
+            "Trisheet builds profiles from periodic and current reports."
         )
         raise DiscoveryError(message)
 

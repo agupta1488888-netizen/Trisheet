@@ -215,7 +215,7 @@ async def _determine_filer_type(
 
     if best is None:
         message = (
-            "No annual filing found for this company. Tearsheet builds profiles "
+            "No annual filing found for this company. Trisheet builds profiles "
             "from 10-K, 20-F or 40-F filings, and this filer has none."
         )
         raise ResolutionError(message)

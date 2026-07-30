@@ -1,8 +1,8 @@
-# Tearsheet
+# Trisheet
 
 Company profiles, sourced from filings.
 
-Tearsheet generates equity-research-grade company profiles for US-listed
+Trisheet generates equity-research-grade company profiles for US-listed
 companies. Every financial figure traces back to an SEC filing. The product's
 value is provenance, not automation.
 
@@ -60,7 +60,7 @@ LLM       Anthropic Claude API
 
 ## Repo layout
 
-    tearsheet/
+    trisheet/
       frontend/                 Next.js -> Vercel
         app/
           page.tsx              input screen
@@ -103,7 +103,7 @@ LLM       Anthropic Claude API
 ## SEC EDGAR client requirements
 
 Every request to sec.gov or data.sec.gov MUST:
-  - send User-Agent: "Tearsheet <contact-email>"  (403 without it)
+  - send User-Agent: "Trisheet <contact-email>"  (403 without it)
   - respect a global limit of 10 requests/second across ALL workers
   - use a shared token-bucket limiter, not a per-process sleep
   - retry on 429 with exponential backoff, max 3 attempts

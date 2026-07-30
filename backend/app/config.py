@@ -63,7 +63,7 @@ EDGAR_BACKOFF_BASE_SECONDS = 1.0
 EDGAR_REQUEST_TIMEOUT_SECONDS = 30.0
 
 #: SEC returns 403 to any request without a contact-bearing User-Agent.
-EDGAR_USER_AGENT_TEMPLATE = "Tearsheet {contact_email}"
+EDGAR_USER_AGENT_TEMPLATE = "Trisheet {contact_email}"
 
 # --- Response cache ---------------------------------------------------------
 
@@ -1519,7 +1519,7 @@ STOOQ_QUOTE_URL_TEMPLATE = (
 )
 
 #: Sent on every market request. Some providers reject an unidentified client.
-MARKET_USER_AGENT_TEMPLATE = "Tearsheet {contact_email}"
+MARKET_USER_AGENT_TEMPLATE = "Trisheet {contact_email}"
 
 #: Metric prefixes m05 is allowed to emit. Anything else is dropped before it
 #: leaves the module, with the rejection logged.
@@ -1926,13 +1926,13 @@ STEP_COUNT_LABELS: dict[str, str] = {
 # --- Artifact storage (m12) --------------------------------------------------
 
 #: Supabase Storage bucket the rendered reports are written to. Public: a
-#: tearsheet is a document meant to be handed to someone, and nothing in it was
+#: trisheet is a document meant to be handed to someone, and nothing in it was
 #: not already public on EDGAR.
 STORAGE_BUCKET = "reports"
 
 #: Object key within the bucket. The report id makes it unique; the ticker and
 #: date make it recognisable in a downloads folder.
-ARTIFACT_PATH_TEMPLATE = "{report_id}/tearsheet-{ticker}-{date}.{extension}"
+ARTIFACT_PATH_TEMPLATE = "{report_id}/trisheet-{ticker}-{date}.{extension}"
 
 ARTIFACT_CONTENT_TYPES: dict[str, str] = {
     "pdf": "application/pdf",

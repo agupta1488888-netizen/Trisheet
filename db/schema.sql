@@ -1,4 +1,4 @@
--- Tearsheet schema.
+-- Trisheet schema.
 --
 -- Run against a fresh Supabase Postgres database. Idempotent: safe to re-run.
 --
@@ -497,7 +497,7 @@ alter table reports replica identity full;
 -- ---------------------------------------------------------------------------
 -- Storage
 --
--- One public bucket for rendered reports. Public because a tearsheet is a
+-- One public bucket for rendered reports. Public because a trisheet is a
 -- document meant to be handed to someone; nothing in it is private that was not
 -- already public on EDGAR. Writes come only from the service role.
 -- ---------------------------------------------------------------------------

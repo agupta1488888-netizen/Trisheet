@@ -21,7 +21,7 @@ from app.modules.m02_discovery import (
 )
 from app.services.edgar import EdgarClient, ResponseCache, TokenBucket
 
-USER_AGENT = "Tearsheet tests@example.com"
+USER_AGENT = "Trisheet tests@example.com"
 CIK = "0000320187"
 
 COMPANY = Company(

@@ -1,6 +1,6 @@
 # Documentation
 
-Design notes and decision records for Tearsheet.
+Design notes and decision records for Trisheet.
 
 Working rules live in [CLAUDE.md](../CLAUDE.md) at the repository root, not
 here. This directory is for the things that need more room than a rule: metric

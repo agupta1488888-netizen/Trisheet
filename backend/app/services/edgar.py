@@ -4,7 +4,7 @@ Every request to sec.gov and data.sec.gov goes through this module. Nothing
 else in the codebase constructs an EDGAR URL or issues an EDGAR request.
 
 Requirements, all enforced here:
-    - Send `User-Agent: Tearsheet <contact-email>`; SEC returns 403 without it.
+    - Send `User-Agent: Trisheet <contact-email>`; SEC returns 403 without it.
     - Respect a global ceiling of 10 requests/second, via a shared token bucket
       rather than a per-process sleep.
     - Retry 429 and 5xx with exponential backoff, at most 3 attempts, honouring
@@ -323,7 +323,7 @@ class EdgarClient:
         return parsed
 
     async def _fetch(self, url: str) -> bytes:
-        if not self._user_agent.strip().removeprefix("Tearsheet").strip():
+        if not self._user_agent.strip().removeprefix("Trisheet").strip():
             message = (
                 "No SEC contact email is configured. Set EDGAR_CONTACT_EMAIL; "
                 "SEC refuses requests that do not identify a contact."

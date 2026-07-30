@@ -1,8 +1,8 @@
-# Tearsheet
+# Trisheet
 
 Company profiles, sourced from filings.
 
-Tearsheet generates equity-research-grade company profiles for US-listed
+Trisheet generates equity-research-grade company profiles for US-listed
 companies. Every financial figure traces back to an SEC filing. The product's
 value is provenance, not automation.
 
@@ -120,7 +120,7 @@ The full annotated list is in [.env.example](.env.example). In brief:
 
 | Variable | Required | Purpose |
 | -------- | -------- | ------- |
-| `EDGAR_CONTACT_EMAIL` | yes | Sent to SEC as `User-Agent: Tearsheet <email>`. SEC returns 403 without it. |
+| `EDGAR_CONTACT_EMAIL` | yes | Sent to SEC as `User-Agent: Trisheet <email>`. SEC returns 403 without it. |
 | `ANTHROPIC_API_KEY` | yes | Prose generation. |
 | `SUPABASE_URL` | yes | Project URL. |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Server-side database access. Bypasses row level security — never expose it to the browser. |

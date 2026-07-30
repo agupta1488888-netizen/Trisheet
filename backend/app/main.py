@@ -53,7 +53,7 @@ from app.services import edgar, metrics, runlog
 
 logger = logging.getLogger(__name__)
 
-API_TITLE = "Tearsheet"
+API_TITLE = "Trisheet"
 API_DESCRIPTION = "Company profiles, sourced from filings."
 API_VERSION = "0.1.0"
 HEALTH_PATH = "/health"
@@ -98,12 +98,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
 
         logger.info(
-            "Tearsheet backend started",
+            "Trisheet backend started",
             extra={"environment": resolved.environment},
         )
         yield
         await edgar.close_client()
-        logger.info("Tearsheet backend stopped")
+        logger.info("Trisheet backend stopped")
 
     app = FastAPI(
         title=API_TITLE,
