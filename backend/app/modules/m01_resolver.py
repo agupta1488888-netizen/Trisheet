@@ -15,6 +15,9 @@ Responsibility
 
 Public interface
     resolve(query, client) -> Resolution
+    load_company(client, cik, ticker) -> Company
+    load_index(client) -> tuple[IndexEntry, ...]
+    normalise_name(name) -> str
 """
 
 from __future__ import annotations
@@ -85,8 +88,13 @@ def normalise_name(name: str) -> str:
 # --- Ticker index -----------------------------------------------------------
 
 
-async def _load_index(client: EdgarClient) -> tuple[IndexEntry, ...]:
-    """Loads the SEC ticker index. Cached daily; companies list and delist."""
+async def load_index(client: EdgarClient) -> tuple[IndexEntry, ...]:
+    """Loads the SEC ticker index. Cached daily; companies list and delist.
+
+    Public because m08 resolves every peer candidate against this same index
+    before allowing it into a report. There is one authoritative answer to
+    "is this a live filer", and both modules must get it from the same place.
+    """
     payload = await client.get_json(
         SEC_COMPANY_TICKERS_URL, ttl=COMPANY_TICKERS_TTL_SECONDS
     )
@@ -286,7 +294,7 @@ async def resolve(query: str, client: EdgarClient) -> Resolution:
         message = "Enter a ticker or a company name."
         raise ResolutionError(message)
 
-    index = await _load_index(client)
+    index = await load_index(client)
     matches = _match(cleaned, index)
 
     if not matches:

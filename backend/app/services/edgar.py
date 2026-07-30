@@ -48,6 +48,7 @@ from app.config import (
     EDGAR_REQUEST_TIMEOUT_SECONDS,
     SEC_COMPANY_CONCEPT_URL_TEMPLATE,
     SEC_COMPANY_FACTS_URL_TEMPLATE,
+    SEC_COMPANY_LIST_BY_SIC_URL_TEMPLATE,
     SEC_FILING_DOCUMENT_URL_TEMPLATE,
     SEC_FILING_INDEX_URL_TEMPLATE,
     SEC_SUBMISSIONS_URL_TEMPLATE,
@@ -112,6 +113,25 @@ def company_facts_url(cik: str | int) -> str:
 def company_concept_url(cik: str | int, taxonomy: str, tag: str) -> str:
     return SEC_COMPANY_CONCEPT_URL_TEMPLATE.format(
         cik=pad_cik(cik), taxonomy=taxonomy, tag=tag
+    )
+
+
+def company_list_by_sic_url(sic_code: str, form: str, count: int) -> str:
+    """Filers sharing a SIC code, as EDGAR's company browser lists them.
+
+    Answers in Atom, which carries each filer's CIK — the only EDGAR endpoint
+    that will enumerate an industry. Used by m08's third rung.
+
+    Raises:
+        ValueError: the SIC code is not numeric. EDGAR would answer a
+            free-text search instead, silently returning the wrong industry.
+    """
+    cleaned = sic_code.strip()
+    if not cleaned.isdigit():
+        message = f"SIC code is not numeric: {sic_code!r}"
+        raise ValueError(message)
+    return SEC_COMPANY_LIST_BY_SIC_URL_TEMPLATE.format(
+        sic=cleaned, form=form, count=count
     )
 
 

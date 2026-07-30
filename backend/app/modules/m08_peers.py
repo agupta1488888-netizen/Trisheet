@@ -1,21 +1,1037 @@
 """m08 — peer selection.
 
 Responsibility
-    Choose comparable companies via a ladder: same SIC code first, widening to
-    the SIC group, then the sector, stopping as soon as enough peers are found.
+    Choose comparable companies by a ladder of decreasing authority, and say
+    which rung answered for each one.
 
-    Selection is derived from the filer's own SIC code — no company-specific
-    peer lists are hardcoded anywhere.
+The ladder
+    1. The compensation peer group in the latest DEF 14A. A compensation
+       committee that benchmarks pay against a named group has stated, on the
+       record, who it believes its peers are. Nothing this system could infer
+       beats that.
+    2. The competition discussion in the latest annual report. The filer names
+       who it competes with, in its own words.
+    3. SIC match. EDGAR's own classification of the filer's industry, queried
+       for other filers carrying the same code.
+    4. The model, as a last resort, asked for tickers and nothing else.
+
+    The ladder stops as soon as `PEER_TARGET_COUNT` peers have been accepted,
+    so a filer that names its own peer group never reaches a model.
+
+Two rules hold at every rung
+    Every candidate must resolve to a live CIK before inclusion. A name
+    scraped out of a proxy is a string until the SEC ticker index says it is a
+    filer; one that does not resolve is dropped and logged. The model's
+    suggestions go through exactly the same gate, which is what stops a
+    plausible-sounding hallucination from reaching the page.
+
+    Every peer records how it was selected. `Peer.selection_method` and
+    `Peer.selection_note` travel with the peer into the report, because a
+    comparison against a self-declared peer group is a different claim from a
+    comparison against whatever else shares a SIC code.
+
+Fiscal year mismatches
+    Two companies that close their books six months apart are not comparable
+    like for like. Every peer's fiscal year end is read from EDGAR and compared
+    with the subject's; a material difference sets `fiscal_year_mismatch` and
+    is disclosed in the peer's note, never silently absorbed.
+
+Nothing is hardcoded to a company
+    There are no company-specific peer lists anywhere. Every rung derives its
+    candidates from the filer's own disclosure or its own SIC code.
+
+Degradation
+    A rung that fails costs its candidates, not the ladder. Nothing in the
+    public interface raises.
 
 Public interface
-    select_peers(company) -> list[Company]
+    select_peers(company, manifest, client) -> PeerSet
+    peer_facts(peer_set) -> list[Fact]
 """
 
 from __future__ import annotations
 
-from app.models import Company
+import datetime as dt
+import logging
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from lxml import etree
+
+from app.config import (
+    AMENDMENT_FORM_SUFFIX,
+    ANNUAL_FORM_TO_FILER_TYPE,
+    ATOM_NAMESPACE,
+    COMPETITION_MARKERS,
+    DAYS_IN_YEAR,
+    FISCAL_YEAR_END_TOLERANCE_DAYS,
+    MAX_FILING_TEXT_BYTES,
+    PEER_CONTEXT_WINDOW_CHARS,
+    PEER_GROUP_MARKERS,
+    PEER_LLM_MAX_SUGGESTIONS,
+    PEER_MAX_COUNT,
+    PEER_MAX_NAMES_PER_DOCUMENT,
+    PEER_NAME_MAX_WORDS,
+    PEER_NAME_MIN_CHARS,
+    PEER_NAME_STOPWORDS,
+    PEER_TARGET_COUNT,
+    PROXY_FORM,
+    SIC_BROWSE_PAGE_SIZE,
+    SIC_BROWSE_TTL_SECONDS,
+)
+from app.models import (
+    Company,
+    ExtractionMethod,
+    Fact,
+    FilerType,
+    FilingRef,
+    Peer,
+    PeerSelectionMethod,
+    PeerSet,
+    SourceTier,
+    SourceType,
+)
+from app.modules.m01_resolver import IndexEntry, load_index, normalise_name
+from app.services import document, llm
+from app.services.edgar import (
+    EdgarClient,
+    EdgarError,
+    company_list_by_sic_url,
+    filing_index_url,
+    pad_cik,
+    submissions_url,
+)
+
+logger = logging.getLogger(__name__)
+
+#: A token that could be part of a company name. Names carry ampersands,
+#: full stops and hyphens, so those travel with the token.
+_NAME_TOKEN = re.compile(r"[A-Za-z0-9&.'\-]+")
+
+#: Lowercase words that appear inside a company name without breaking it.
+_NAME_CONNECTORS = frozenset({"and", "of", "de", "van", "der", "for", "the"})
+
+#: Metric carrying one peer. The ticker is part of the metric because a report
+#: holds several peers at once, and a fact's identity is its metric and period
+#: — two peers sharing a metric would be one fact overwriting another.
+PEER_METRIC_TEMPLATE = "peer.company.{ticker}"
+
+#: What each rung is called when the reason is written for a reader.
+_METHOD_PHRASES: dict[PeerSelectionMethod, str] = {
+    PeerSelectionMethod.COMPENSATION_PEER_GROUP: (
+        "named in the compensation peer group of the {form} filed {date}"
+    ),
+    PeerSelectionMethod.COMPETITION_PARAGRAPH: (
+        "named in the competition discussion of the {form} filed {date}"
+    ),
+    PeerSelectionMethod.SIC_MATCH: (
+        "shares SIC code {sic}, per EDGAR's classification"
+    ),
+    PeerSelectionMethod.LLM_SUGGESTION: (
+        "suggested as a comparable and confirmed to be a live SEC filer"
+    ),
+}
 
 
-async def select_peers(company: Company) -> list[Company]:
-    """Selects comparable companies. Implemented in phase 1."""
-    raise NotImplementedError
+@dataclass(frozen=True, slots=True)
+class _Candidate:
+    """One resolved candidate: a live filer, and where the name came from."""
+
+    entry: IndexEntry
+    method: PeerSelectionMethod
+    source_url: str | None = None
+    accession_no: str | None = None
+    filed_date: dt.date | None = None
+    source_form: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _Profile:
+    """What EDGAR's submissions document says about a candidate filer.
+
+    Fetched once per accepted peer. Confirms the CIK is live and supplies the
+    fiscal year end the mismatch check needs.
+    """
+
+    cik: str
+    name: str
+    sic_code: str | None
+    fiscal_year_end: str | None
+    filer_type: FilerType | None
+    latest_accession_no: str | None
+    latest_filed_date: dt.date | None
+
+
+# --- Name index -------------------------------------------------------------
+
+
+class _NameIndex:
+    """The SEC ticker index, addressable by normalised name and by CIK.
+
+    This is the gate every candidate passes through. A name that is not in
+    here is not a live filer with a ticker, and does not become a peer.
+    """
+
+    def __init__(self, entries: Sequence[IndexEntry]) -> None:
+        self._by_name: dict[str, IndexEntry] = {}
+        self._by_cik: dict[str, IndexEntry] = {}
+        self._by_ticker: dict[str, IndexEntry] = {}
+
+        for entry in entries:
+            normalised = normalise_name(entry.name)
+            if normalised and normalised not in self._by_name:
+                self._by_name[normalised] = entry
+            # A filer with several share classes appears more than once; the
+            # shortest ticker is the one a reader recognises.
+            held = self._by_cik.get(entry.cik)
+            if held is None or len(entry.ticker) < len(held.ticker):
+                self._by_cik[entry.cik] = entry
+            self._by_ticker.setdefault(entry.ticker.upper(), entry)
+
+    def by_name(self, name: str) -> IndexEntry | None:
+        normalised = normalise_name(name)
+        if len(normalised) < PEER_NAME_MIN_CHARS:
+            return None
+        if normalised in PEER_NAME_STOPWORDS:
+            return None
+        return self._by_name.get(normalised)
+
+    def by_cik(self, cik: str) -> IndexEntry | None:
+        try:
+            return self._by_cik.get(pad_cik(cik))
+        except ValueError:
+            return None
+
+    def by_ticker(self, ticker: str) -> IndexEntry | None:
+        return self._by_ticker.get(ticker.strip().upper())
+
+
+def find_company_names(text: str, index: _NameIndex) -> list[IndexEntry]:
+    """Every live filer named in a passage of filing prose, in order.
+
+    Company names are found by matching runs of capitalised words against the
+    ticker index, longest run first — so "First Solar" resolves to First Solar
+    rather than to a filer called "First". A run that matches nothing is not a
+    company name and is discarded; there is no fuzzy fallback, because a
+    near-match on a company name is a different company.
+
+    Public for testing: this is the step that decides who appears on the page,
+    and it is worth being able to exercise without a network.
+    """
+    found: list[IndexEntry] = []
+    seen: set[str] = set()
+
+    for run in _capitalised_runs(text):
+        position = 0
+        while position < len(run):
+            matched = False
+            longest = min(PEER_NAME_MAX_WORDS, len(run) - position)
+            for length in range(longest, 0, -1):
+                phrase = " ".join(run[position : position + length])
+                entry = index.by_name(phrase)
+                if entry is None:
+                    continue
+                if entry.cik not in seen:
+                    seen.add(entry.cik)
+                    found.append(entry)
+                position += length
+                matched = True
+                break
+            if not matched:
+                position += 1
+
+        if len(found) >= PEER_MAX_NAMES_PER_DOCUMENT:
+            break
+
+    return found
+
+
+def _capitalised_runs(text: str) -> list[list[str]]:
+    """Runs of consecutive capitalised tokens, which is what names look like.
+
+    Connectors ("and", "of") are kept inside a run so that "Bath and Body
+    Works" survives, but a run may not start or end on one.
+    """
+    runs: list[list[str]] = []
+    current: list[str] = []
+
+    for token in _NAME_TOKEN.findall(text):
+        is_name_word = token[:1].isupper() and any(c.isalpha() for c in token)
+        is_connector = token.lower() in _NAME_CONNECTORS
+
+        if is_name_word or (is_connector and current):
+            current.append(token)
+            continue
+
+        if current:
+            runs.append(_trim_connectors(current))
+            current = []
+
+    if current:
+        runs.append(_trim_connectors(current))
+
+    return [run for run in runs if run]
+
+
+def _trim_connectors(run: list[str]) -> list[str]:
+    """Drops leading and trailing connectors, which are never a name's edge."""
+    start, end = 0, len(run)
+    while start < end and run[start].lower() in _NAME_CONNECTORS:
+        start += 1
+    while end > start and run[end - 1].lower() in _NAME_CONNECTORS:
+        end -= 1
+    return run[start:end]
+
+
+# --- Filing text ------------------------------------------------------------
+
+
+def _latest_of_form(
+    manifest: Sequence[FilingRef], forms: frozenset[str]
+) -> FilingRef | None:
+    """The most recently filed of a set of forms, amendments included."""
+    candidates = [
+        filing
+        for filing in manifest
+        if filing.form.split(AMENDMENT_FORM_SUFFIX, 1)[0] in forms
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda f: (f.filed_date, f.accession_no))
+
+
+def _annual_forms_for(filer_type: FilerType) -> frozenset[str]:
+    """Annual forms this filer type might have filed.
+
+    Generous on purpose: a company that migrated between regimes still has its
+    older annual reports in the manifest, and either is a valid anchor.
+    """
+    if filer_type is FilerType.DOMESTIC:
+        return frozenset({"10-K"})
+    if filer_type is FilerType.CANADIAN:
+        return frozenset({"40-F", "20-F"})
+    return frozenset({"20-F", "40-F"})
+
+
+async def _filing_text(client: EdgarClient, filing: FilingRef) -> str:
+    """The readable text of a filing's primary document, or an empty string.
+
+    A proxy or annual report that cannot be fetched or parsed costs the rung
+    that wanted it. It never costs the report.
+    """
+    url = str(filing.primary_doc_url)
+    try:
+        body = await client.get_bytes(url)
+    except EdgarError:
+        logger.warning(
+            "Could not read filing for peer selection",
+            extra={"accession_no": filing.accession_no, "url": url},
+        )
+        return ""
+
+    if len(body) > MAX_FILING_TEXT_BYTES:
+        logger.warning(
+            "Filing is larger than the parse ceiling; peer rung skipped",
+            extra={"accession_no": filing.accession_no, "bytes": len(body)},
+        )
+        return ""
+
+    return document.html_to_text(body.decode("utf-8", errors="replace"))
+
+
+async def _candidates_from_filing(
+    client: EdgarClient,
+    filing: FilingRef,
+    markers: tuple[str, ...],
+    method: PeerSelectionMethod,
+    index: _NameIndex,
+    subject_cik: str,
+) -> list[_Candidate]:
+    """Company names in the marked passages of one filing.
+
+    Only the windows around a marker are scanned. A company mentioned in a
+    ninety-page proxy is not thereby a peer; a company named beside the words
+    "compensation peer group" is.
+    """
+    text = await _filing_text(client, filing)
+    if not text:
+        return []
+
+    windows = document.windows_around(
+        text, markers, PEER_CONTEXT_WINDOW_CHARS
+    )
+    if not windows:
+        logger.info(
+            "Filing does not discuss this topic; rung produced nothing",
+            extra={"accession_no": filing.accession_no, "method": str(method)},
+        )
+        return []
+
+    candidates: list[_Candidate] = []
+    seen: set[str] = set()
+
+    for window in windows:
+        for entry in find_company_names(window, index):
+            if entry.cik == subject_cik or entry.cik in seen:
+                continue
+            seen.add(entry.cik)
+            candidates.append(
+                _Candidate(
+                    entry=entry,
+                    method=method,
+                    source_url=str(filing.primary_doc_url),
+                    accession_no=filing.accession_no,
+                    filed_date=filing.filed_date,
+                    source_form=filing.form,
+                )
+            )
+
+    logger.info(
+        "Peer candidates read from filing",
+        extra={
+            "accession_no": filing.accession_no,
+            "method": str(method),
+            "windows": len(windows),
+            "candidates": len(candidates),
+        },
+    )
+    return candidates
+
+
+# --- Rung 3: SIC match ------------------------------------------------------
+
+
+async def _candidates_from_sic(
+    client: EdgarClient,
+    company: Company,
+    index: _NameIndex,
+) -> list[_Candidate]:
+    """Filers sharing the subject's SIC code, per EDGAR's own classification.
+
+    Every CIK EDGAR returns is looked up in the ticker index: a filer with no
+    live ticker is a registrant, not a comparable, and is dropped.
+    """
+    if not company.sic_code:
+        logger.info(
+            "Filer has no SIC code; the industry rung cannot run",
+            extra={"cik": company.cik},
+        )
+        return []
+
+    annual_form = next(
+        (
+            form
+            for form, filer_type in ANNUAL_FORM_TO_FILER_TYPE.items()
+            if filer_type == str(company.filer_type)
+        ),
+        "10-K",
+    )
+
+    try:
+        url = company_list_by_sic_url(
+            company.sic_code, annual_form, SIC_BROWSE_PAGE_SIZE
+        )
+    except ValueError:
+        logger.warning(
+            "SIC code is not numeric; the industry rung cannot run",
+            extra={"cik": company.cik, "sic_code": company.sic_code},
+        )
+        return []
+
+    try:
+        body = await client.get_bytes(url, ttl=SIC_BROWSE_TTL_SECONDS)
+    except EdgarError:
+        logger.warning(
+            "EDGAR's company browser did not answer",
+            extra={"cik": company.cik, "sic_code": company.sic_code},
+        )
+        return []
+
+    candidates: list[_Candidate] = []
+    for cik in _ciks_from_atom(body):
+        if cik == company.cik:
+            continue
+        entry = index.by_cik(cik)
+        if entry is None:
+            # A filer with no live ticker is not a comparable.
+            continue
+        candidates.append(
+            _Candidate(
+                entry=entry,
+                method=PeerSelectionMethod.SIC_MATCH,
+                source_url=url,
+            )
+        )
+
+    logger.info(
+        "Peer candidates read from SIC classification",
+        extra={
+            "cik": company.cik,
+            "sic_code": company.sic_code,
+            "candidates": len(candidates),
+        },
+    )
+    return candidates
+
+
+def _ciks_from_atom(body: bytes) -> list[str]:
+    """CIKs in an EDGAR company-browser Atom response, in the order given."""
+    try:
+        parser = etree.XMLParser(
+            resolve_entities=False, no_network=True, recover=True
+        )
+        root = etree.fromstring(body, parser=parser)
+    except etree.XMLSyntaxError:
+        logger.warning("EDGAR's company browser returned unparseable XML")
+        return []
+    if root is None:
+        return []
+
+    ciks: list[str] = []
+    for element in root.iter(f"{{{ATOM_NAMESPACE}}}CIK"):
+        text = (element.text or "").strip()
+        if not text:
+            continue
+        try:
+            ciks.append(pad_cik(text))
+        except ValueError:
+            continue
+
+    if ciks:
+        return ciks
+
+    # Older responses carry the CIK only in the entry link's query string.
+    for element in root.iter(f"{{{ATOM_NAMESPACE}}}link"):
+        href = element.get("href") or ""
+        match = re.search(r"CIK=(\d{1,10})", href)
+        if match:
+            try:
+                ciks.append(pad_cik(match.group(1)))
+            except ValueError:
+                continue
+    return ciks
+
+
+# --- Rung 4: the model ------------------------------------------------------
+
+_PEER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tickers": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "US-listed ticker symbols only.",
+        }
+    },
+    "required": ["tickers"],
+    "additionalProperties": False,
+}
+
+_PEER_SYSTEM_PROMPT = (
+    "You name comparable public companies. You return ticker symbols and "
+    "nothing else: no figures, no descriptions, no reasoning. Every ticker "
+    "you return is independently verified against the SEC's register before "
+    "it is used, and an unverifiable ticker is discarded — so a guess costs "
+    "the answer nothing and gains it nothing. Return only companies you are "
+    "confident are listed on a US exchange. Returning fewer is correct; "
+    "returning an empty list is correct when you are not confident."
+)
+
+
+async def _candidates_from_model(
+    company: Company, index: _NameIndex
+) -> list[_Candidate]:
+    """Tickers proposed by the model, kept only if they resolve to a filer.
+
+    The model is asked for ticker symbols and nothing else — it is never asked
+    for a figure, a description or a judgement, and nothing it returns is used
+    without the SEC's register agreeing that the company exists.
+    """
+    if not llm.is_configured():
+        logger.info(
+            "No model configured; the last rung of the peer ladder is skipped",
+            extra={"cik": company.cik},
+        )
+        return []
+
+    sector = company.sector or "an undisclosed industry"
+    user_prompt = (
+        f"Company: {company.name} (ticker {company.ticker}).\n"
+        f"Industry, as classified by the SEC: {sector}.\n"
+        f"Return at most {PEER_LLM_MAX_SUGGESTIONS} ticker symbols of "
+        "US-listed companies that a research analyst would compare it against. "
+        "Do not include the company itself."
+    )
+
+    try:
+        answer = await llm.complete_json(
+            _PEER_SYSTEM_PROMPT,
+            user_prompt,
+            _PEER_SCHEMA,
+            purpose="peers:suggest",
+        )
+    except llm.LlmError as cause:
+        logger.warning(
+            "The model did not answer for peer selection",
+            extra={"cik": company.cik, "error": str(cause)},
+        )
+        return []
+
+    raw = answer.get("tickers")
+    if not isinstance(raw, list):
+        return []
+
+    candidates: list[_Candidate] = []
+    dropped: list[str] = []
+    seen: set[str] = set()
+
+    for item in raw[:PEER_LLM_MAX_SUGGESTIONS]:
+        if not isinstance(item, str):
+            continue
+        entry = index.by_ticker(item)
+        if entry is None:
+            # The register does not know this ticker, so neither does a report.
+            dropped.append(item.strip().upper())
+            continue
+        if entry.cik == company.cik or entry.cik in seen:
+            continue
+        seen.add(entry.cik)
+        candidates.append(
+            _Candidate(entry=entry, method=PeerSelectionMethod.LLM_SUGGESTION)
+        )
+
+    if dropped:
+        logger.warning(
+            "Suggested tickers did not resolve to a live filer and were dropped",
+            extra={"cik": company.cik, "dropped": dropped},
+        )
+
+    return candidates
+
+
+# --- Profiles and fiscal year ----------------------------------------------
+
+
+async def _load_profile(client: EdgarClient, cik: str) -> _Profile | None:
+    """Reads a candidate's submissions document.
+
+    This is the confirmation that a candidate is a live CIK: a filer EDGAR has
+    no submissions document for does not become a peer, whichever rung named
+    it. It also supplies the fiscal year end the mismatch check needs.
+    """
+    try:
+        submissions = await client.get_json(submissions_url(cik))
+    except EdgarError:
+        logger.warning("Could not confirm peer against EDGAR", extra={"cik": cik})
+        return None
+
+    filings = submissions.get("filings")
+    recent = filings.get("recent") if isinstance(filings, dict) else None
+    recent_map = recent if isinstance(recent, dict) else {}
+
+    accession, filed, filer_type = _latest_filing_of(recent_map)
+    sic = submissions.get("sic")
+    fiscal_year_end = submissions.get("fiscalYearEnd")
+
+    return _Profile(
+        cik=pad_cik(cik),
+        name=str(submissions.get("name", "")),
+        sic_code=str(sic) if sic else None,
+        fiscal_year_end=str(fiscal_year_end) if fiscal_year_end else None,
+        filer_type=filer_type,
+        latest_accession_no=accession,
+        latest_filed_date=filed,
+    )
+
+
+def _latest_filing_of(
+    recent: dict[str, Any],
+) -> tuple[str | None, dt.date | None, FilerType | None]:
+    """The most recent filing in a submissions block, and the filer type.
+
+    The filer type comes from the most recent annual form present, which is
+    the same rule m01 applies — a company is what it files now.
+    """
+    forms = _column(recent, "form")
+    accessions = _column(recent, "accessionNumber")
+    dates = _column(recent, "filingDate")
+
+    latest_accession: str | None = None
+    latest_date: dt.date | None = None
+    filer_type: FilerType | None = None
+    annual_date: str = ""
+
+    for index, form in enumerate(forms):
+        accession = accessions[index] if index < len(accessions) else ""
+        filed_raw = dates[index] if index < len(dates) else ""
+        filed = _parse_date(filed_raw)
+
+        if accession and filed is not None and (
+            latest_date is None or filed > latest_date
+        ):
+            latest_accession, latest_date = accession, filed
+
+        stem = form.split(AMENDMENT_FORM_SUFFIX, 1)[0].strip()
+        if stem in ANNUAL_FORM_TO_FILER_TYPE and filed_raw > annual_date:
+            annual_date = filed_raw
+            filer_type = FilerType(ANNUAL_FORM_TO_FILER_TYPE[stem])
+
+    return latest_accession, latest_date, filer_type
+
+
+def _column(block: dict[str, Any], key: str) -> list[str]:
+    column = block.get(key)
+    if not isinstance(column, list):
+        return []
+    return [str(item) if item is not None else "" for item in column]
+
+
+def _parse_date(value: str) -> dt.date | None:
+    if not value:
+        return None
+    try:
+        return dt.date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def fiscal_year_gap_days(subject: str | None, peer: str | None) -> int | None:
+    """Days between two MMDD fiscal year ends, the short way round the year.
+
+    Returns None when either end is unknown — an unknown year end is not a
+    mismatch, and it is not a match either. Both are stated as such.
+
+    Public because it is the whole of the mismatch rule, and a rule that
+    decides what a report discloses is worth testing directly.
+    """
+    first, second = _day_of_year(subject), _day_of_year(peer)
+    if first is None or second is None:
+        return None
+    gap = abs(first - second)
+    return min(gap, DAYS_IN_YEAR - gap)
+
+
+def _day_of_year(mmdd: str | None) -> int | None:
+    """Turns EDGAR's MMDD fiscal year end into a day number, or None."""
+    if not mmdd or len(mmdd.strip()) != 4 or not mmdd.strip().isdigit():
+        return None
+    text = mmdd.strip()
+    month, day = int(text[:2]), int(text[2:])
+    if not 1 <= month <= 12 or not 1 <= day <= 31:
+        return None
+    try:
+        # A non-leap year, so 29 February resolves to the 28th rather than
+        # failing. The gap this feeds is measured in days, not in dates.
+        safe_day = min(day, 28) if month == 2 else day
+        return dt.date(2001, month, safe_day).timetuple().tm_yday
+    except ValueError:
+        return None
+
+
+def _fiscal_year_note(
+    subject: Company, profile: _Profile, gap: int | None
+) -> tuple[bool, str | None]:
+    """Whether the year ends differ materially, and how to say so."""
+    if gap is None:
+        if profile.fiscal_year_end is None:
+            return False, "Fiscal year end not disclosed by EDGAR for this filer."
+        return False, None
+
+    if gap <= FISCAL_YEAR_END_TOLERANCE_DAYS:
+        return False, None
+
+    return True, (
+        f"Fiscal year ends {_readable_mmdd(profile.fiscal_year_end)}, "
+        f"{gap} days from {subject.name}'s "
+        f"{_readable_mmdd(subject.fiscal_year_end)}. Figures cover different "
+        "periods and are not directly comparable."
+    )
+
+
+def _readable_mmdd(mmdd: str | None) -> str:
+    """Renders EDGAR's MMDD as MM-DD, or says it is not disclosed."""
+    if not mmdd or len(mmdd) != 4:
+        return "an undisclosed date"
+    return f"{mmdd[:2]}-{mmdd[2:]}"
+
+
+def _selection_note(
+    candidate: _Candidate, company: Company, fiscal_note: str | None
+) -> str:
+    """One line stating how this peer was chosen, and what to watch for."""
+    phrase = _METHOD_PHRASES[candidate.method].format(
+        form=candidate.source_form or "filing",
+        date=(
+            candidate.filed_date.isoformat()
+            if candidate.filed_date is not None
+            else "an undated filing"
+        ),
+        sic=company.sic_code or "the filer's",
+    )
+    note = f"Selected because it is {phrase}."
+    return f"{note} {fiscal_note}" if fiscal_note else note
+
+
+# --- Public interface -------------------------------------------------------
+
+
+async def select_peers(
+    company: Company,
+    manifest: Sequence[FilingRef],
+    client: EdgarClient,
+    *,
+    allow_model: bool = True,
+) -> PeerSet:
+    """Selects comparable companies, recording how each one was chosen.
+
+    Args:
+        company: The subject. Its SIC code and fiscal year end drive rungs 3
+            and the mismatch disclosure respectively.
+        manifest: Filings from m02. Rungs 1 and 2 read the latest proxy and
+            the latest annual report out of it.
+        client: The shared EDGAR client.
+        allow_model: When False the last rung is skipped entirely. Set this
+            where a filed source is required.
+
+    Returns:
+        A `PeerSet`. Empty when no rung produced a peer that resolved — which
+        is reported as a finding, not as a failure.
+    """
+    subject_cik = pad_cik(company.cik)
+    index = _NameIndex(await load_index(client))
+
+    accepted: dict[str, _Candidate] = {}
+    methods_used: list[PeerSelectionMethod] = []
+    notes: list[str] = []
+
+    for method, produce in _ladder(company, manifest, client, index, allow_model):
+        if len(accepted) >= PEER_TARGET_COUNT:
+            break
+
+        try:
+            candidates = await produce()
+        except Exception as cause:  # noqa: BLE001 — a rung never fails the ladder
+            logger.warning(
+                "Peer selection rung failed",
+                extra={
+                    "cik": company.cik,
+                    "method": str(method),
+                    "error": str(cause),
+                },
+            )
+            notes.append(f"{_rung_name(method)} could not be read.")
+            continue
+
+        added = 0
+        for candidate in candidates:
+            if len(accepted) >= PEER_TARGET_COUNT:
+                break
+            if candidate.entry.cik in accepted or candidate.entry.cik == subject_cik:
+                continue
+            accepted[candidate.entry.cik] = candidate
+            added += 1
+
+        if added:
+            methods_used.append(method)
+        else:
+            notes.append(f"{_rung_name(method)} named no listed comparable.")
+
+    peers = await _build_peers(company, list(accepted.values()), client)
+
+    logger.info(
+        "Peer selection complete",
+        extra={
+            "cik": company.cik,
+            "peers": len(peers),
+            "methods": [str(method) for method in methods_used],
+            "fiscal_year_mismatches": sum(
+                1 for peer in peers if peer.fiscal_year_mismatch
+            ),
+        },
+    )
+    return PeerSet(
+        subject_cik=subject_cik,
+        peers=tuple(peers[:PEER_MAX_COUNT]),
+        methods_used=tuple(methods_used),
+        notes=tuple(notes),
+    )
+
+
+def _ladder(
+    company: Company,
+    manifest: Sequence[FilingRef],
+    client: EdgarClient,
+    index: _NameIndex,
+    allow_model: bool,
+) -> list[tuple[PeerSelectionMethod, Any]]:
+    """The rungs, in order, each as a callable that produces candidates."""
+    subject_cik = pad_cik(company.cik)
+    proxy = _latest_of_form(manifest, frozenset({PROXY_FORM}))
+    annual = _latest_of_form(manifest, _annual_forms_for(company.filer_type))
+
+    rungs: list[tuple[PeerSelectionMethod, Any]] = []
+
+    async def _from_proxy() -> list[_Candidate]:
+        if proxy is None:
+            return []
+        return await _candidates_from_filing(
+            client,
+            proxy,
+            PEER_GROUP_MARKERS,
+            PeerSelectionMethod.COMPENSATION_PEER_GROUP,
+            index,
+            subject_cik,
+        )
+
+    async def _from_annual() -> list[_Candidate]:
+        if annual is None:
+            return []
+        return await _candidates_from_filing(
+            client,
+            annual,
+            COMPETITION_MARKERS,
+            PeerSelectionMethod.COMPETITION_PARAGRAPH,
+            index,
+            subject_cik,
+        )
+
+    async def _from_sic() -> list[_Candidate]:
+        return await _candidates_from_sic(client, company, index)
+
+    async def _from_model() -> list[_Candidate]:
+        return await _candidates_from_model(company, index)
+
+    rungs.append((PeerSelectionMethod.COMPENSATION_PEER_GROUP, _from_proxy))
+    rungs.append((PeerSelectionMethod.COMPETITION_PARAGRAPH, _from_annual))
+    rungs.append((PeerSelectionMethod.SIC_MATCH, _from_sic))
+    if allow_model:
+        rungs.append((PeerSelectionMethod.LLM_SUGGESTION, _from_model))
+    return rungs
+
+
+def _rung_name(method: PeerSelectionMethod) -> str:
+    """How a rung is named when the interface reports on it."""
+    return {
+        PeerSelectionMethod.COMPENSATION_PEER_GROUP: (
+            "The compensation peer group"
+        ),
+        PeerSelectionMethod.COMPETITION_PARAGRAPH: (
+            "The competition discussion"
+        ),
+        PeerSelectionMethod.SIC_MATCH: "EDGAR's industry classification",
+        PeerSelectionMethod.LLM_SUGGESTION: "The suggested comparables",
+    }[method]
+
+
+async def _build_peers(
+    company: Company,
+    candidates: Sequence[_Candidate],
+    client: EdgarClient,
+) -> list[Peer]:
+    """Confirms each candidate against EDGAR and builds the peer.
+
+    A candidate whose CIK has no submissions document is dropped here — the
+    ticker index said it was live, and EDGAR's own record is the confirmation.
+    """
+    peers: list[Peer] = []
+
+    for candidate in candidates:
+        profile = await _load_profile(client, candidate.entry.cik)
+        if profile is None:
+            logger.warning(
+                "Dropping peer that could not be confirmed against EDGAR",
+                extra={
+                    "cik": candidate.entry.cik,
+                    "ticker": candidate.entry.ticker,
+                },
+            )
+            continue
+
+        gap = fiscal_year_gap_days(
+            company.fiscal_year_end, profile.fiscal_year_end
+        )
+        mismatch, fiscal_note = _fiscal_year_note(company, profile, gap)
+
+        peers.append(
+            Peer(
+                cik=profile.cik,
+                ticker=candidate.entry.ticker,
+                name=profile.name or candidate.entry.name,
+                selection_method=candidate.method,
+                selection_source_url=candidate.source_url,
+                selection_accession_no=candidate.accession_no,
+                selection_filed_date=candidate.filed_date,
+                selection_note=_selection_note(candidate, company, fiscal_note),
+                sic_code=profile.sic_code,
+                filer_type=profile.filer_type,
+                fiscal_year_end=profile.fiscal_year_end,
+                fiscal_year_mismatch=mismatch,
+                fiscal_year_note=fiscal_note if mismatch else None,
+            )
+        )
+
+    return peers
+
+
+def peer_facts(peer_set: PeerSet, subject: Company) -> list[Fact]:
+    """One fact per peer, carrying the selection method and any mismatch.
+
+    Provenance points at the filing that named the peer when one did, and at
+    the peer's own EDGAR record otherwise. Either way the fact traces to an SEC
+    source: the selection method is disclosed in the fact's own text, so a
+    reader is never shown a peer without being told how it got there.
+
+    A peer that cannot produce a sound fact is skipped rather than patched.
+    """
+    facts: list[Fact] = []
+    today = dt.date.today()
+
+    for peer in peer_set.peers:
+        accession = peer.selection_accession_no
+        source_url = (
+            str(peer.selection_source_url) if peer.selection_source_url else None
+        )
+        filed = peer.selection_filed_date
+
+        if accession is None:
+            # No filing named this peer, so the peer's own EDGAR record is the
+            # source: it is what confirms the company exists and files.
+            accession = f"CIK{peer.cik}"
+            source_url = submissions_url(peer.cik)
+            filed = filed or today
+        elif source_url is None:
+            source_url = filing_index_url(peer.cik, accession)
+
+        try:
+            facts.append(
+                Fact(
+                    metric=PEER_METRIC_TEMPLATE.format(ticker=peer.ticker),
+                    label=f"Peer — {peer.ticker}",
+                    value=None,
+                    display_value=f"{peer.name} ({peer.ticker}). {peer.selection_note}",
+                    unit=None,
+                    period_start=None,
+                    period_end=filed or today,
+                    fiscal_year=None,
+                    tier=SourceTier.FILING,
+                    source_type=SourceType.SEC_FILING,
+                    source_url=source_url,
+                    accession_no=accession,
+                    filed_date=filed or today,
+                    extraction_method=ExtractionMethod.NARRATIVE,
+                    confidence=1.0,
+                )
+            )
+        except ValueError as cause:
+            logger.warning(
+                "Peer could not be expressed as a sourced fact",
+                extra={
+                    "cik": subject.cik,
+                    "peer_ticker": peer.ticker,
+                    "error": str(cause),
+                },
+            )
+
+    return facts
