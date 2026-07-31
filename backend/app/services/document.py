@@ -63,6 +63,13 @@ _ABBREVIATIONS = (
     "fig.",
 )
 
+#: Every primary filing document is now inline XBRL, which opens with an XML
+#: declaration ("<?xml version='1.0' encoding='...'?>"). libxml2 refuses to
+#: parse a decoded Unicode string that still carries one — the encoding is
+#: already resolved by the time this string exists, so the declaration is
+#: stale and safe to discard before parsing.
+_XML_DECLARATION = re.compile(r"^\s*<\?xml[^>]*\?>\s*", re.IGNORECASE)
+
 #: Non-breaking and zero-width characters EDGAR documents are full of.
 _INVISIBLES = str.maketrans(
     {
@@ -87,6 +94,8 @@ def html_to_text(markup: str) -> str:
     """
     if not markup.strip():
         return ""
+
+    markup = _XML_DECLARATION.sub("", markup, count=1)
 
     try:
         document = html.fromstring(markup)

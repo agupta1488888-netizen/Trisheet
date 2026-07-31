@@ -156,16 +156,28 @@ def risk_headings(facts: Sequence[Fact]) -> list[str]:
 def _locate(text: str, spec: NarrativeSpec) -> str | None:
     """The text of one item, or None when it is not in this document.
 
-    A 10-K names every item twice: once in its table of contents and once as
-    the item itself. The contents entry comes first and is followed by a page
-    number, so the *last* heading match that yields a long enough body is the
-    real one. Trying them from the end is what avoids extracting a line of the
-    contents page as the business description.
+    A 10-K names every item at least twice: once in its table of contents,
+    once as the item heading itself, and often again wherever later prose
+    cross-references it ("see Item 1. Business"). The contents entry comes
+    first and is followed by a page number, so the *last* heading match that
+    yields a long enough body used to be treated as the real one — but a
+    cross-reference near the end of the document can satisfy that same test.
+    What a cross-reference never does is set the heading in capitals the way
+    the filer's own heading line does, so a capitalised match is preferred
+    when one exists; only if none is found does document order become the
+    tiebreaker again, for filers that do not follow that convention.
     """
     lowered = text.lower()
 
     for heading in spec.headings:
-        for start in reversed(_occurrences(lowered, heading.lower())):
+        occurrences = _occurrences(lowered, heading.lower())
+        capitalised = [
+            start
+            for start in occurrences
+            if text[start : start + len(heading)].isupper()
+        ]
+
+        for start in reversed(capitalised or occurrences):
             body = _body_from(text, lowered, start, spec)
             if body is not None:
                 return body
@@ -192,14 +204,40 @@ def _body_from(
     """
     end = len(text)
     for terminator in spec.terminators:
-        at = lowered.find(terminator.lower(), start + 1)
-        if at != -1:
+        at = _find_boundary(text, lowered, terminator, start)
+        if at is not None:
             end = min(end, at)
 
     body = text[start:end].strip()
     if len(body) < NARRATIVE_MIN_SECTION_CHARS:
         return None
     return body
+
+
+def _find_boundary(
+    text: str, lowered: str, terminator: str, after: int
+) -> int | None:
+    """The next real heading matching `terminator`, or None if it never appears.
+
+    A section's own prose often cross-references the item that closes it —
+    an MD&A overview typically says "see Item 8. Financial Statements" long
+    before Item 8 actually begins, which would truncate the body at that
+    mention rather than the section's real end. A genuine heading is
+    capitalised the way the filer's own heading line is; a cross-reference
+    is not, so the first capitalised occurrence wins. Only when no occurrence
+    is capitalised — a filer that does not follow that convention — does the
+    first occurrence at all stand in, preserving the previous behaviour.
+    """
+    needle = terminator.lower()
+    first_at: int | None = None
+    at = lowered.find(needle, after + 1)
+    while at != -1:
+        if first_at is None:
+            first_at = at
+        if text[at : at + len(terminator)].isupper():
+            return at
+        at = lowered.find(needle, at + len(needle))
+    return first_at
 
 
 def _truncate(body: str) -> str:
