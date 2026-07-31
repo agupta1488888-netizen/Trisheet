@@ -92,7 +92,9 @@ CURRENCY_PROBE_CONCEPTS = (
 )
 
 #: Unit keys that are not currencies and must never be read as one.
-NON_CURRENCY_UNIT_KEYS = frozenset({"shares", "pure", "USD-per-shares"})
+#: "USD/shares" is the key SEC's companyfacts API uses for per-share
+#: concepts (EPS, dividends per share) — not a hyphenated variant.
+NON_CURRENCY_UNIT_KEYS = frozenset({"shares", "pure", "USD/shares"})
 
 # --- Forms ------------------------------------------------------------------
 
@@ -1082,7 +1084,6 @@ RATIO_DISPLAY_TEMPLATE = "{value:.2f}"
 TIMES_DISPLAY_TEMPLATE = "{value:.2f}x"
 DAYS_DISPLAY_TEMPLATE = "{value:.0f} days"
 PER_SHARE_DISPLAY_TEMPLATE = "{value:.2f}"
-CURRENCY_DISPLAY_TEMPLATE = "{value:,.0f}"
 
 #: Metrics that get a growth series. Ordered: this is the display order.
 GROWTH_METRICS = (

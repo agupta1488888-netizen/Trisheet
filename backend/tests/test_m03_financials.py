@@ -1091,3 +1091,23 @@ async def test_segments_need_an_annual_filing_to_read(
     facts = await m03.extract_segments(make_company(), [quarterly])
 
     assert facts == []
+
+
+def test_currency_figures_display_in_millions() -> None:
+    """The financials tables promise "USD millions" in their footnote, so the
+
+    figure itself has to be divided by a million to match — not just carry
+    the label.
+    """
+    assert m03._format_value(46_710_000_000, "USD") == "46,710"
+    assert m03._format_value(605_000_000, "USD") == "605"
+    assert m03._format_value(450_000, "USD") == "0.45"
+
+
+def test_per_share_figures_are_not_scaled_to_millions() -> None:
+    """EPS and dividends-per-share are read in SEC's "USD/shares" unit, which
+
+    must stay off the millions conversion the same way share counts do.
+    """
+    assert m03._format_value(3.75, "USD/shares") == "3.75"
+    assert m03._format_value(1_610_800_000, "shares") == "1,610,800,000"

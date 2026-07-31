@@ -43,6 +43,7 @@ from app.config import (
     CONFIDENCE_NOT_DISCLOSED,
     CONFIDENCE_PENALTY_PER_TAG_FALLBACK,
     CONFIDENCE_PENALTY_TAXONOMY_FALLBACK,
+    DISPLAY_SCALE_DIVISOR,
     MAX_ANNUAL_PERIODS,
     MAX_INSTANCE_DOCUMENT_BYTES,
     METRIC_SPECS,
@@ -739,10 +740,15 @@ def _source_url(
 
 
 def _format_value(value: float, unit: str) -> str:
-    """Renders a figure for display. Never blank, never a bare float repr."""
+    """Renders a figure for display. Never blank, never a bare float repr.
+
+    Currency figures are tabulated in millions, per DISPLAY_SCALE_NOTE; the
+    Fact's own `value` field keeps the raw filed amount.
+    """
     if unit in NON_CURRENCY_UNIT_KEYS:
         return f"{value:,.2f}".rstrip("0").rstrip(".") or "0"
-    return f"{value:,.0f}" if abs(value) >= 1000 else f"{value:,.2f}"
+    scaled = value / DISPLAY_SCALE_DIVISOR
+    return f"{scaled:,.0f}" if abs(scaled) >= 1 else f"{scaled:,.2f}"
 
 
 def _latest_annual_filing(

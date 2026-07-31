@@ -906,7 +906,7 @@ def _peers_section(
             )
         )
 
-    comparison_table = _peer_comparison_table(inputs.peer_comparison, cited)
+    comparison_table = _peer_comparison_table(inputs.peer_comparison, index, cited)
     if comparison_table is not None:
         tables.append(comparison_table)
 
@@ -920,7 +920,7 @@ def _peers_section(
 
 
 def _peer_comparison_table(
-    comparison: m08_peers.PeerComparison | None, cited: list[str]
+    comparison: m08_peers.PeerComparison | None, index: _Index, cited: list[str]
 ) -> FigureTable | None:
     """Revenue, margin and growth for the subject and each peer, side by side.
 
@@ -961,8 +961,8 @@ def _peer_comparison_table(
         return None
 
     note = (
-        "Each company's own figures, read from its own SEC filings the same "
-        "way the subject's are."
+        f"{_currency_note(index)}. Each company's own figures, read from its "
+        "own SEC filings the same way the subject's are."
     )
     if comparison.notes:
         note = f"{note} {' '.join(comparison.notes)}"

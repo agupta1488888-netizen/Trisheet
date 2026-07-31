@@ -456,6 +456,19 @@ def test_cash_flow_metrics() -> None:
     assert _value_of(result, "cashflow.earnings_quality", 2025) == 1.851852
 
 
+def test_a_derived_currency_figure_displays_in_millions() -> None:
+    """Matches the table footnote's promise of "millions" — the stored
+
+    `value` stays the raw figure the arithmetic used; only the rendered
+    text is scaled.
+    """
+    result = analyse(_general_facts())
+
+    fcf = _find(result, "cashflow.free_cash_flow", 2025)
+    assert fcf.value == 17_000.0
+    assert fcf.display_value == "0.02"
+
+
 def test_free_cash_flow_to_the_firm_takes_out_the_working_capital_build() -> None:
     result = analyse(_general_facts())
 

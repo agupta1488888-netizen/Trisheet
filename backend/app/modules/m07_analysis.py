@@ -59,9 +59,9 @@ from app.config import (
     COMMON_SIZE_BALANCE_METRICS,
     COMMON_SIZE_INCOME_METRICS,
     CURRENCY_DECIMAL_PLACES,
-    CURRENCY_DISPLAY_TEMPLATE,
     DAYS_DISPLAY_TEMPLATE,
     DAYS_IN_YEAR,
+    DISPLAY_SCALE_DIVISOR,
     GEOGRAPHIC_SEGMENT_AXES,
     GROWTH_METRICS,
     NON_CURRENCY_UNIT_KEYS,
@@ -652,7 +652,9 @@ def _render(
         return _zero(rounded), PER_SHARE_DISPLAY_TEMPLATE.format(value=rounded), unit
 
     rounded = round(value, CURRENCY_DECIMAL_PLACES)
-    return _zero(rounded), CURRENCY_DISPLAY_TEMPLATE.format(value=rounded), currency
+    scaled = rounded / DISPLAY_SCALE_DIVISOR
+    display = f"{scaled:,.0f}" if abs(scaled) >= 1 else f"{scaled:,.2f}"
+    return _zero(rounded), display, currency
 
 
 def _zero(value: float) -> float:
