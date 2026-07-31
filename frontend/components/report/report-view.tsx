@@ -15,6 +15,7 @@
  */
 
 import { useMemo } from "react";
+import Link from "next/link";
 
 import { SECTION_NAV_LABEL } from "@/lib/constants";
 import { buildSourceIndex } from "@/lib/provenance";
@@ -63,11 +64,20 @@ export function ReportView({ document }: { document: ReportDocument }) {
         <SectionSidebar ids={sections.map((section) => section.id)} />
 
         <main id="report" className="min-w-0">
-          <ReportHeader
-            company={document.company}
-            depth={document.depth}
-            completedAt={document.report.completedAt}
-          />
+          <Link
+            href="/"
+            className="text-sm text-certified underline underline-offset-4 hover:text-ink"
+          >
+            ← Back to search
+          </Link>
+
+          <div className="mt-6">
+            <ReportHeader
+              company={document.company}
+              depth={document.depth}
+              completedAt={document.report.completedAt}
+            />
+          </div>
 
           <div className="mt-8">
             <ComplianceStrip compliance={document.compliance} />
