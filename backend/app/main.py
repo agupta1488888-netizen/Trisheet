@@ -143,6 +143,100 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             edgar_configured=resolved.edgar_configured,
         )
 
+    @app.get("/debug/anthropic-net", include_in_schema=False)
+    async def debug_anthropic_net() -> dict[str, object]:
+        """TEMPORARY. Diagnoses the production "Connection error" reaching
+        Anthropic by running DNS, a raw TLS handshake and an httpx request
+        directly, so the real underlying exception is visible instead of the
+        SDK's generic message. Remove once the root cause is found.
+        """
+        import socket
+        import ssl
+        import time
+
+        import httpx
+
+        result: dict[str, object] = {}
+
+        try:
+            infos = socket.getaddrinfo(
+                "api.anthropic.com", 443, proto=socket.IPPROTO_TCP
+            )
+            addresses: list[str] = sorted({str(info[4][0]) for info in infos})
+            result["dns"] = addresses
+        except Exception as cause:  # noqa: BLE001 — diagnostic, wants everything
+            result["dns_error"] = repr(cause)
+            return result
+
+        ipv4 = next((addr for addr in addresses if ":" not in addr), None)
+        if ipv4 is not None:
+            try:
+                started = time.monotonic()
+                with socket.create_connection((ipv4, 443), timeout=10) as sock:
+                    result["tcp_connect_ms"] = round(
+                        (time.monotonic() - started) * 1000
+                    )
+                    ctx = ssl.create_default_context()
+                    started = time.monotonic()
+                    with ctx.wrap_socket(
+                        sock, server_hostname="api.anthropic.com"
+                    ) as tls:
+                        result["tls_handshake_ms"] = round(
+                            (time.monotonic() - started) * 1000
+                        )
+                        result["tls_version"] = tls.version()
+                        result["tls_cipher"] = tls.cipher()
+                        cert = tls.getpeercert()
+                        result["cert_subject"] = cert.get("subject") if cert else None
+                        result["cert_not_after"] = (
+                            cert.get("notAfter") if cert else None
+                        )
+            except Exception as cause:  # noqa: BLE001 — diagnostic, wants everything
+                result["raw_tls_error"] = repr(cause)
+                result["raw_tls_error_type"] = type(cause).__name__
+
+        try:
+            started = time.monotonic()
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.get(
+                    "https://api.anthropic.com/v1/models",
+                    headers={
+                        "x-api-key": "diagnostic-only-invalid-key",
+                        "anthropic-version": "2023-06-01",
+                    },
+                )
+                result["httpx_ms"] = round((time.monotonic() - started) * 1000)
+                result["httpx_status"] = response.status_code
+                result["httpx_http_version"] = response.http_version
+        except Exception as cause:  # noqa: BLE001 — diagnostic, wants everything
+            result["httpx_error"] = repr(cause)
+            result["httpx_error_type"] = type(cause).__name__
+
+        try:
+            from app.services import llm
+
+            llm.reset_client()
+            await llm.complete_json(
+                system="Reply with {\"ok\": true}.",
+                user="ping",
+                schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}},
+                    "required": ["ok"],
+                },
+                purpose="debug:ping",
+                max_tokens=16,
+            )
+            result["sdk_call"] = "ok"
+        except Exception as cause:  # noqa: BLE001 — diagnostic, wants everything
+            result["sdk_error"] = repr(cause)
+            result["sdk_error_type"] = type(cause).__name__
+            inner = getattr(cause, "__cause__", None)
+            if inner is not None:
+                result["sdk_error_cause"] = repr(inner)
+
+        return result
+
     # --- Resolution ---------------------------------------------------------
 
     @app.post("/resolve", response_model=None, tags=["resolve"])
