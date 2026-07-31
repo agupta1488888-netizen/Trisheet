@@ -3,9 +3,12 @@
 /**
  * The report.
  *
- * Two columns on a wide screen: the document, and the provenance rail beside
- * it. The rail is a peer of the content, not an appendix to it — that is why
- * the grid is declared here rather than inside either component.
+ * Three columns on a wide screen: the section sidebar, the document, and the
+ * provenance rail — both rails are peers of the content, not an appendix to
+ * it, which is why the grid is declared here rather than inside either
+ * component. Below `lg` there is no room for either column: the sidebar
+ * collapses into the horizontal nav under the header, and the provenance
+ * rail becomes a docked panel (handled inside `ProvenanceRail` itself).
  *
  * The seven sections render in brief order, exactly as `SECTION_ORDER`
  * declares. Sections are not reordered by how much data they happen to have.
@@ -21,10 +24,12 @@ import { ProvenanceProvider } from "@/components/report/provenance-context";
 import { ProvenanceRail } from "@/components/report/provenance-rail";
 import { ReportHeader } from "@/components/report/report-header";
 import { ReportSection } from "@/components/report/report-section";
+import { SectionSidebar } from "@/components/report/section-sidebar";
 
+/** Mobile/tablet fallback: the sidebar takes over at `lg`, see SectionSidebar. */
 function SectionNav({ ids }: { ids: readonly string[] }) {
   return (
-    <nav aria-label="Sections" className="border-b border-rule py-3">
+    <nav aria-label="Sections" className="border-b border-rule py-3 lg:hidden">
       <ul className="flex flex-wrap gap-x-5 gap-y-1">
         {ids.map((id) => (
           <li key={id}>
@@ -54,7 +59,9 @@ export function ReportView({ document }: { document: ReportDocument }) {
 
   return (
     <ProvenanceProvider index={index}>
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-x-12 px-5 py-10 pb-28 sm:px-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:pb-16">
+      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-x-10 px-5 py-10 pb-28 sm:px-8 lg:grid-cols-[9rem_minmax(0,1fr)_17rem] lg:pb-16">
+        <SectionSidebar ids={sections.map((section) => section.id)} />
+
         <main id="report" className="min-w-0">
           <ReportHeader
             company={document.company}
