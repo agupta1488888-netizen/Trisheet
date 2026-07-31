@@ -26,18 +26,18 @@ export function DepthSelector({
 }) {
   return (
     <fieldset disabled={disabled} className="min-w-0">
-      <legend className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+      <legend className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
         Analysis depth
       </legend>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {DEPTH_OPTIONS.map((option) => {
           const isSelected = option.value === value;
           return (
             <label
               key={option.value}
               className={cn(
-                "group flex cursor-pointer flex-col gap-1.5 rounded-xl border-2 p-4 transition-colors motion-reduce:transition-none",
+                "group flex cursor-pointer flex-col gap-2 rounded-xl border-2 p-5 transition-colors motion-reduce:transition-none",
                 isSelected
                   ? "border-emerald-500 bg-emerald-50"
                   : "border-slate-200 bg-white hover:border-slate-300",
@@ -58,7 +58,7 @@ export function DepthSelector({
                 />
                 <span
                   className={cn(
-                    "text-sm",
+                    "text-base",
                     isSelected
                       ? "font-semibold text-emerald-800"
                       : "font-medium text-ink",
@@ -66,11 +66,11 @@ export function DepthSelector({
                 >
                   {option.label}
                 </span>
-                <span className="ref text-[0.68rem] text-muted-foreground">
+                <span className="ref text-xs text-muted-foreground">
                   {option.periodsLabel}
                 </span>
               </span>
-              <span className="text-xs leading-snug text-muted-foreground">
+              <span className="text-sm leading-snug text-muted-foreground">
                 {option.summary}
               </span>
             </label>

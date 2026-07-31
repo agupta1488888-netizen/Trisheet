@@ -92,7 +92,7 @@ export function InputScreen({
       <div className="relative mx-auto flex min-h-screen max-w-6xl items-center px-5 py-16 sm:px-8 sm:py-24">
         <div className="grid w-full grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
           <div className="lg:order-1">
-            <div className="rounded-3xl border border-slate-100 bg-white p-8 shadow-2xl shadow-slate-950/40 sm:p-12">
+            <div className="rounded-3xl border border-slate-100 bg-white p-10 shadow-2xl shadow-slate-950/40 sm:p-14">
               <TickerForm search={search} resolve={resolve} onResolved={start} />
             </div>
           </div>

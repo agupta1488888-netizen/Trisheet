@@ -23,7 +23,6 @@ import type {
 } from "@/lib/types";
 import { DepthSelector } from "@/components/input/depth-selector";
 import { Disambiguation } from "@/components/input/disambiguation";
-import { ExampleChips } from "@/components/input/example-chips";
 import { TickerCombobox } from "@/components/input/ticker-combobox";
 
 export interface TickerFormProps {
@@ -95,12 +94,12 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
       >
         <label
           htmlFor={inputId}
-          className="text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+          className="text-sm font-semibold tracking-wide text-muted-foreground uppercase"
         >
           Company
         </label>
 
-        <div className="mt-2">
+        <div className="mt-3">
           <TickerCombobox
             inputId={inputId}
             value={query}
@@ -117,12 +116,12 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
           />
         </div>
 
-        <p id={`${inputId}-hint`} className="mt-2 text-xs text-muted-foreground">
+        <p id={`${inputId}-hint`} className="mt-3 text-sm text-muted-foreground">
           US-listed companies, by ticker or name. Every figure in the profile
           traces back to an SEC filing.
         </p>
 
-        <div className="mt-10">
+        <div className="mt-12">
           <DepthSelector
             name={depthName}
             value={depth}
@@ -131,25 +130,14 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
           />
         </div>
 
-        <div className="mt-10">
+        <div className="mt-12">
           <button
             type="submit"
             disabled={isResolving || query.trim() === ""}
-            className="rounded-xl bg-emerald-600 px-8 py-3.5 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none motion-reduce:transition-none"
+            className="w-full rounded-xl bg-emerald-600 px-10 py-5 text-lg font-semibold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none motion-reduce:transition-none sm:w-auto"
           >
             {isResolving ? "Resolving…" : "Build profile"}
           </button>
-        </div>
-
-        <div className="mt-10 border-t border-rule pt-4">
-          <ExampleChips
-            disabled={isResolving}
-            onPick={(ticker) => {
-              setQuery(ticker);
-              setResolution(null);
-              setError(null);
-            }}
-          />
         </div>
       </form>
 
