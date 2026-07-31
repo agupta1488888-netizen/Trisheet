@@ -428,8 +428,14 @@ class TestSectionThreeTiers:
     def test_tier_counts_are_reported_for_the_compliance_strip(self) -> None:
         result = verify(report(), [make_fact(), make_fact(metric="x.y"), market_fact()])
 
-        assert result.tier_counts == {1: 2, 3: 1}
+        assert result.tier_counts == {1: 2, 2: 0, 3: 1, 4: 0}
         assert result.fact_count == 3
+
+    def test_tier_counts_include_tiers_with_no_facts(self) -> None:
+        """A tier with zero facts reports 0 — the UI renders a missing key as "NaN"."""
+        result = verify(report(), [make_fact()])
+
+        assert result.tier_counts == {1: 1, 2: 0, 3: 0, 4: 0}
 
 
 # --- Segment sum ------------------------------------------------------------

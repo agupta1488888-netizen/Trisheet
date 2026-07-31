@@ -73,6 +73,7 @@ from app.models import (
     GeneratedReport,
     GeneratedSection,
     Severity,
+    SourceTier,
     Violation,
 )
 from app.modules.m06_factstore import section_for_metric
@@ -855,7 +856,9 @@ def verify(
 
     coverage_ratio = 1.0 if figure_count == 0 else cited_count / figure_count
 
-    tier_counts: dict[int, int] = defaultdict(int)
+    # Every tier starts at 0 so a tier with no facts reports a count, not a
+    # missing key — the UI renders whatever key is absent as "NaN".
+    tier_counts: dict[int, int] = {int(tier): 0 for tier in SourceTier}
     for fact in facts:
         tier_counts[int(fact.tier)] += 1
 
