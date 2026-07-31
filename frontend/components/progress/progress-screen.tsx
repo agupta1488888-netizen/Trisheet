@@ -13,6 +13,7 @@
  */
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { useReportProgress } from "@/hooks/use-report-progress";
@@ -47,20 +48,29 @@ export function ProgressScreen({
       id="main"
       className="mx-auto min-h-screen max-w-3xl px-5 py-16 sm:px-8"
     >
-      <StepFeed
-        ticker={ticker}
-        status={status}
-        steps={steps}
-        errorMessage={errorMessage}
-      />
+      <Link
+        href="/"
+        className="text-sm text-certified underline underline-offset-4 hover:text-ink"
+      >
+        ← Back to search
+      </Link>
 
-      {isLive || status === "failed" ? null : (
-        <p className="mt-6 border-l-2 border-l-market pl-4 text-xs leading-relaxed text-muted-foreground">
-          The live feed is not connected, so this page is checking for progress
-          every couple of seconds instead of listing each step as it finishes.
-          The report itself is unaffected.
-        </p>
-      )}
+      <div className="mt-6">
+        <StepFeed
+          ticker={ticker}
+          status={status}
+          steps={steps}
+          errorMessage={errorMessage}
+        />
+
+        {isLive || status === "failed" ? null : (
+          <p className="mt-6 border-l-2 border-l-market pl-4 text-xs leading-relaxed text-muted-foreground">
+            The live feed is not connected, so this page is checking for
+            progress every couple of seconds instead of listing each step as
+            it finishes. The report itself is unaffected.
+          </p>
+        )}
+      </div>
     </main>
   );
 }
