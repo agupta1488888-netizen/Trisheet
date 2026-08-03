@@ -196,6 +196,12 @@ SECTOR_METRIC_GROUPS: dict[SectorTemplate, frozenset[MetricGroup]] = {
     | {MetricGroup.CASH_FLOW, MetricGroup.INSURANCE},
 }
 
+#: Every group there is, regardless of sector template. The chat assistant
+#: passes this to `analyse` so a filer's own template cannot gate out a metric
+#: that its reported facts can still support — the report pipeline never passes
+#: this, and keeps exactly today's per-sector selection.
+ALL_METRIC_GROUPS: frozenset[MetricGroup] = frozenset(MetricGroup)
+
 
 class _Kind(StrEnum):
     """How a derived figure is measured, which fixes its unit and rendering."""
@@ -268,7 +274,10 @@ def fact_id(fact: Fact) -> str:
 
 
 def analyse(
-    facts: Sequence[Fact], *, sic_code: str | None = None
+    facts: Sequence[Fact],
+    *,
+    sic_code: str | None = None,
+    groups: frozenset[MetricGroup] | None = None,
 ) -> AnalysisResult:
     """Derives every metric the filer's sector template calls for.
 
@@ -282,34 +291,40 @@ def analyse(
             build a trailing twelve months.
         sic_code: The filer's SIC code, as EDGAR reports it. Selects the metric
             set. An absent or unrecognised code gets the general set.
+        groups: Overrides the sector template's metric selection when given.
+            The report pipeline never passes this, so it always gets exactly
+            today's per-sector selection. The chat assistant passes
+            `ALL_METRIC_GROUPS` so a metric the filer's own template gates out
+            (e.g. a bank's current ratio) can still be derived from the same
+            reported facts when a reader asks for it directly.
 
     Returns:
         The derived facts and the derivation behind each, sorted so that the
         result is stable across runs.
     """
     template = sector_template_for_sic(sic_code)
-    groups = SECTOR_METRIC_GROUPS[template]
+    effective_groups = groups if groups is not None else SECTOR_METRIC_GROUPS[template]
 
     workspace = _Workspace(panel=_build_panel(facts))
     ledger = _Ledger()
 
-    _compute_derived_absolutes(workspace, ledger, groups)
-    _compute_growth(workspace, ledger, groups)
-    _compute_margins(workspace, ledger, groups)
-    _compute_returns(workspace, ledger, groups)
-    _compute_dupont(workspace, ledger, groups)
-    _compute_liquidity(workspace, ledger, groups)
-    _compute_leverage(workspace, ledger, groups)
-    _compute_cash_flow(workspace, ledger, groups)
-    _compute_working_capital(workspace, ledger, groups)
-    _compute_common_size(workspace, ledger, groups)
-    _compute_margin_bridge(workspace, ledger, groups)
-    _compute_per_share(workspace, ledger, groups)
-    _compute_bank(workspace, ledger, groups)
-    _compute_reit(workspace, ledger, groups)
-    _compute_insurance(workspace, ledger, groups)
-    _compute_attribution(facts, workspace, ledger, groups)
-    _compute_ttm(facts, ledger, groups)
+    _compute_derived_absolutes(workspace, ledger, effective_groups)
+    _compute_growth(workspace, ledger, effective_groups)
+    _compute_margins(workspace, ledger, effective_groups)
+    _compute_returns(workspace, ledger, effective_groups)
+    _compute_dupont(workspace, ledger, effective_groups)
+    _compute_liquidity(workspace, ledger, effective_groups)
+    _compute_leverage(workspace, ledger, effective_groups)
+    _compute_cash_flow(workspace, ledger, effective_groups)
+    _compute_working_capital(workspace, ledger, effective_groups)
+    _compute_common_size(workspace, ledger, effective_groups)
+    _compute_margin_bridge(workspace, ledger, effective_groups)
+    _compute_per_share(workspace, ledger, effective_groups)
+    _compute_bank(workspace, ledger, effective_groups)
+    _compute_reit(workspace, ledger, effective_groups)
+    _compute_insurance(workspace, ledger, effective_groups)
+    _compute_attribution(facts, workspace, ledger, effective_groups)
+    _compute_ttm(facts, ledger, effective_groups)
 
     return ledger.result(template)
 

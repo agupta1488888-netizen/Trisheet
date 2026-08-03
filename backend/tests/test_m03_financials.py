@@ -47,10 +47,13 @@ async def _extract(
     *,
     company: Company | None = None,
     manifest: list[Filing] | None = None,
+    max_periods: int = MAX_ANNUAL_PERIODS,
 ) -> list[Fact]:
     stub_edgar.register(_facts_url(), payload)
     return await m03.extract_financials(
-        company or make_company(), manifest if manifest is not None else []
+        company or make_company(),
+        manifest if manifest is not None else [],
+        max_periods=max_periods,
     )
 
 
@@ -590,6 +593,53 @@ async def test_only_the_most_recent_periods_are_kept(
         2021,
         2020,
     ]
+
+
+async def test_max_periods_narrows_the_table(stub_edgar: StubEdgarClient) -> None:
+    """A smaller analysis depth asks for, and gets, fewer years."""
+    rows = [
+        annual_row(
+            start=f"{year}-01-01",
+            end=f"{year}-12-31",
+            val=year,
+            accn=f"0000320193-{year % 100:02d}-000001",
+            filed=f"{year + 1}-02-01",
+            fy=year,
+        )
+        for year in range(2012, 2025)
+    ]
+
+    facts = _revenue(
+        await _extract(stub_edgar, company_facts(rows=rows), max_periods=3)
+    )
+
+    assert len(facts) == 3
+    assert [fact.period_end.year for fact in facts] == [2024, 2023, 2022]
+
+
+async def test_max_periods_widens_the_table_past_the_default(
+    stub_edgar: StubEdgarClient,
+) -> None:
+    """A larger analysis depth is not capped at the global default of 5."""
+    rows = [
+        annual_row(
+            start=f"{year}-01-01",
+            end=f"{year}-12-31",
+            val=year,
+            accn=f"0000320193-{year % 100:02d}-000001",
+            filed=f"{year + 1}-02-01",
+            fy=year,
+        )
+        for year in range(2012, 2025)
+    ]
+
+    facts = _revenue(
+        await _extract(stub_edgar, company_facts(rows=rows), max_periods=10)
+    )
+
+    assert len(facts) == 10
+    assert facts[0].period_end.year == 2024
+    assert facts[-1].period_end.year == 2015
 
 
 # --- Amendment precedence ---------------------------------------------------

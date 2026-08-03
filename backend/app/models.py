@@ -25,7 +25,14 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 from pydantic.alias_generators import to_camel
 
-from app.config import FACT_ID_LENGTH, FACT_ID_PREFIX, NOT_DISCLOSED_TEXT
+from app.config import (
+    CHAT_MESSAGE_MAX_CHARS,
+    CUSTOM_PERIODS_MAX,
+    CUSTOM_PERIODS_MIN,
+    FACT_ID_LENGTH,
+    FACT_ID_PREFIX,
+    NOT_DISCLOSED_TEXT,
+)
 
 #: Applied to every model the API serialises. `serialize_by_alias` means a
 #: caller cannot forget `by_alias=True` and quietly emit snake case that the
@@ -673,6 +680,7 @@ class AnalysisDepth(StrEnum):
     BRIEF = "brief"
     STANDARD = "standard"
     FULL = "full"
+    CUSTOM = "custom"
 
 
 class ResolveRequest(WireModel):
@@ -685,6 +693,22 @@ class CreateReportRequest(WireModel):
     cik: str = Field(min_length=1)
     ticker: str = Field(min_length=1)
     depth: AnalysisDepth = AnalysisDepth.STANDARD
+    #: Annual periods to extract, required exactly when depth is CUSTOM. The
+    #: brief/standard/full depths carry their own fixed budget in
+    #: DEPTH_PROFILES; this field only ever overrides that for CUSTOM.
+    periods: int | None = Field(
+        default=None, ge=CUSTOM_PERIODS_MIN, le=CUSTOM_PERIODS_MAX
+    )
+
+    @model_validator(mode="after")
+    def _check_periods_matches_depth(self) -> Self:
+        if self.depth == AnalysisDepth.CUSTOM and self.periods is None:
+            message = "periods is required when depth is custom."
+            raise ValueError(message)
+        if self.depth != AnalysisDepth.CUSTOM and self.periods is not None:
+            message = "periods may only be set when depth is custom."
+            raise ValueError(message)
+        return self
 
 
 class TickerSuggestion(WireModel):
@@ -996,3 +1020,87 @@ class ReportMetrics(WireModel):
     tokens_per_report: int | None = None
     steps: tuple[StepTiming, ...] = ()
     generated_at: dt.datetime
+
+
+# --- Chat assistant ----------------------------------------------------------
+# A question about a completed report, answered from facts already stored for
+# it (tier 1) or derivable from the same reported facts under a wider metric
+# selection (tier 2). Nothing here reaches a company website or the open web —
+# those are separate, deliberately deferred phases. See app/modules/chat_agent.
+
+
+class ChatRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class ChatClaim(WireModel):
+    """One segment of an assistant turn, individually sourced.
+
+    A turn answering "not found" and a turn citing a filed figure are different
+    claims about the world, and this model cannot represent the two ambiguously:
+    a claim either names the tier-1/tier-2 fact it rests on, or it is marked
+    `not_found` and names nothing. There is no third shape — a claim that is
+    neither is not constructable, the same discipline `Fact` applies to itself.
+    """
+
+    text: str
+    #: 1 (filing) or 2 (company source). None only when `not_found`.
+    tier: SourceTier | None = None
+    fact_id: str | None = None
+    source_url: HttpUrl | None = None
+    source_type: SourceType | None = None
+    accession_no: str | None = None
+    filed_date: dt.date | None = None
+    #: This segment states that the question could not be answered from this
+    #: report's filed data. Carries no value, no tier, no citation.
+    not_found: bool = False
+
+    @model_validator(mode="after")
+    def _check_invariants(self) -> Self:
+        if not self.text.strip():
+            message = "A chat claim's text is blank."
+            raise ValueError(message)
+
+        if self.not_found:
+            if self.tier is not None or self.fact_id is not None:
+                message = "A not-found claim cannot also carry a tier or fact id."
+                raise ValueError(message)
+            return self
+
+        if self.tier is None or self.fact_id is None:
+            message = (
+                "A claim that is not not_found must carry the tier and fact id "
+                "of the fact it rests on."
+            )
+            raise ValueError(message)
+
+        if int(self.tier) not in (int(SourceTier.FILING), int(SourceTier.COMPANY)):
+            message = (
+                f"Chat claims may only cite tier 1 or tier 2 facts; got "
+                f"tier {int(self.tier)}. Company-website and web-search tiers "
+                "are separate, not-yet-shipped phases."
+            )
+            raise ValueError(message)
+
+        return self
+
+
+class ChatTurn(WireModel):
+    """One turn in a report's chat history, user or assistant."""
+
+    id: str
+    role: ChatRole
+    claims: tuple[ChatClaim, ...] = ()
+    #: Plain-text rendering of the turn, for simple display and for the user's
+    #: own turns, which carry no claims.
+    content: str
+    #: True when every claim in this turn is a not-found claim.
+    not_found: bool = False
+    created_at: dt.datetime
+
+
+class ChatRequest(WireModel):
+    """One question about a completed report."""
+
+    message: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX_CHARS)

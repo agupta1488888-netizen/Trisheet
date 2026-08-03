@@ -169,6 +169,13 @@ QUARTERLY_PERIOD_MAX_DAYS = 120
 #: Annual periods kept per metric, most recent first.
 MAX_ANNUAL_PERIODS = 5
 
+#: Bounds on the period count a "custom" depth request may ask for. XBRL
+#: company-facts data thins out well before this ceiling for most filers, but
+#: the bound exists to keep a malformed request from asking m03 to walk an
+#: unbounded number of periods.
+CUSTOM_PERIODS_MIN = 1
+CUSTOM_PERIODS_MAX = 15
+
 #: Suffix EDGAR appends to an amended form: "10-K" becomes "10-K/A".
 AMENDMENT_FORM_SUFFIX = "/A"
 
@@ -1911,7 +1918,18 @@ DEPTH_PROFILES: dict[str, DepthProfile] = {
         allow_model_peers=False,
     ),
     "full": DepthProfile(
-        periods=5,
+        periods=10,
+        narrative=True,
+        segments=True,
+        peers=True,
+        developments=True,
+        allow_model_peers=True,
+    ),
+    "custom": DepthProfile(
+        # Placeholder only: the run always overrides this with the caller's
+        # requested period count before this profile is used. Same module
+        # scope as "full" — depth's job here is purely how many years show.
+        periods=MAX_ANNUAL_PERIODS,
         narrative=True,
         segments=True,
         peers=True,
@@ -2028,6 +2046,32 @@ LATENCY_PERCENTILES = (50, 95)
 #: What a figure reads as when the window holds nothing to compute it from.
 #: Never 0% — "no runs yet" and "nothing succeeded" are different statements.
 METRIC_UNAVAILABLE_TEXT = "No data"
+
+# --- Chat assistant (chat_agent) ---------------------------------------------
+# A tool-calling assistant that answers a question about a completed report,
+# restricted to two source tiers: facts already stored for the report (tier
+# 1), and metrics derivable from data already fetched from EDGAR for the same
+# filer but not emitted in the original report (tier 2). Company websites,
+# general web search and valuation assumptions are separate, deliberately
+# deferred phases — no tool here reaches either.
+
+#: A chat message longer than this is not a question about a report.
+CHAT_MESSAGE_MAX_CHARS = 2_000
+
+#: Tool-call round trips the loop may make in one turn before it gives up and
+#: answers not-found. Loop safety, independent of any cross-request rate
+#: limit, which is out of scope for this pass.
+CHAT_MAX_TOOL_CALLS_PER_TURN = 4
+
+#: Token overlap between a question and a fact's metric path or label
+#: required before the cheap pre-check answers directly from the fact store,
+#: skipping the model loop entirely for the common case.
+CHAT_FACT_MATCH_MIN_OVERLAP = 2
+
+#: Facts described to the model in one tool result. A tool call that matches
+#: far more than this is not a targeted lookup, and the rest would only spend
+#: context without helping the model answer.
+CHAT_TOOL_RESULT_FACT_LIMIT = 20
 
 
 class Settings(BaseSettings):

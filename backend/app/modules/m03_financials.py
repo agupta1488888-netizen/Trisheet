@@ -144,7 +144,10 @@ class _Resolution:
 
 
 async def extract_financials(
-    company: Company, manifest: list[Filing]
+    company: Company,
+    manifest: list[Filing],
+    *,
+    max_periods: int = MAX_ANNUAL_PERIODS,
 ) -> list[Fact]:
     """Extracts reported figures as facts.
 
@@ -157,6 +160,9 @@ async def extract_financials(
         manifest: Filings from m02, used to point provenance at the exact
             document. An empty manifest is fine — provenance then addresses the
             filing index, which is derivable from the accession number alone.
+        max_periods: How many annual periods to keep per metric, most recent
+            first. Set by the requested analysis depth; callers outside the
+            report pipeline (e.g. peer comparison) can leave it at the default.
 
     Raises:
         edgar.EdgarError: EDGAR is the one hard dependency; if company facts
@@ -194,7 +200,7 @@ async def extract_financials(
             continue
 
         selected = _select_periods(
-            resolution.observations, spec, fiscal_years.keys()
+            resolution.observations, spec, fiscal_years.keys(), max_periods
         )
         for observation in selected:
             facts.append(
@@ -519,6 +525,7 @@ def _select_periods(
     observations: Sequence[_Observation],
     spec: MetricSpec,
     fiscal_year_ends: Collection[dt.date],
+    max_periods: int = MAX_ANNUAL_PERIODS,
 ) -> list[_Observation]:
     """Reduces every reported instance of a metric to one figure per period.
 
@@ -535,7 +542,7 @@ def _select_periods(
        an instant has no length to filter on, so a 10-Q balance sheet date
        would otherwise sit in the annual column looking like a year end.
 
-    The result is the most recent `MAX_ANNUAL_PERIODS` periods, newest first.
+    The result is the most recent `max_periods` periods, newest first.
     """
     by_dedup_key: dict[tuple[dt.date | None, dt.date, str], _Observation] = {}
     for observation in observations:
@@ -560,7 +567,7 @@ def _select_periods(
         ]
 
     ordered = sorted(selected, key=lambda o: o.period_end, reverse=True)
-    return ordered[:MAX_ANNUAL_PERIODS]
+    return ordered[:max_periods]
 
 
 def _supersedes(candidate: _Observation, incumbent: _Observation) -> bool:

@@ -36,6 +36,8 @@ from app.models import (
     AnalysisDepth,
     ApiError,
     ArtifactKind,
+    ChatRequest,
+    ChatTurn,
     CreateReportRequest,
     HealthResponse,
     Report,
@@ -47,9 +49,9 @@ from app.models import (
     SuggestionsResponse,
     TickerSuggestion,
 )
-from app.modules import m01_resolver
+from app.modules import chat_agent, m01_resolver
 from app.pipeline import run as run_pipeline
-from app.services import edgar, metrics, runlog
+from app.services import edgar, llm, metrics, runlog
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +320,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         task = asyncio.create_task(
             run_pipeline(
-                report.id, request.ticker, request.cik, request.depth
+                report.id,
+                request.ticker,
+                request.cik,
+                request.depth,
+                request.periods,
             ),
             name=f"report:{report.id}",
         )
@@ -377,6 +383,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "again to read it.",
             )
         return document
+
+    @app.post(
+        "/reports/{report_id}/chat", response_model=None, tags=["reports"]
+    )
+    async def chat(report_id: str, request: ChatRequest) -> Response | ChatTurn:
+        """Answers one question about a completed report.
+
+        Only meaningful once the run is complete, and only when a model is
+        configured — a question the assistant cannot reach the model to
+        answer is refused up front rather than answered with a stack trace.
+        """
+        report = runlog.get_report(report_id)
+        if report is None:
+            return _unknown_report()
+
+        if report.status is not ReportStatus.COMPLETE:
+            return _error(
+                409,
+                "chat_unavailable",
+                "This report is still being generated. The assistant can "
+                "answer questions once it is complete.",
+                detail=str(report.status),
+            )
+
+        if not llm.is_configured():
+            return _error(
+                503,
+                "chat_unconfigured",
+                "The assistant is not configured right now.",
+            )
+
+        return await chat_agent.answer_question(report_id, request.message)
 
     @app.get("/reports/{report_id}/artifacts/{kind}", tags=["reports"])
     async def fetch_artifact(report_id: str, kind: ArtifactKind) -> Response:

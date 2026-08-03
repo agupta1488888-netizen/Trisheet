@@ -21,7 +21,7 @@ Provenance without persistence
     down.
 
 Public interface
-    run(report_id, ticker, cik, depth) -> RunOutcome
+    run(report_id, ticker, cik, depth, periods) -> RunOutcome
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TypeVar
 
 from app.config import (
@@ -263,6 +263,7 @@ async def run(
     ticker: str,
     cik: str,
     depth: AnalysisDepth = AnalysisDepth.STANDARD,
+    periods: int | None = None,
 ) -> RunOutcome:
     """Generates one report, start to finish.
 
@@ -272,6 +273,10 @@ async def run(
         cik: The filer. Resolution has already happened at the API boundary,
             so this is a known identity rather than a query.
         depth: How far to go. Never changes a provenance rule.
+        periods: The annual period count for a CUSTOM depth. The API boundary
+            already enforces that this is set exactly when depth is CUSTOM
+            (`CreateReportRequest`), so it is trusted here rather than
+            re-validated.
 
     Returns:
         A `RunOutcome`. A failed run returns one too, carrying the reason —
@@ -279,6 +284,8 @@ async def run(
         vanished rather than a report that says what went wrong.
     """
     profile = DEPTH_PROFILES[str(depth)]
+    if depth == AnalysisDepth.CUSTOM and periods is not None:
+        profile = replace(profile, periods=periods)
     tracker = _Tracker(report_id)
     work = _Work()
     started = time.monotonic()
@@ -400,7 +407,9 @@ async def _extract(
     runlog.set_status(report_id, ReportStatus.EXTRACTING)
 
     async with tracker.step("m03") as outcome:
-        reported = await m03_financials.extract_financials(company, filings)
+        reported = await m03_financials.extract_financials(
+            company, filings, max_periods=profile.periods
+        )
         if profile.segments:
             reported.extend(
                 await m03_financials.extract_segments(company, filings)

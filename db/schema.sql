@@ -70,6 +70,13 @@ do $$ begin
   create type analysis_depth as enum ('brief', 'standard', 'full');
 exception when duplicate_object then null; end $$;
 
+-- 'custom' lets a caller request an exact period count instead of one of the
+-- three fixed budgets. Added after the type first shipped, so an existing
+-- deployment picks it up via ADD VALUE rather than the CREATE TYPE above.
+-- Must run outside an explicit transaction block (Postgres restriction on
+-- ALTER TYPE ... ADD VALUE).
+alter type analysis_depth add value if not exists 'custom';
+
 -- Where one pipeline step got to. 'skipped' is not 'failed': an optional
 -- source with nothing to give is a finding about the filer, not an error.
 do $$ begin
@@ -379,6 +386,51 @@ create table if not exists artifacts (
 create index if not exists artifacts_report_idx on artifacts (report_id);
 
 -- ---------------------------------------------------------------------------
+-- chat_messages
+--
+-- One question about a completed report and the assistant's answer, restricted
+-- to tiers 1 and 2 in this build (facts already stored for the report, or
+-- derivable from the same reported facts under a wider metric selection).
+-- Company-website and web-search tiers are separate, deliberately deferred
+-- phases; highest_tier_used, cost_usd and tool_calls are provisioned now so
+-- that phase needs no second migration.
+-- ---------------------------------------------------------------------------
+
+create table if not exists chat_messages (
+  id                 bigint generated always as identity primary key,
+  report_id          uuid        not null references reports (id) on delete cascade,
+  turn_index         integer     not null,
+  role               text        not null,
+  -- Plain-text rendering. Populated for both roles; the user's own question,
+  -- or the assistant's claims joined into continuous text for simple display.
+  content            text        not null,
+  -- ChatClaim[] for an assistant turn. Null for a user turn, which cites
+  -- nothing.
+  claims             jsonb,
+  -- Audit trail of what was tried before this turn's answer was reached.
+  tool_calls         jsonb       not null default '[]'::jsonb,
+  highest_tier_used  smallint,
+  not_found          boolean     not null default false,
+  input_tokens       integer,
+  output_tokens      integer,
+  cost_usd           numeric,
+  created_at         timestamptz not null default now(),
+
+  constraint chat_messages_role_known check (role in ('user', 'assistant')),
+  constraint chat_messages_tier_range
+    check (highest_tier_used is null or highest_tier_used between 1 and 2),
+  -- An assistant turn always carries claims (even if only a not-found claim);
+  -- a user turn carries none, because it is a question, not an answer.
+  constraint chat_messages_assistant_has_claims
+    check (role = 'user' or claims is not null)
+);
+
+create index if not exists chat_messages_report_turn_idx
+  on chat_messages (report_id, turn_index);
+create index if not exists chat_messages_report_tier_created_idx
+  on chat_messages (report_id, highest_tier_used, created_at desc);
+
+-- ---------------------------------------------------------------------------
 -- report_runs
 --
 -- The monitoring view, for humans reading the database directly. The /metrics
@@ -444,6 +496,7 @@ alter table facts        enable row level security;
 alter table market_cache enable row level security;
 alter table run_logs     enable row level security;
 alter table artifacts    enable row level security;
+alter table chat_messages enable row level security;
 
 drop policy if exists companies_read on companies;
 create policy companies_read on companies
@@ -473,6 +526,15 @@ create policy run_logs_read on run_logs
   for select to anon, authenticated using (true);
 
 -- market_cache carries no policy: no browser role can read it.
+
+-- chat_messages is readable so a returning visitor's chat history can be
+-- restored, but there is no insert/update policy for any browser role: a
+-- message reaches this table only through the backend's service-role write,
+-- the same rule that keeps provenance enforcement from being bypassed from
+-- the browser everywhere else in this schema.
+drop policy if exists chat_messages_read on chat_messages;
+create policy chat_messages_read on chat_messages
+  for select to anon, authenticated using (true);
 
 -- ---------------------------------------------------------------------------
 -- Realtime

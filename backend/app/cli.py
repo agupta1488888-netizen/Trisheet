@@ -4,6 +4,7 @@
     python -m app.cli discover NKE
     python -m app.cli discover "Taiwan Semiconductor" --limit 20
     python -m app.cli report NKE
+    python -m app.cli report NKE --depth custom --periods 7
     python -m app.cli matrix NKE AAPL COST --depth standard
 
 This is an operator tool: it writes to stdout, which is the one place in the
@@ -21,7 +22,7 @@ import sys
 from collections.abc import Sequence
 
 from app import pipeline
-from app.config import get_settings
+from app.config import CUSTOM_PERIODS_MAX, CUSTOM_PERIODS_MIN, get_settings
 from app.logging_config import configure_logging
 from app.models import (
     AnalysisDepth,
@@ -189,7 +190,9 @@ def _client() -> EdgarClient:
 # --- Running a report --------------------------------------------------------
 
 
-async def _generate(query: str, depth: AnalysisDepth) -> pipeline.RunOutcome:
+async def _generate(
+    query: str, depth: AnalysisDepth, periods: int | None = None
+) -> pipeline.RunOutcome:
     """Resolves a query and runs the full pipeline over it."""
     async with _client() as client:
         company = await _resolve_or_report(client, query)
@@ -198,7 +201,9 @@ async def _generate(query: str, depth: AnalysisDepth) -> pipeline.RunOutcome:
         raise pipeline.PipelineError(message)
 
     report = runlog.create_report(company.ticker or query, company.cik, depth)
-    return await pipeline.run(report.id, report.ticker, company.cik, depth)
+    return await pipeline.run(
+        report.id, report.ticker, company.cik, depth, periods
+    )
 
 
 def _print_outcome(outcome: pipeline.RunOutcome) -> None:
@@ -261,8 +266,10 @@ def _print_outcome(outcome: pipeline.RunOutcome) -> None:
             )
 
 
-async def _run_report(query: str, depth: AnalysisDepth) -> int:
-    outcome = await _generate(query, depth)
+async def _run_report(
+    query: str, depth: AnalysisDepth, periods: int | None = None
+) -> int:
+    outcome = await _generate(query, depth, periods)
     _print_outcome(outcome)
     return EXIT_OK if outcome.completed else EXIT_FAILED
 
@@ -283,7 +290,9 @@ _MATRIX_COLUMNS: tuple[tuple[str, int], ...] = (
 )
 
 
-async def _run_matrix(tickers: Sequence[str], depth: AnalysisDepth) -> int:
+async def _run_matrix(
+    tickers: Sequence[str], depth: AnalysisDepth, periods: int | None = None
+) -> int:
     """Runs the pipeline over several tickers and prints one row each.
 
     Sequential on purpose. The point of the matrix is to exercise the pipeline
@@ -298,7 +307,7 @@ async def _run_matrix(tickers: Sequence[str], depth: AnalysisDepth) -> int:
 
     for ticker in tickers:
         try:
-            outcome = await _generate(ticker, depth)
+            outcome = await _generate(ticker, depth, periods)
         except (pipeline.PipelineError, ResolutionError, EdgarError) as failure:
             failures += 1
             rows.append(_matrix_row(ticker, None, str(failure)))
@@ -404,6 +413,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     depths = [depth.value for depth in AnalysisDepth]
 
+    periods_help = (
+        f"annual periods to extract, {CUSTOM_PERIODS_MIN}-{CUSTOM_PERIODS_MAX} "
+        "(required with --depth custom, invalid otherwise)"
+    )
+
     report_parser = subparsers.add_parser(
         "report", help="run the full pipeline over one filer"
     )
@@ -414,6 +428,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=AnalysisDepth.STANDARD.value,
         help="how far the pipeline goes (default standard)",
     )
+    report_parser.add_argument("--periods", type=int, default=None, help=periods_help)
 
     matrix_parser = subparsers.add_parser(
         "matrix", help="run the pipeline over several filers and tabulate"
@@ -425,8 +440,26 @@ def _build_parser() -> argparse.ArgumentParser:
         default=AnalysisDepth.STANDARD.value,
         help="how far the pipeline goes (default standard)",
     )
+    matrix_parser.add_argument("--periods", type=int, default=None, help=periods_help)
 
     return parser
+
+
+def _validate_periods(depth: AnalysisDepth, periods: int | None) -> str | None:
+    """Mirrors `CreateReportRequest`'s rule, for the same reason: a custom
+    depth without a period count is not a smaller request, it is a broken
+    one."""
+    if depth == AnalysisDepth.CUSTOM:
+        if periods is None:
+            return "--periods is required when --depth is custom."
+        if not (CUSTOM_PERIODS_MIN <= periods <= CUSTOM_PERIODS_MAX):
+            return (
+                f"--periods must be between {CUSTOM_PERIODS_MIN} and "
+                f"{CUSTOM_PERIODS_MAX}."
+            )
+    elif periods is not None:
+        return "--periods may only be set with --depth custom."
+    return None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -443,16 +476,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write("that do not identify a contact.")
         return EXIT_FAILED
 
+    if arguments.command in ("report", "matrix"):
+        depth = AnalysisDepth(arguments.depth)
+        periods_error = _validate_periods(depth, arguments.periods)
+        if periods_error is not None:
+            _write(periods_error)
+            return EXIT_FAILED
+
     try:
         if arguments.command == "resolve":
             return asyncio.run(_run_resolve(arguments.query))
         if arguments.command == "report":
             return asyncio.run(
-                _run_report(arguments.query, AnalysisDepth(arguments.depth))
+                _run_report(
+                    arguments.query,
+                    AnalysisDepth(arguments.depth),
+                    arguments.periods,
+                )
             )
         if arguments.command == "matrix":
             return asyncio.run(
-                _run_matrix(arguments.tickers, AnalysisDepth(arguments.depth))
+                _run_matrix(
+                    arguments.tickers,
+                    AnalysisDepth(arguments.depth),
+                    arguments.periods,
+                )
             )
         return asyncio.run(
             _run_discover(
