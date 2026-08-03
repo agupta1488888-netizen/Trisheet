@@ -394,6 +394,10 @@ create index if not exists artifacts_report_idx on artifacts (report_id);
 -- Company-website and web-search tiers are separate, deliberately deferred
 -- phases; highest_tier_used, cost_usd and tool_calls are provisioned now so
 -- that phase needs no second migration.
+--
+-- highest_tier_used is 1, 2 or 4: this table has always allowed a fact-store
+-- read (1), a wider recompute or a fetched company page (2), or general web
+-- search (4) — 3 (market data) never applies to a chat turn.
 -- ---------------------------------------------------------------------------
 
 create table if not exists chat_messages (
@@ -418,7 +422,7 @@ create table if not exists chat_messages (
 
   constraint chat_messages_role_known check (role in ('user', 'assistant')),
   constraint chat_messages_tier_range
-    check (highest_tier_used is null or highest_tier_used between 1 and 2),
+    check (highest_tier_used is null or highest_tier_used in (1, 2, 4)),
   -- An assistant turn always carries claims (even if only a not-found claim);
   -- a user turn carries none, because it is a question, not an answer.
   constraint chat_messages_assistant_has_claims

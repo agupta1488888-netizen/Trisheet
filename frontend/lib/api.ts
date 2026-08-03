@@ -9,6 +9,7 @@
 import type {
   AnalysisDepth,
   ApiError,
+  ChatSuggestions,
   ChatTurn,
   Report,
   ReportDocument,
@@ -193,9 +194,23 @@ export async function fetchReportDocument(
 export async function sendChatMessage(
   reportId: string,
   message: string,
+  pastedUrl?: string,
 ): Promise<ApiResult<ChatTurn>> {
   return apiRequest<ChatTurn>(`/reports/${reportId}/chat`, {
     method: "POST",
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({
+      message,
+      pastedUrl: pastedUrl === undefined || pastedUrl === "" ? null : pastedUrl,
+    }),
   });
+}
+
+/**
+ * Example questions this report's own stored data can actually answer.
+ * Deterministic on the backend — never a promise the assistant can't keep.
+ */
+export async function fetchChatSuggestions(
+  reportId: string,
+): Promise<ApiResult<ChatSuggestions>> {
+  return apiRequest<ChatSuggestions>(`/reports/${reportId}/chat/suggestions`);
 }

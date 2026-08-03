@@ -26,9 +26,39 @@ The cascade
     estimate) — never presenting the estimate as a filed figure. See
     `_answer_valuation_question`.
 
-    Company websites and general web search are separate, deliberately
-    deferred phases. No tool here reaches either, and `ChatClaim` itself
-    cannot represent a tier outside 1-2 (see `models.ChatClaim`).
+    When tiers 1-2 come up empty and the reader supplied a company URL
+    (`ChatRequest.pasted_url`), `services.webfetch` reads that one page —
+    guarded against being pointed somewhere unsafe — and the model answers
+    from its text alone, cited as tier 2 / `SourceType.COMPANY_SITE`: real,
+    but self-reported rather than filed. This never runs unprompted; a
+    pasted URL is read only as the fallback it was supplied for, never
+    consulted when the report's own facts already answered the question. See
+    `_answer_from_company_site`.
+
+    General web search is the last resort — tier 4, tried only when nothing
+    above answered, and only when `CHAT_WEB_SEARCH_ENABLED` is on (off by
+    default; a deployment turns it on only once the rate limit above is
+    known to be enforced, since this is the one tier that spends money on a
+    source outside this system's own data). Every claim it produces names
+    the exact page it came from and is rendered least like a filing. See
+    `_answer_from_web_search`.
+
+A comparison question ("how does this compare to competitors?") widens the
+    tier 1-2 candidate pool to include every stored peer fact (metric prefix
+    "peer.") rather than fetching a peer's filings fresh — see
+    `_is_peer_question`/`_with_peer_facts`.
+
+A greeting, "thanks", or a "what can you do" question is answered from a
+    fixed reply, never run through the cascade above — see
+    `_small_talk_reply`. This is deliberately narrow: anything else still
+    goes through the whole cascade, honest "not found" included.
+
+The immediately preceding exchange is used two ways for a follow-up like
+    "and last year's?", which names no metric on its own: re-resolving the
+    topic from the previous question alone when the new message matches
+    nothing by itself, and shown to the model as context for what the
+    follow-up refers to — never as something a figure may be answered from.
+    See `_recent_exchange`.
 
 Why this needs no tool-calling loop
     Choosing which fact answers a question is a matching problem over
@@ -47,7 +77,9 @@ Degradation
     stack trace") applies to one chat turn exactly as it applies to a report.
 
 Public interface
-    answer_question(report_id, message) -> ChatTurn
+    answer_question(report_id, message, pasted_url=None) -> ChatTurn
+    is_rate_limited(report_id) -> bool
+    suggest_questions(report_id) -> list[str]
 """
 
 from __future__ import annotations
@@ -59,14 +91,20 @@ import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from app.config import (
     CHAT_FACT_MATCH_MIN_OVERLAP,
+    CHAT_RATE_LIMIT_MAX_TURNS,
+    CHAT_RATE_LIMIT_WINDOW_MINUTES,
     CHAT_TOOL_RESULT_FACT_LIMIT,
+    CHAT_WEB_SEARCH_ENABLED,
+    CHAT_WEBFETCH_MAX_PAGE_CHARS,
 )
-from app.models import ChatClaim, ChatRole, ChatTurn, Fact
+from app.models import ChatClaim, ChatRole, ChatTurn, Fact, SourceTier, SourceType
 from app.modules import m06_factstore, m07_analysis
 from app.modules.m10_writer import render_fact_table
-from app.services import db, llm, runlog
+from app.services import db, llm, runlog, webfetch
 
 if TYPE_CHECKING:
     from supabase import Client
@@ -104,6 +142,10 @@ array. Do not answer a different question than the one asked.
 5. Sentence case. Plain sentences, no markdown, no bullet points, no \
 headings. Do not use the word "AI". Do not address the reader.
 6. Be brief. Answer the question, nothing more.
+7. A previous question and answer may be supplied for context. Use them \
+only to understand what a follow-up like "and last year's?" refers to — \
+never as a source for a figure. Every figure you state must still cite a \
+fact id from this turn's own table, never the previous answer's wording.
 """
 
 _ANSWER_SCHEMA: dict[str, Any] = {
@@ -233,18 +275,30 @@ def _parse_claims(
             continue
 
         fact = allowed[fact_id]
-        claims.append(
-            ChatClaim(
-                text=text.strip(),
-                tier=fact.tier,
-                fact_id=fact.fact_id,
-                source_url=fact.source_url,
-                source_type=fact.source_type,
-                accession_no=fact.accession_no,
-                filed_date=fact.filed_date,
-                not_found=False,
+        try:
+            claims.append(
+                ChatClaim(
+                    text=text.strip(),
+                    tier=fact.tier,
+                    fact_id=fact.fact_id,
+                    source_url=fact.source_url,
+                    source_type=fact.source_type,
+                    accession_no=fact.accession_no,
+                    filed_date=fact.filed_date,
+                    not_found=False,
+                )
             )
-        )
+        except ValidationError as cause:
+            # A fact whose tier a chat claim cannot represent (there is
+            # none today, but the invariant is enforced in code, not by
+            # this call site remembering to check first) is dropped rather
+            # than trusted — the same "unsupplied id" discipline just
+            # above, for a shape mismatch instead of a missing citation.
+            logger.warning(
+                "Chat dropped a claim whose fact could not be represented",
+                extra={"fact_id": fact_id},
+                exc_info=cause,
+            )
 
     if unknown:
         logger.warning(
@@ -256,10 +310,20 @@ def _parse_claims(
 
 
 def _build_user_prompt(
-    ticker: str, message: str, candidates: Sequence[Fact]
+    ticker: str,
+    message: str,
+    candidates: Sequence[Fact],
+    *,
+    prior: tuple[str, str] | None = None,
 ) -> str:
+    history = (
+        f"Previous question: {prior[0]}\nPrevious answer: {prior[1]}\n\n"
+        if prior is not None
+        else ""
+    )
     return (
         f"Ticker: {ticker}\n\n"
+        f"{history}"
         f"Question: {message}\n\n"
         f"Facts available:\n{render_fact_table(candidates)}\n"
     )
@@ -295,6 +359,456 @@ def _wider_candidates(all_facts: Sequence[Fact], message: str) -> list[Fact]:
         raw_facts, sic_code=None, groups=m07_analysis.ALL_METRIC_GROUPS
     ).facts
     return _match_facts(message, wider)
+
+
+# --- Small talk -----------------------------------------------------------
+# A greeting or a "what can you do" is not a data question, and running it
+# through the fact cascade would only ever end in a cold "not found". This
+# is deliberately narrow — three fixed situations, three fixed replies — not
+# a general chatbot: anything that isn't one of these still goes through the
+# whole cascade above, honest "not found" included.
+
+_GREETINGS = frozenset({"hi", "hello", "hey", "hiya", "yo", "greetings"})
+_THANKS = frozenset({"thanks", "thank you", "thx", "ty", "cheers"})
+#: Substring checks, not exact matches — "what can you help with" and "what
+#: can you do" both contain "what can you".
+_HELP_PHRASES = (
+    "what can you do",
+    "what can you help",
+    "what can i ask",
+    "how does this work",
+    "what do you do",
+)
+
+_HELP_REPLY = (
+    "Ask about a figure in this report — revenue, margins, cash flow and "
+    "similar are cited to the exact filing they came from. Ask a valuation "
+    "question (\"what is this worth?\") for a discounted-cash-flow estimate, "
+    "clearly marked wherever it's an assumption rather than a filed figure. "
+    "If the report doesn't have what you need, you can add a company URL "
+    "for that page to be read instead."
+)
+
+
+def _small_talk_reply(message: str) -> str | None:
+    """A canned reply for a greeting, thanks, or a "what can you do"
+    question — or None, for everything else, which continues to the fact
+    cascade exactly as before."""
+    normalised = message.strip().lower().rstrip("!.? ")
+    if normalised in _GREETINGS:
+        return (
+            "Hello. Ask a question about this report's figures, or ask "
+            "what it can value."
+        )
+    if normalised in _THANKS:
+        return "You're welcome."
+    if any(phrase in normalised for phrase in _HELP_PHRASES):
+        return _HELP_REPLY
+    return None
+
+
+# --- Peer comparison --------------------------------------------------------
+# Peer facts (metric prefix "peer.") are already stored for a report that ran
+# with peers enabled — m08_peers computes and cites them the same as any
+# other derived figure. Nothing here fetches a peer's filings fresh; a
+# comparison question only widens which already-stored facts are offered to
+# the model, the same reuse `_wider_candidates` does for a filer's own gated
+# -out metrics.
+
+_PEER_TRIGGER_WORDS = frozenset(
+    {"competitor", "competitors", "peer", "peers", "compare", "comparison", "versus"}
+)
+
+
+def _is_peer_question(question: str) -> bool:
+    return bool(_tokens(question) & _PEER_TRIGGER_WORDS)
+
+
+def _with_peer_facts(candidates: list[Fact], all_facts: Sequence[Fact]) -> list[Fact]:
+    """Adds every stored peer fact to the candidate list, deduplicated.
+
+    Plain token overlap between "how does this compare to competitors" and a
+    peer fact's own metric/label is not reliable — the trigger words above
+    decide the question is about peers; once decided, every peer fact this
+    report has is worth offering, not just the ones that happened to share a
+    word with the question.
+    """
+    seen = {fact.fact_id for fact in candidates}
+    peer_facts = [
+        fact
+        for fact in all_facts
+        if fact.metric.startswith("peer.") and fact.fact_id not in seen
+    ]
+    return (candidates + peer_facts)[:CHAT_TOOL_RESULT_FACT_LIMIT]
+
+
+# --- Conversation memory -----------------------------------------------
+# Only the single immediately preceding exchange — enough to resolve a
+# follow-up like "and last year's?" that names no metric on its own, without
+# growing the prompt (and its cost) with a whole transcript. Used two ways:
+# re-matched from alone (not concatenated with the new message — that would
+# only dilute the overlap against a fact) when the new message matches
+# nothing by itself, and shown to the model as context for what a follow-up
+# refers to — never as something the model may answer a new figure from;
+# `SYSTEM_PROMPT` still requires every figure to cite a fact id from the
+# table it was actually given this turn.
+
+
+async def _recent_exchange(report_id: str) -> tuple[str, str] | None:
+    """The immediately preceding question and its answer, or None when there
+    isn't one (no database configured, or this is the first question)."""
+    if not db.is_configured():
+        return None
+    try:
+        client = db.get_client()
+        response = (
+            client.table(CHAT_MESSAGES_TABLE)
+            .select("role,content")
+            .eq("report_id", report_id)
+            .order("turn_index", desc=True)
+            .limit(2)
+            .execute()
+        )
+    except db.DatabaseError as cause:
+        logger.warning(
+            "Recent exchange could not be read",
+            extra={"report_id": report_id},
+            exc_info=cause,
+        )
+        return None
+    except Exception as cause:  # noqa: BLE001 — degrade rather than block chat
+        logger.warning(
+            "Recent exchange could not be read",
+            extra={"report_id": report_id},
+            exc_info=cause,
+        )
+        return None
+
+    rows = getattr(response, "data", None) or []
+    prior_question: str | None = None
+    prior_answer: str | None = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        role = row.get("role")
+        content = row.get("content")
+        if not isinstance(content, str):
+            continue
+        if role == str(ChatRole.USER) and prior_question is None:
+            prior_question = content
+        elif role == str(ChatRole.ASSISTANT) and prior_answer is None:
+            prior_answer = content
+
+    if prior_question is None or prior_answer is None:
+        return None
+    return prior_question, prior_answer
+
+
+# --- Company website (tier 2 fallback) ---------------------------------
+# Reached only when tiers 1-2 over the report's own facts come up empty and
+# the reader supplied a URL. The page is fetched through `services.webfetch`,
+# which is what actually enforces "somewhere safe" — this module only
+# decides *whether* to fetch, never *how*.
+
+_COMPANY_SITE_SYSTEM_PROMPT = """\
+You answer one question about a company, using only the text of one web \
+page supplied below. This page is the company's own website, not a \
+government filing — self-reported, not audited.
+
+Rules:
+
+1. Use only what the page actually says. Never calculate, never recall a \
+figure from memory, never estimate, never assume what a company like this \
+typically reports.
+2. If the page does not actually answer the question, set not_found to \
+true and return an empty claims array. Do not answer a different question \
+than the one asked, and do not fill a gap with a typical or \
+plausible-sounding number.
+3. Each claim is one complete sentence. Sentence case, no markdown, no \
+bullet points, no headings. Do not use the word "AI". Do not address the \
+reader.
+4. Be brief. Answer the question, nothing more.
+"""
+
+_COMPANY_SITE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "One sentence answering part of the "
+                        "question, using only the page's own words.",
+                    }
+                },
+                "required": ["text"],
+                "additionalProperties": False,
+            },
+        },
+        "not_found": {
+            "type": "boolean",
+            "description": "True when the page does not answer the "
+            "question asked.",
+        },
+    },
+    "required": ["claims", "not_found"],
+    "additionalProperties": False,
+}
+
+
+def _company_site_user_prompt(
+    ticker: str, message: str, page: webfetch.FetchedPage
+) -> str:
+    excerpt = page.text[:CHAT_WEBFETCH_MAX_PAGE_CHARS]
+    return (
+        f"Ticker: {ticker}\n\n"
+        f"Question: {message}\n\n"
+        f"Page ({page.url}):\n{excerpt}\n"
+    )
+
+
+def _company_site_claim_texts(answer: dict[str, Any]) -> list[str]:
+    if answer.get("not_found") is True:
+        return []
+    raw = answer.get("claims")
+    if not isinstance(raw, list):
+        return []
+    return [
+        item["text"].strip()
+        for item in raw
+        if isinstance(item, dict)
+        and isinstance(item.get("text"), str)
+        and item["text"].strip()
+    ]
+
+
+async def _answer_from_company_site(
+    report_id: str, ticker: str, message: str, pasted_url: str, user_turn: ChatTurn
+) -> ChatTurn:
+    """Reads one reader-supplied company URL and answers from its text alone.
+
+    Reached only as a fallback, from `answer_question`, after tiers 1-2 over
+    the report's own facts came up empty.
+    """
+    try:
+        page = await webfetch.fetch_page(pasted_url)
+    except webfetch.WebfetchError as cause:
+        logger.warning(
+            "Company-site fetch failed",
+            extra={"report_id": report_id, "url": pasted_url},
+            exc_info=cause,
+        )
+        assistant_turn = _not_found_turn(f"That page could not be read: {cause}")
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
+
+    try:
+        answer = await llm.complete_json(
+            _COMPANY_SITE_SYSTEM_PROMPT,
+            _company_site_user_prompt(ticker, message, page),
+            _COMPANY_SITE_SCHEMA,
+            purpose="chat:company_site",
+        )
+    except llm.LlmError as cause:
+        logger.warning(
+            "Chat model call failed",
+            extra={"report_id": report_id},
+            exc_info=cause,
+        )
+        assistant_turn = _not_found_turn(MODEL_UNAVAILABLE_TEXT)
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
+
+    texts = _company_site_claim_texts(answer)
+    if not texts:
+        assistant_turn = _not_found_turn(
+            "That page does not answer this question."
+        )
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
+
+    claims = [
+        ChatClaim(
+            text=text,
+            tier=SourceTier.COMPANY,
+            source_url=page.url,
+            source_type=SourceType.COMPANY_SITE,
+        )
+        for text in texts
+    ]
+    assistant_turn = _new_turn(
+        ChatRole.ASSISTANT,
+        claims=claims,
+        content=" ".join(claim.text for claim in claims),
+        not_found=False,
+    )
+    await _persist(
+        report_id,
+        user_turn,
+        assistant_turn,
+        tool_calls=[{"tool": "fetch_page", "url": page.url}],
+        highest_tier_used=2,
+    )
+    return assistant_turn
+
+
+# --- General web search (tier 4, last resort) ----------------------------
+# Reached only when tiers 1-2 came up empty, no pasted URL was offered (or a
+# pasted URL was tried and this is chosen instead — see `answer_question`'s
+# ordering), and `CHAT_WEB_SEARCH_ENABLED` is on. The search itself runs
+# server-side inside Anthropic's own infrastructure — `llm.complete_json_with
+# _web_search` is the only call in this module that grants it, and this is
+# the only place its result reaches a claim.
+#
+# Every claim requires the model to name the exact URL it used, in the
+# schema-constrained answer itself — not extracted from the tool's own
+# citation blocks, whose exact shape this module does not depend on. A claim
+# whose url does not parse is dropped, the same as an unknown fact id is
+# dropped elsewhere in this module.
+
+_WEB_SEARCH_SYSTEM_PROMPT = """\
+You answer one question about a company using web search. This is the \
+least reliable source available to you — not a filing, not the company's \
+own site — so it is used only to state plainly what a page says, never to \
+speculate.
+
+Rules:
+
+1. Search only for what the question actually asks. Never state a figure \
+that is not written on a page you actually found.
+2. Every claim must name the exact url of the page it came from, in that \
+claim's source_url field. A claim with no real page behind it must not be \
+made at all.
+3. If nothing you find actually answers the question, set not_found to \
+true and return an empty claims array. Do not answer a related-but-different \
+question, and do not state something as fact because it sounds plausible.
+4. Each claim is one complete sentence. Sentence case, no markdown, no \
+bullet points, no headings. Do not use the word "AI". Do not address the \
+reader.
+5. Be brief. Answer the question, nothing more.
+"""
+
+_WEB_SEARCH_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "One sentence answering part of the "
+                        "question.",
+                    },
+                    "source_url": {
+                        "type": "string",
+                        "description": "The exact url of the page this "
+                        "claim came from.",
+                    },
+                },
+                "required": ["text", "source_url"],
+                "additionalProperties": False,
+            },
+        },
+        "not_found": {
+            "type": "boolean",
+            "description": "True when nothing found answers the question "
+            "asked.",
+        },
+    },
+    "required": ["claims", "not_found"],
+    "additionalProperties": False,
+}
+
+
+def _web_search_claims(answer: dict[str, Any]) -> list[ChatClaim]:
+    if answer.get("not_found") is True:
+        return []
+    raw = answer.get("claims")
+    if not isinstance(raw, list):
+        return []
+
+    claims: list[ChatClaim] = []
+    dropped: list[str] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        url = item.get("source_url")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if not isinstance(url, str) or not url.strip():
+            continue
+        try:
+            claims.append(
+                ChatClaim(
+                    text=text.strip(),
+                    tier=SourceTier.NEWS,
+                    source_url=url.strip(),
+                    source_type=SourceType.NEWS,
+                )
+            )
+        except ValidationError:
+            dropped.append(url)
+
+    if dropped:
+        logger.warning(
+            "Dropped web-search claims with an unusable url",
+            extra={"urls": dropped},
+        )
+    return claims
+
+
+async def _answer_from_web_search(
+    report_id: str, ticker: str, message: str, user_turn: ChatTurn
+) -> ChatTurn:
+    """Tier 4, the last resort: Anthropic's hosted web search.
+
+    Reached only from `answer_question`, only after every trusted source
+    (tiers 1-2, and a pasted company URL when one was offered) has come up
+    empty, and only when `CHAT_WEB_SEARCH_ENABLED` is on.
+    """
+    try:
+        answer = await llm.complete_json_with_web_search(
+            _WEB_SEARCH_SYSTEM_PROMPT,
+            f"Ticker: {ticker}\n\nQuestion: {message}\n",
+            _WEB_SEARCH_SCHEMA,
+            purpose="chat:web_search",
+        )
+    except llm.LlmError as cause:
+        logger.warning(
+            "Chat model call failed",
+            extra={"report_id": report_id},
+            exc_info=cause,
+        )
+        assistant_turn = _not_found_turn(MODEL_UNAVAILABLE_TEXT)
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
+
+    claims = _web_search_claims(answer)
+    if not claims:
+        assistant_turn = _not_found_turn()
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
+
+    assistant_turn = _new_turn(
+        ChatRole.ASSISTANT,
+        claims=claims,
+        content=" ".join(claim.text for claim in claims),
+        not_found=False,
+    )
+    await _persist(
+        report_id,
+        user_turn,
+        assistant_turn,
+        tool_calls=[{"tool": "web_search"}],
+        highest_tier_used=4,
+    )
+    return assistant_turn
 
 
 # --- Valuation (DCF) ------------------------------------------------------
@@ -458,18 +972,47 @@ async def _answer_valuation_question(
     return assistant_turn
 
 
-async def answer_question(report_id: str, message: str) -> ChatTurn:
+async def answer_question(
+    report_id: str, message: str, pasted_url: str | None = None
+) -> ChatTurn:
     """Answers one question about a completed report.
+
+    Args:
+        report_id: The report the question is about.
+        message: The reader's question.
+        pasted_url: A company URL the reader supplied. Read only as a
+            fallback, when tiers 1-2 over the report's own facts come up
+            empty — never consulted otherwise.
 
     Never raises: every failure mode returns a `ChatTurn` stating what
     happened, so the endpoint has nothing to catch.
     """
+    turn = await _route_question(report_id, message, pasted_url)
+    remaining = await _turns_remaining(report_id)
+    if remaining is None:
+        return turn
+    return turn.model_copy(update={"turns_remaining": remaining})
+
+
+async def _route_question(
+    report_id: str, message: str, pasted_url: str | None = None
+) -> ChatTurn:
+    """The cascade itself. Wrapped by `answer_question`, which attaches the
+    rate-limit count uniformly to whatever turn this produces."""
     report = runlog.get_report(report_id)
     ticker = report.ticker if report is not None else report_id
 
     user_turn = _new_turn(
         ChatRole.USER, claims=(), content=message, not_found=False
     )
+
+    small_talk = _small_talk_reply(message)
+    if small_talk is not None:
+        assistant_turn = _new_turn(
+            ChatRole.ASSISTANT, claims=(), content=small_talk, not_found=False
+        )
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
 
     try:
         all_facts = await m06_factstore.load_facts(report_id)
@@ -486,16 +1029,45 @@ async def answer_question(report_id: str, message: str) -> ChatTurn:
     if _is_valuation_question(message):
         return await _answer_valuation_question(report_id, all_facts, user_turn)
 
+    prior = await _recent_exchange(report_id)
+
     highest_tier: int | None = None
     candidates = _match_facts(message, all_facts)
+    if not candidates and prior is not None:
+        # A follow-up like "and last year's?" names no metric on its own —
+        # re-resolving the topic from the previous question alone is what
+        # lets it match. Concatenating the two strings instead would only
+        # dilute the overlap: the follow-up's own words ("last", "year")
+        # share nothing with the fact, so appending them raises the token
+        # count without raising how much of it actually overlaps.
+        candidates = _match_facts(prior[0], all_facts)
     if candidates:
         highest_tier = 1
     else:
         candidates = _wider_candidates(all_facts, message)
+        if not candidates and prior is not None:
+            candidates = _wider_candidates(all_facts, prior[0])
         if candidates:
             highest_tier = 2
 
+    if _is_peer_question(message):
+        candidates = _with_peer_facts(candidates, all_facts)
+        if candidates and highest_tier is None:
+            highest_tier = 1
+
     if not candidates:
+        # Tier 2 (a pasted company URL) and tier 4 (general web search) are
+        # alternate last resorts, not chained attempts within one request —
+        # a pasted URL is the reader's own explicit fallback and is trusted
+        # as such; web search is only reached when they did not supply one.
+        if pasted_url is not None:
+            return await _answer_from_company_site(
+                report_id, ticker, message, pasted_url, user_turn
+            )
+        if CHAT_WEB_SEARCH_ENABLED:
+            return await _answer_from_web_search(
+                report_id, ticker, message, user_turn
+            )
         assistant_turn = _not_found_turn()
         await _persist(report_id, user_turn, assistant_turn)
         return assistant_turn
@@ -505,7 +1077,7 @@ async def answer_question(report_id: str, message: str) -> ChatTurn:
     try:
         answer = await llm.complete_json(
             SYSTEM_PROMPT,
-            _build_user_prompt(ticker, message, candidates),
+            _build_user_prompt(ticker, message, candidates, prior=prior),
             _ANSWER_SCHEMA,
             purpose="chat:answer",
         )
@@ -541,6 +1113,49 @@ async def answer_question(report_id: str, message: str) -> ChatTurn:
         highest_tier_used=highest_tier,
     )
     return assistant_turn
+
+
+# --- Suggested questions -------------------------------------------------
+# Deterministic, not model-generated: a suggestion is offered only when the
+# metric behind it is genuinely present in this report's own stored facts,
+# so a suggestion can never promise an answer the assistant cannot give.
+
+#: Metric to question template, in priority order.
+_SUGGESTION_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("income.revenue", "What was revenue?"),
+    ("income.net_income", "What was net income?"),
+    ("cashflow.free_cash_flow", "What was free cash flow?"),
+    ("derived.net_debt", "What is the net debt?"),
+    ("liquidity.current_ratio", "What is the current ratio?"),
+)
+
+#: A wall of chips is not a help.
+_MAX_SUGGESTIONS = 4
+
+
+async def suggest_questions(report_id: str) -> list[str]:
+    """Example questions this report's own stored data can actually answer.
+
+    Only checks what is already stored — not the wider, freshly-derived
+    metrics tier 2 can reach — so this stays a cheap read, not a recompute,
+    for what is only ever a UI hint.
+    """
+    try:
+        all_facts = await m06_factstore.load_facts(report_id)
+    except m06_factstore.FactStoreError:
+        return []
+
+    present = {fact.metric for fact in all_facts}
+    suggestions = [
+        question
+        for metric, question in _SUGGESTION_TEMPLATES
+        if metric in present
+    ]
+
+    if "cashflow.free_cash_flow" in present:
+        suggestions.append("What is this company worth?")
+
+    return suggestions[:_MAX_SUGGESTIONS]
 
 
 # --- Persistence --------------------------------------------------------
@@ -588,6 +1203,76 @@ def _turn_row(
         "not_found": turn.not_found,
         "created_at": turn.created_at.isoformat(),
     }
+
+
+async def _recent_assistant_turn_count(report_id: str) -> int | None:
+    """Assistant turns this report has used in the current rolling window,
+    or None when no database is configured — the one count `is_rate_limited`
+    and `_turns_remaining` both need, kept in one place so the two can never
+    disagree about what "recent" means.
+    """
+    if not db.is_configured():
+        return None
+
+    window_start = dt.datetime.now(dt.UTC) - dt.timedelta(
+        minutes=CHAT_RATE_LIMIT_WINDOW_MINUTES
+    )
+    try:
+        client = db.get_client()
+        response = (
+            client.table(CHAT_MESSAGES_TABLE)
+            .select("id")
+            .eq("report_id", report_id)
+            .eq("role", str(ChatRole.ASSISTANT))
+            .gte("created_at", window_start.isoformat())
+            .execute()
+        )
+    except db.DatabaseError as cause:
+        logger.warning(
+            "Recent turn count could not be read; allowing the request",
+            extra={"report_id": report_id},
+            exc_info=cause,
+        )
+        return None
+    except Exception as cause:  # noqa: BLE001 — degrade rather than block chat
+        logger.warning(
+            "Recent turn count could not be read; allowing the request",
+            extra={"report_id": report_id},
+            exc_info=cause,
+        )
+        return None
+
+    rows = getattr(response, "data", None) or []
+    return len(rows)
+
+
+async def is_rate_limited(report_id: str) -> bool:
+    """True when this report has already used its turn budget for the
+    current rolling window.
+
+    Called from `main.py` before any LLM call, so a request over budget
+    costs nothing beyond one read. Never rate-limits when no database is
+    configured — the same "optional dependency degrades" rule every other
+    read in this system follows. That does mean an unconfigured deployment
+    has no rate limit of any kind; closing that gap is a deployment
+    requirement, not something this function can enforce on its own.
+    """
+    count = await _recent_assistant_turn_count(report_id)
+    return count is not None and count >= CHAT_RATE_LIMIT_MAX_TURNS
+
+
+async def _turns_remaining(report_id: str) -> int | None:
+    """Questions left in the current rate-limit window, after this turn.
+
+    Attached to the `ChatTurn` returned from `answer_question` so the
+    interface can show a plain count rather than a surprise wall. None when
+    no database is configured, the same case `is_rate_limited` cannot
+    enforce a limit for either — the frontend simply omits the count then.
+    """
+    count = await _recent_assistant_turn_count(report_id)
+    if count is None:
+        return None
+    return max(0, CHAT_RATE_LIMIT_MAX_TURNS - count)
 
 
 def _next_turn_index(client: Client, report_id: str) -> int:
@@ -657,4 +1342,4 @@ async def _persist(
         )
 
 
-__all__ = ["answer_question"]
+__all__ = ["answer_question", "is_rate_limited", "suggest_questions"]

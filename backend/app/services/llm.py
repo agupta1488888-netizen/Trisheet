@@ -17,6 +17,12 @@ here support it:
   one, and the same intent is otherwise carried by the low effort setting and
   the output schema.
 
+The one exception
+    `complete_json_with_web_search` grants Anthropic's hosted web-search
+    tool for a single call — the one place this module lets the model reach
+    outside what it was directly given. Reserved for chat's tier-4 fallback;
+    every other caller uses `complete_json`.
+
 Degradation
     The model is not a hard dependency. Every failure is raised as `LlmError`,
     and callers are expected to continue without the prose rather than fail the
@@ -24,6 +30,7 @@ Degradation
 
 Public interface
     complete_json(system, user, schema, *, purpose) -> dict
+    complete_json_with_web_search(system, user, schema, *, purpose) -> dict
     is_configured() -> bool
     reset_client() -> None
 """
@@ -51,6 +58,7 @@ from app.config import (
     LLM_OUTPUT_COST_PER_MTOK,
     LLM_TEMPERATURE,
     LLM_TIMEOUT_SECONDS,
+    LLM_WEB_SEARCH_MAX_USES,
     TOKENS_PER_MILLION,
     get_settings,
 )
@@ -327,8 +335,6 @@ async def complete_json(
         LlmMalformedResponseError: the answer was not a JSON object, or the
             model stopped before finishing one.
     """
-    client = _get_client()
-
     request: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
@@ -340,6 +346,63 @@ async def complete_json(
         },
         **_sampling_arguments(model),
     }
+    return await _send_json_request(request, purpose=purpose, model=model)
+
+
+async def complete_json_with_web_search(
+    system: str,
+    user: str,
+    schema: dict[str, Any],
+    *,
+    purpose: str,
+    model: str = LLM_MODEL,
+    max_tokens: int = LLM_MAX_OUTPUT_TOKENS,
+    max_searches: int = LLM_WEB_SEARCH_MAX_USES,
+) -> dict[str, Any]:
+    """Like `complete_json`, but grants the model Anthropic's hosted
+    web-search tool for this one call.
+
+    This is the only function in this module that lets the model reach
+    outside what a caller put in `user` — every other call answers from
+    exactly what it was given. The search itself runs server-side, inside
+    Anthropic's own infrastructure; nothing in this codebase executes it or
+    sees an intermediate result. Reserved for chat's tier-4 fallback, which
+    only reaches this after tiers 1-3 have already come up empty (see
+    `chat_agent`), and every claim it can produce is labelled unverified by
+    the caller — this function has no opinion about that; it only sends the
+    request and returns what came back, exactly like `complete_json` does.
+    """
+    request: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+        "tools": [
+            {
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": max_searches,
+            }
+        ],
+        "output_config": {
+            "effort": LLM_EFFORT,
+            "format": {"type": "json_schema", "schema": schema},
+        },
+        **_sampling_arguments(model),
+    }
+    return await _send_json_request(request, purpose=purpose, model=model)
+
+
+async def _send_json_request(
+    request: dict[str, Any], *, purpose: str, model: str
+) -> dict[str, Any]:
+    """The request/response handling shared by every schema-constrained call.
+
+    Callers differ only in what they put in `request` (the base shape
+    `complete_json` sends, or the same shape plus a hosted tool); the failure
+    modes, usage accounting and parsing are identical either way.
+    """
+    client = _get_client()
 
     try:
         response = await client.messages.create(**request)

@@ -2099,6 +2099,59 @@ DCF_DEFAULT_TERMINAL_GROWTH_RATE = 0.02
 #: takes over, when the caller supplies none.
 DCF_DEFAULT_PROJECTION_YEARS = 5
 
+# --- Company-website fetch (webfetch) -----------------------------------------
+# The one place besides edgar.py (sec.gov), m05_market.py (the configured
+# market provider), llm.py (Anthropic) and db.py (Supabase) that opens an
+# outbound connection — and the only one of those five aimed at a URL a user
+# supplied rather than a fixed, known host. Every setting below exists to
+# bound what that can reach.
+
+#: Redirect hops followed before refusing. Each hop's target is checked
+#: against the same host guard as the original URL — a redirect is not an
+#: escape hatch.
+WEBFETCH_MAX_REDIRECTS = 3
+
+#: A response larger than this is abandoned mid-stream, not truncated and
+#: used anyway — a page this large is not something to hand a model whole.
+WEBFETCH_MAX_RESPONSE_BYTES = 2_000_000
+
+#: Short on purpose: this is a user-facing chat turn, not a background job.
+WEBFETCH_TIMEOUT_SECONDS = 8.0
+
+#: Characters of a fetched page's text shown to the model. A page can be
+#: arbitrarily long; only its leading portion enters the prompt.
+CHAT_WEBFETCH_MAX_PAGE_CHARS = 12_000
+
+# --- Chat rate limiting --------------------------------------------------------
+# The chat endpoint has no auth of any kind (see main.py), and every turn costs
+# a paid model call — a company-site fetch or a web search turn more so.
+# Enforced by counting this report's own recent chat_messages rows rather than
+# a separate store, so the limit is visible in the same table that already
+# holds the history it is counting.
+
+#: Assistant turns permitted for one report within the rolling window below.
+#: Deliberately generous for ordinary use, tight enough to bound a script.
+CHAT_RATE_LIMIT_MAX_TURNS = 20
+
+#: The rolling window `CHAT_RATE_LIMIT_MAX_TURNS` applies over.
+CHAT_RATE_LIMIT_WINDOW_MINUTES = 10
+
+# --- General web search (tier 4, last resort) ---------------------------------
+# Reached only after tiers 1-3 (own facts, wider derivation, company site)
+# have all come up empty. Gated behind its own flag, separate from
+# `is_configured`, so it can be switched off in an environment even where the
+# model itself is otherwise configured — the rate limit above is what this
+# flag is deliberately not turned on without.
+
+#: Off by default. A deployment turns this on only once `CHAT_RATE_LIMIT_*`
+#: is known to be enforced (a configured database — see `is_rate_limited`),
+#: since this is the one tier that spends money on a source outside this
+#: system's own data.
+CHAT_WEB_SEARCH_ENABLED = False
+
+#: Server-side searches Anthropic's hosted tool may run for one chat turn.
+LLM_WEB_SEARCH_MAX_USES = 3
+
 
 class Settings(BaseSettings):
     """Environment-backed settings. Instantiated once via `get_settings`."""

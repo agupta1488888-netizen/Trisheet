@@ -440,12 +440,14 @@ export interface ComplianceSummary {
 /* ===========================================================================
    Chat
 
-   This pass covers Tier 1 (already-certified report facts) and Tier 2
-   (freshly computed from the filer's own data) only. There is no web search,
-   no company-website fetching and no general web search — every claim the
-   assistant makes is a certified citation, an honest "not found", or (for a
-   valuation question) a modelling assumption, labelled as one and never
-   presented as a filed figure.
+   Answers cascade through four tiers, stopping at the first that has an
+   answer: already-certified report facts (1), freshly computed from the
+   filer's own data (2), a company page the reader pasted a URL for (also 2,
+   fetched fresh — tried only when 1-2 came up empty), and general web
+   search (4, the last resort, only when nothing above answered). A
+   valuation question answers differently again: certified inputs (real free
+   cash flow, net debt, share count) mixed with modelling-assumption claims,
+   never presented as filed figures.
    =========================================================================== */
 
 export type ChatRole = "user" | "assistant";
@@ -453,7 +455,10 @@ export type ChatRole = "user" | "assistant";
 /**
  * One claim inside a turn — exactly one of three shapes:
  *
- * - Certified: `tier` and `factId` are set, citing a real fact.
+ * - Certified: `tier` and (`factId` or `sourceUrl`) are set, citing a real
+ *   source — a stored fact (1), a fetched company page (2), a stored
+ *   market-data figure such as a peer valuation multiple (3), or a web
+ *   search result (4, rendered least like a filing of the four).
  * - Assumption: `isAssumption` is true and `assumptionNote` explains what the
  *   assumption is — a DCF discount/growth rate, or a figure computed from
  *   one. Never paired with a tier or fact id: it names no filing.
@@ -462,11 +467,12 @@ export type ChatRole = "user" | "assistant";
  */
 export interface ChatClaim {
   text: string;
-  tier: 1 | 2 | null;
+  tier: 1 | 2 | 3 | 4 | null;
   /** Set when citing a fact already stored for this report. */
   factId: string | null;
+  /** Set when citing a page fetched fresh for this answer (tier 2 or 4). */
   sourceUrl: string | null;
-  /** e.g. "sec_filing", "sec_xbrl". */
+  /** e.g. "sec_filing", "sec_xbrl", "company_site", "news". */
   sourceType: string | null;
   accessionNo: string | null;
   filedDate: string | null;
@@ -485,6 +491,15 @@ export interface ChatTurn {
   content: string;
   notFound: boolean;
   createdAt: string;
+  /** Questions left in the current rate-limit window, after this turn. Null
+   * when no database is configured — the limit itself isn't enforced then. */
+  turnsRemaining: number | null;
+}
+
+/** Example questions this report's own stored data can actually answer.
+ * Deterministic, not model-generated — every one is guaranteed answerable. */
+export interface ChatSuggestions {
+  suggestions: readonly string[];
 }
 
 /* ===========================================================================

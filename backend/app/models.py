@@ -1040,7 +1040,16 @@ class ChatClaim(WireModel):
 
     Exactly one of three shapes, never ambiguously:
 
-    - Certified: names the tier-1/tier-2 fact it rests on.
+    - Certified: names a real source and a tier — tier 1 (`fact_id`, a fact
+      already stored for this report, including a peer's own selection
+      note), tier 2 (`source_url`, a company page fetched fresh for this
+      answer, when the report's own data didn't have it and the user
+      supplied a URL), tier 3 (`fact_id`, a stored market-data figure — the
+      usual case is a peer valuation multiple such as EV/EBITDA, which
+      already carries tier 3 lineage honestly because it uses market cap),
+      or tier 4 (`source_url`, a general web search, the last resort tried
+      only once tiers 1-3 have come up empty — the frontend must render
+      this least like a filing).
     - Assumption: a modelling choice (a DCF discount rate, a growth rate, or
       a result computed from one) that names no filing and cannot be
       certified — `assumption_note` says what it is and why it isn't a fact.
@@ -1054,7 +1063,12 @@ class ChatClaim(WireModel):
     text: str
     #: 1 (filing) or 2 (company source). None unless certified.
     tier: SourceTier | None = None
+    #: Set when citing a fact already stored for this report (tier 1, or a
+    #: tier-2 metric recomputed from the same reported facts).
     fact_id: str | None = None
+    #: Set when citing a page fetched fresh for this answer (a tier-2 company
+    #: URL the user supplied). `accession_no`/`filed_date` stay None here —
+    #: a fetched page has neither.
     source_url: HttpUrl | None = None
     source_type: SourceType | None = None
     accession_no: str | None = None
@@ -1105,18 +1119,26 @@ class ChatClaim(WireModel):
                 raise ValueError(message)
             return self
 
-        if self.tier is None or self.fact_id is None:
+        if self.tier is None or (self.fact_id is None and self.source_url is None):
             message = (
                 "A claim that is not not_found and not an assumption must "
-                "carry the tier and fact id of the fact it rests on."
+                "carry a tier, and either a fact id (a fact already stored "
+                "for this report) or a source url (a page fetched fresh for "
+                "this answer) naming where it came from."
             )
             raise ValueError(message)
 
-        if int(self.tier) not in (int(SourceTier.FILING), int(SourceTier.COMPANY)):
+        if int(self.tier) not in (
+            int(SourceTier.FILING),
+            int(SourceTier.COMPANY),
+            int(SourceTier.MARKET),
+            int(SourceTier.NEWS),
+        ):
             message = (
-                f"Chat claims may only cite tier 1 or tier 2 facts; got "
-                f"tier {int(self.tier)}. Company-website and web-search tiers "
-                "are separate, not-yet-shipped phases."
+                f"Chat claims may cite tier 1 (filing), tier 2 (company "
+                f"source), tier 3 (market data — e.g. a peer valuation "
+                f"multiple) or tier 4 (general web, last resort) facts; got "
+                f"tier {int(self.tier)}."
             )
             raise ValueError(message)
 
@@ -1135,9 +1157,28 @@ class ChatTurn(WireModel):
     #: True when every claim in this turn is a not-found claim.
     not_found: bool = False
     created_at: dt.datetime
+    #: Questions left in the current rate-limit window, after this turn. None
+    #: when no database is configured — the same case the limit itself
+    #: cannot be enforced for.
+    turns_remaining: int | None = None
 
 
 class ChatRequest(WireModel):
-    """One question about a completed report."""
+    """One question about a completed report.
+
+    `pasted_url` is the reader's own company-URL fallback: read only when the
+    tier-1/tier-2 cascade over the report's own facts comes up empty, never
+    consulted when it doesn't.
+    """
 
     message: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX_CHARS)
+    pasted_url: HttpUrl | None = None
+
+
+class ChatSuggestions(WireModel):
+    """Example questions this report's own stored data can actually answer.
+
+    Deterministic, not model-generated — see `chat_agent.suggest_questions`.
+    """
+
+    suggestions: tuple[str, ...] = ()

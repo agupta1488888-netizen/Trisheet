@@ -31,10 +31,10 @@
  * renderings share one conversation.
  */
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import { sendChatMessage } from "@/lib/api";
+import { fetchChatSuggestions, sendChatMessage } from "@/lib/api";
 import type { ApiError, ChatTurn } from "@/lib/types";
 import { ChatComposer } from "@/components/report/chat-composer";
 import { ChatMessage } from "@/components/report/chat-message";
@@ -45,13 +45,39 @@ function nextTurnId(): string {
     : `turn-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function Transcript({ turns }: { turns: readonly ChatTurn[] }) {
+function Transcript({
+  turns,
+  suggestions,
+  onPickSuggestion,
+}: {
+  turns: readonly ChatTurn[];
+  suggestions: readonly string[];
+  onPickSuggestion: (question: string) => void;
+}) {
   if (turns.length === 0) {
     return (
-      <p className="py-3 text-sm leading-relaxed text-muted-foreground">
-        Ask a question about this report. Answers are grounded in the same
-        filed data the report itself is built from.
-      </p>
+      <div className="py-3">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Ask a question about this report. Answers are grounded in the same
+          filed data the report itself is built from.
+        </p>
+        {suggestions.length === 0 ? null : (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {suggestions.map((question) => (
+              <button
+                key={question}
+                type="button"
+                onClick={() => {
+                  onPickSuggestion(question);
+                }}
+                className="ref rounded-xs border border-rule px-2 py-1 text-left text-xs text-ink hover:bg-wash"
+              >
+                {question}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -83,12 +109,27 @@ export function ChatPanel({ reportId }: { reportId: string }) {
   const [turns, setTurns] = useState<readonly ChatTurn[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [gateError, setGateError] = useState<ApiError | null>(null);
+  const [suggestions, setSuggestions] = useState<readonly string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchChatSuggestions(reportId).then((result) => {
+      if (!cancelled && result.ok) {
+        setSuggestions(result.data.suggestions);
+      }
+      // A failed fetch just means no chips show — never an error state for
+      // what is only ever a hint.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [reportId]);
 
   const toggle = () => {
     setIsOpen((open) => !open);
   };
 
-  const submit = async (message: string) => {
+  const submit = async (message: string, pastedUrl?: string) => {
     const userTurn: ChatTurn = {
       id: nextTurnId(),
       role: "user",
@@ -96,11 +137,12 @@ export function ChatPanel({ reportId }: { reportId: string }) {
       content: message,
       notFound: false,
       createdAt: new Date().toISOString(),
+      turnsRemaining: null,
     };
     setTurns((current) => [...current, userTurn]);
     setIsSending(true);
 
-    const result = await sendChatMessage(reportId, message);
+    const result = await sendChatMessage(reportId, message, pastedUrl);
     setIsSending(false);
 
     if (!result.ok) {
@@ -116,6 +158,11 @@ export function ChatPanel({ reportId }: { reportId: string }) {
   };
 
   const disabledReason = gateError?.message ?? null;
+  // The most recent turn carrying a count is the current one — every
+  // reply attaches it, so the first from the end is always the freshest.
+  const turnsRemaining =
+    [...turns].reverse().find((turn) => turn.turnsRemaining !== null)
+      ?.turnsRemaining ?? null;
 
   return (
     <>
@@ -155,17 +202,24 @@ export function ChatPanel({ reportId }: { reportId: string }) {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5">
-          <Transcript turns={turns} />
+          <Transcript
+            turns={turns}
+            suggestions={suggestions}
+            onPickSuggestion={(question) => {
+              void submit(question);
+            }}
+          />
         </div>
 
         {gateError === null ? null : <GateNotice error={gateError} />}
 
         <ChatComposer
-          onSubmit={(message) => {
-            void submit(message);
+          onSubmit={(message, pastedUrl) => {
+            void submit(message, pastedUrl);
           }}
           isSending={isSending}
           disabledReason={disabledReason}
+          turnsRemaining={turnsRemaining}
         />
       </aside>
 
@@ -181,17 +235,24 @@ export function ChatPanel({ reportId }: { reportId: string }) {
           className="flex max-h-[60vh] flex-col"
         >
           <div className="flex-1 overflow-y-auto px-5">
-            <Transcript turns={turns} />
+            <Transcript
+              turns={turns}
+              suggestions={suggestions}
+              onPickSuggestion={(question) => {
+                void submit(question);
+              }}
+            />
           </div>
 
           {gateError === null ? null : <GateNotice error={gateError} />}
 
           <ChatComposer
-            onSubmit={(message) => {
-              void submit(message);
+            onSubmit={(message, pastedUrl) => {
+              void submit(message, pastedUrl);
             }}
             isSending={isSending}
             disabledReason={disabledReason}
+            turnsRemaining={turnsRemaining}
           />
         </div>
 

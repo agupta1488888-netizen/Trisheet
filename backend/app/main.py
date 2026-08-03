@@ -24,6 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import (
+    CHAT_RATE_LIMIT_MAX_TURNS,
+    CHAT_RATE_LIMIT_WINDOW_MINUTES,
     DEFAULT_DEPTH,
     MAX_RESOLUTION_CANDIDATES,
     METRICS_DEFAULT_WINDOW_HOURS,
@@ -37,6 +39,7 @@ from app.models import (
     ApiError,
     ArtifactKind,
     ChatRequest,
+    ChatSuggestions,
     ChatTurn,
     CreateReportRequest,
     HealthResponse,
@@ -414,7 +417,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "The assistant is not configured right now.",
             )
 
-        return await chat_agent.answer_question(report_id, request.message)
+        if await chat_agent.is_rate_limited(report_id):
+            return _error(
+                429,
+                "chat_rate_limited",
+                f"This report has reached its limit of "
+                f"{CHAT_RATE_LIMIT_MAX_TURNS} questions in "
+                f"{CHAT_RATE_LIMIT_WINDOW_MINUTES} minutes. Try again "
+                "shortly.",
+            )
+
+        pasted_url = (
+            str(request.pasted_url) if request.pasted_url is not None else None
+        )
+        return await chat_agent.answer_question(
+            report_id, request.message, pasted_url
+        )
+
+    @app.get(
+        "/reports/{report_id}/chat/suggestions",
+        response_model=None,
+        tags=["reports"],
+    )
+    async def chat_suggestions(
+        report_id: str,
+    ) -> Response | ChatSuggestions:
+        """Example questions this report's own data can actually answer.
+
+        Same completion gate as the chat endpoint itself: a report that
+        isn't finished has no facts to suggest questions from yet.
+        """
+        report = runlog.get_report(report_id)
+        if report is None:
+            return _unknown_report()
+        if report.status is not ReportStatus.COMPLETE:
+            return ChatSuggestions()
+        return ChatSuggestions(
+            suggestions=tuple(await chat_agent.suggest_questions(report_id))
+        )
 
     @app.get("/reports/{report_id}/artifacts/{kind}", tags=["reports"])
     async def fetch_artifact(report_id: str, kind: ArtifactKind) -> Response:
