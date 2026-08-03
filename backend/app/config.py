@@ -1477,6 +1477,16 @@ NARRATIVE_SPECS: tuple[NarrativeSpec, ...] = (
 #: cross-reference, not the section itself.
 NARRATIVE_MIN_SECTION_CHARS = 500
 
+#: How much longer a heading's enclosing paragraph may run than the heading
+#: phrase itself and still count as an isolated heading line rather than a
+#: fragment of prose or of a longer, unrelated heading. A filer that does not
+#: set its real headings in capitals (some 20-F filers use title case) gets no
+#: signal from the capitalisation check, so this is the fallback that keeps a
+#: bare phrase like "risk factors" from matching a cross-reference sentence or
+#: a differently-scoped heading that happens to contain it, e.g. "Financial
+#: Risk Factors and Risk Management" in the notes to the financial statements.
+ISOLATED_HEADING_SLACK_CHARS = 24
+
 #: Characters of a section carried into the report. A 10-K's risk factors run
 #: to tens of thousands of words; what a profile needs is the disclosure, not
 #: the whole of it. The text is truncated at a sentence boundary and the

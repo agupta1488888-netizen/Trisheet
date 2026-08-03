@@ -32,6 +32,7 @@ from pydantic import ValidationError
 
 from app.config import (
     AMENDMENT_FORM_SUFFIX,
+    ISOLATED_HEADING_SLACK_CHARS,
     MAX_FILING_TEXT_BYTES,
     MAX_RISK_ITEMS,
     NARRATIVE_MAX_SECTION_CHARS,
@@ -164,8 +165,15 @@ def _locate(text: str, spec: NarrativeSpec) -> str | None:
     cross-reference near the end of the document can satisfy that same test.
     What a cross-reference never does is set the heading in capitals the way
     the filer's own heading line does, so a capitalised match is preferred
-    when one exists; only if none is found does document order become the
-    tiebreaker again, for filers that do not follow that convention.
+    when one exists. Some filers never set a heading in capitals at all —
+    several 20-F filers write "Risk Factors" in title case throughout —
+    which leaves that signal empty. For those, a match that stands alone as
+    its own paragraph is preferred instead, which rules out a cross-reference
+    sitting inside a longer sentence and a differently-scoped heading that
+    merely contains the phrase (a "Risk Factors and Risk Management" note
+    inside the financial statements, say). Only if neither signal finds
+    anything does document order become the tiebreaker, for filers that fit
+    neither convention.
     """
     lowered = text.lower()
 
@@ -176,12 +184,33 @@ def _locate(text: str, spec: NarrativeSpec) -> str | None:
             for start in occurrences
             if text[start : start + len(heading)].isupper()
         ]
+        isolated = [
+            start
+            for start in occurrences
+            if _is_isolated_heading(text, start, len(heading))
+        ]
 
-        for start in reversed(capitalised or occurrences):
+        for start in reversed(capitalised or isolated or occurrences):
             body = _body_from(text, lowered, start, spec)
             if body is not None:
                 return body
     return None
+
+
+def _is_isolated_heading(text: str, start: int, heading_len: int) -> bool:
+    """True when a match sits alone in its paragraph, the way a heading does.
+
+    A cross-reference sits inside a longer sentence; an unrelated heading
+    that merely contains the phrase runs longer than the phrase itself. Both
+    are excluded by requiring the enclosing paragraph to be close in length
+    to the heading match — a real heading line is essentially just that line.
+    """
+    para_start = text.rfind("\n\n", 0, start)
+    para_start = 0 if para_start == -1 else para_start + 2
+    para_end = text.find("\n\n", start + heading_len)
+    para_end = len(text) if para_end == -1 else para_end
+    paragraph = text[para_start:para_end].strip()
+    return len(paragraph) <= heading_len + ISOLATED_HEADING_SLACK_CHARS
 
 
 def _occurrences(haystack: str, needle: str) -> list[int]:
