@@ -151,7 +151,10 @@ async def test_model_citing_an_unsupplied_fact_id_is_dropped(
     turn = await chat_agent.answer_question(REPORT_ID, "What was revenue?")
 
     assert turn.not_found
-    assert all(claim.fact_id != "fact_not_in_the_supplied_table" for claim in turn.claims)
+    assert all(
+        claim.fact_id != "fact_not_in_the_supplied_table"
+        for claim in turn.claims
+    )
 
 
 async def test_model_declining_to_answer_is_not_found(
@@ -225,3 +228,62 @@ async def test_tier_2_recomputes_a_metric_the_report_never_emitted(
     assert not turn.not_found
     assert len(turn.claims) == 1
     assert turn.claims[0].tier is not None
+
+
+async def test_valuation_question_never_calls_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DCF path is pure Python arithmetic over real facts — there is
+    nothing for the model to decide, so it is never invoked, which also means
+    a valuation question costs nothing beyond the calculation itself."""
+    fcf = make_fact(
+        metric="cashflow.free_cash_flow",
+        label="Free cash flow",
+        value=100.0,
+        display_value="100",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+        is_calculated=True,
+        formula="net cash from operating activities − capital expenditure",
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [fcf]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "What is the DCF valuation of this company?"
+    )
+
+    assert not turn.not_found
+    certified = [claim for claim in turn.claims if not claim.is_assumption]
+    assumptions = [claim for claim in turn.claims if claim.is_assumption]
+    assert len(certified) == 1
+    assert certified[0].fact_id == fcf.fact_id
+    assert certified[0].tier == fcf.tier
+    # The rates, and the resulting estimate, both come back as assumptions —
+    # neither is ever presented as a filed figure.
+    assert len(assumptions) == 2
+    assert all(claim.assumption_note for claim in assumptions)
+    assert all(claim.tier is None and claim.fact_id is None for claim in assumptions)
+
+
+async def test_valuation_question_with_no_free_cash_flow_is_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "What is this company worth?"
+    )
+
+    assert turn.not_found

@@ -34,9 +34,11 @@ Traceability
     same id, in this process or any other.
 
 Public interface
-    analyse(facts, sic_code=...) -> AnalysisResult
+    analyse(facts, sic_code=..., groups=...) -> AnalysisResult
     compute_derived_metrics(facts, sic_code=...) -> list[Fact]
     fact_id(fact) -> str
+    project_dcf(facts, discount_rate=..., fcf_growth_rate=...,
+        terminal_growth_rate=..., projection_years=...) -> DcfResult
 """
 
 from __future__ import annotations
@@ -61,6 +63,10 @@ from app.config import (
     CURRENCY_DECIMAL_PLACES,
     DAYS_DISPLAY_TEMPLATE,
     DAYS_IN_YEAR,
+    DCF_DEFAULT_DISCOUNT_RATE,
+    DCF_DEFAULT_FCF_GROWTH_RATE,
+    DCF_DEFAULT_PROJECTION_YEARS,
+    DCF_DEFAULT_TERMINAL_GROWTH_RATE,
     DISPLAY_SCALE_DIVISOR,
     GEOGRAPHIC_SEGMENT_AXES,
     GROWTH_METRICS,
@@ -340,6 +346,245 @@ def compute_derived_metrics(
     Pure: the input list is not mutated and nothing outside is touched.
     """
     return list(analyse(facts, sic_code=sic_code).facts)
+
+
+# --- Discounted cash flow ----------------------------------------------------
+# A scenario, not a fact. `Fact` cannot exist without provenance (models.py's
+# `_check_invariants`), and a discount rate or a growth assumption names no
+# filing — it is a judgment call, either supplied by a caller or a labelled
+# default. Folding one into a `Fact` would either fabricate a source for it or
+# silently smuggle an unsourced number past `store_facts`'s gate. A
+# `DcfResult` is therefore never written to the fact store, never counted
+# toward a report's compliance score, and never emitted by `analyse` — it is
+# built once, handed to whoever asked for it, and discarded.
+#
+# What is real inside it: the base free cash flow, and the net debt and share
+# count used to bridge to a per-share figure, are each the most recent already
+# -derived or reported fact for that metric, cited by id like any other
+# figure. Only the discount rate, the projection growth rate and the terminal
+# growth rate are assumptions, and each is named as one — never estimated
+# from this filer's market data or peers, per the same reasoning m07 already
+# gives for refusing to invent a REIT capitalisation rate.
+
+
+@dataclass(frozen=True, slots=True)
+class DcfAssumption:
+    """One modelling choice the calculation depended on, not a sourced value.
+
+    `source` is "user_supplied" when a caller passed a rate explicitly, or
+    "default" when the fixed illustrative constant was used instead — the
+    two are rendered differently so a reader is never left assuming a number
+    was chosen for this filer specifically when it was not.
+    """
+
+    name: str
+    value: float
+    source: str
+    note: str
+
+
+@dataclass(frozen=True, slots=True)
+class DcfResult:
+    """A discounted-cash-flow estimate of intrinsic value, and what it rests on.
+
+    Every currency figure is `None`, together with `unavailable_reason` set,
+    when the filer's facts do not support the calculation — never a zero, and
+    never a value computed from a mid-calculation gap.
+    """
+
+    enterprise_value: float | None
+    equity_value: float | None
+    value_per_share: float | None
+    projected_free_cash_flow: tuple[float, ...]
+
+    #: Ids of the real, already-sourced facts the calculation actually used.
+    #: `net_debt_fact_id` and `shares_fact_id` are None when that bridge step
+    #: could not run, which is why `equity_value`/`value_per_share` are None.
+    base_fcf_fact_id: str | None
+    net_debt_fact_id: str | None
+    shares_fact_id: str | None
+
+    discount_rate: DcfAssumption
+    fcf_growth_rate: DcfAssumption
+    terminal_growth_rate: DcfAssumption
+    projection_years: int
+
+    #: Set, and every figure above None, when the calculation could not run.
+    #: States what was missing rather than rendering a partial number.
+    unavailable_reason: str | None = None
+
+
+def _pct(value: float) -> str:
+    return f"{value * PERCENT_SCALE:.1f}%"
+
+
+def _dcf_assumption(name: str, supplied: float | None, default: float) -> DcfAssumption:
+    if supplied is not None:
+        return DcfAssumption(
+            name=name,
+            value=supplied,
+            source="user_supplied",
+            note=f"{_pct(supplied)}, as supplied for this question.",
+        )
+    return DcfAssumption(
+        name=name,
+        value=default,
+        source="default",
+        note=(
+            f"{_pct(default)}, a fixed illustrative rate — not derived from "
+            "this filer's market data, beta or peers."
+        ),
+    )
+
+
+def _latest_fact(facts: Sequence[Fact], metric: str) -> Fact | None:
+    """The most recent fact for a metric, or None when it is not present.
+
+    Callers pass a mix of raw reported facts and already-derived facts —
+    `project_dcf` does not care which a metric came from, only that it names
+    a real source.
+    """
+    candidates = [
+        fact for fact in facts if fact.metric == metric and fact.value is not None
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda fact: fact.period_end)
+
+
+def _dcf_unavailable(
+    reason: str,
+    *,
+    discount_rate: DcfAssumption,
+    fcf_growth_rate: DcfAssumption,
+    terminal_growth_rate: DcfAssumption,
+    projection_years: int,
+) -> DcfResult:
+    return DcfResult(
+        enterprise_value=None,
+        equity_value=None,
+        value_per_share=None,
+        projected_free_cash_flow=(),
+        base_fcf_fact_id=None,
+        net_debt_fact_id=None,
+        shares_fact_id=None,
+        discount_rate=discount_rate,
+        fcf_growth_rate=fcf_growth_rate,
+        terminal_growth_rate=terminal_growth_rate,
+        projection_years=projection_years,
+        unavailable_reason=reason,
+    )
+
+
+def project_dcf(
+    facts: Sequence[Fact],
+    *,
+    discount_rate: float | None = None,
+    fcf_growth_rate: float | None = None,
+    terminal_growth_rate: float | None = None,
+    projection_years: int = DCF_DEFAULT_PROJECTION_YEARS,
+) -> DcfResult:
+    """A discounted-cash-flow estimate of intrinsic value.
+
+    Args:
+        facts: A mix of raw reported facts and already-derived facts for one
+            filer — whatever `cashflow.free_cash_flow`, `derived.net_debt` and
+            `income.shares_diluted` figures are available among them are used,
+            each the most recent period present.
+        discount_rate: Overrides `DCF_DEFAULT_DISCOUNT_RATE` when given.
+        fcf_growth_rate: Overrides `DCF_DEFAULT_FCF_GROWTH_RATE` when given —
+            the flat annual rate the base free cash flow is projected at.
+        terminal_growth_rate: Overrides `DCF_DEFAULT_TERMINAL_GROWTH_RATE`
+            when given. Must be below the discount rate.
+        projection_years: Years of free cash flow explicitly projected before
+            the Gordon-growth terminal value takes over.
+
+    Returns:
+        A `DcfResult`. Every currency figure is `None` with a reason when the
+        filer's facts do not support the calculation.
+    """
+    discount = _dcf_assumption(
+        "discount_rate", discount_rate, DCF_DEFAULT_DISCOUNT_RATE
+    )
+    growth = _dcf_assumption(
+        "fcf_growth_rate", fcf_growth_rate, DCF_DEFAULT_FCF_GROWTH_RATE
+    )
+    terminal = _dcf_assumption(
+        "terminal_growth_rate", terminal_growth_rate, DCF_DEFAULT_TERMINAL_GROWTH_RATE
+    )
+
+    if discount.value <= terminal.value:
+        return _dcf_unavailable(
+            "The discount rate must exceed the terminal growth rate, or the "
+            "terminal value is not a finite number.",
+            discount_rate=discount,
+            fcf_growth_rate=growth,
+            terminal_growth_rate=terminal,
+            projection_years=projection_years,
+        )
+
+    base_fact = _latest_fact(facts, "cashflow.free_cash_flow")
+    if base_fact is None or base_fact.value is None:
+        return _dcf_unavailable(
+            "Free cash flow is not available for this filer, so no "
+            "discounted-cash-flow estimate can be built.",
+            discount_rate=discount,
+            fcf_growth_rate=growth,
+            terminal_growth_rate=terminal,
+            projection_years=projection_years,
+        )
+
+    projected: list[float] = []
+    fcf = base_fact.value
+    for _year in range(projection_years):
+        fcf = fcf * (1 + growth.value)
+        projected.append(fcf)
+
+    discounted_fcf_sum = sum(
+        value / ((1 + discount.value) ** year)
+        for year, value in enumerate(projected, start=1)
+    )
+    terminal_value = (
+        projected[-1] * (1 + terminal.value) / (discount.value - terminal.value)
+    )
+    discounted_terminal = terminal_value / (
+        (1 + discount.value) ** projection_years
+    )
+    enterprise_value = discounted_fcf_sum + discounted_terminal
+
+    net_debt_fact = _latest_fact(facts, "derived.net_debt")
+    equity_value = (
+        enterprise_value - net_debt_fact.value
+        if net_debt_fact is not None and net_debt_fact.value is not None
+        else None
+    )
+
+    shares_fact = _latest_fact(facts, "income.shares_diluted")
+    value_per_share = (
+        equity_value / shares_fact.value
+        if equity_value is not None
+        and shares_fact is not None
+        and shares_fact.value is not None
+        and shares_fact.value != 0
+        else None
+    )
+
+    return DcfResult(
+        enterprise_value=enterprise_value,
+        equity_value=equity_value,
+        value_per_share=value_per_share,
+        projected_free_cash_flow=tuple(projected),
+        base_fcf_fact_id=base_fact.fact_id,
+        net_debt_fact_id=(
+            net_debt_fact.fact_id if net_debt_fact is not None else None
+        ),
+        shares_fact_id=shares_fact.fact_id if shares_fact is not None else None,
+        discount_rate=discount,
+        fcf_growth_rate=growth,
+        terminal_growth_rate=terminal,
+        projection_years=projection_years,
+        unavailable_reason=None,
+    )
 
 
 # --- The annual panel -------------------------------------------------------

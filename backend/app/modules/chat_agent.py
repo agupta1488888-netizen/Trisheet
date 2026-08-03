@@ -18,6 +18,14 @@ The cascade
        ratio; the reported facts can still support computing one if a reader
        asks for it directly.
 
+    A question that asks for a valuation estimate (worth, DCF, intrinsic
+    value) is answered differently: `m07_analysis.project_dcf` runs over the
+    same reported and derived facts, and the reply mixes certified claims
+    (the real free cash flow, net debt and share count it used) with
+    assumption claims (the discount and growth rates, and the resulting
+    estimate) — never presenting the estimate as a filed figure. See
+    `_answer_valuation_question`.
+
     Company websites and general web search are separate, deliberately
     deferred phases. No tool here reaches either, and `ChatClaim` itself
     cannot represent a tier outside 1-2 (see `models.ChatClaim`).
@@ -132,8 +140,25 @@ _ANSWER_SCHEMA: dict[str, Any] = {
 }
 
 
+#: Words that carry no metric identity of their own. Stripped from the
+#: question before matching, so "What was revenue?" is judged on "revenue"
+#: alone rather than being penalised for not also saying "income" or "what".
+_STOPWORDS = frozenset(
+    {
+        "a", "an", "and", "are", "at", "be", "by", "company", "did", "do",
+        "does", "for", "from", "has", "have", "how", "in", "is", "it", "its",
+        "of", "on", "report", "that", "the", "this", "to", "was", "were",
+        "what", "which", "with", "you", "your",
+    }
+)
+
+
 def _tokens(text: str) -> set[str]:
     return set(_WORD_RE.findall(text.lower()))
+
+
+def _question_tokens(question: str) -> set[str]:
+    return _tokens(question) - _STOPWORDS
 
 
 def _fact_tokens(fact: Fact) -> set[str]:
@@ -153,15 +178,23 @@ def _match_facts(question: str, facts: Sequence[Fact]) -> list[Fact]:
     Plain token overlap, not similarity scoring or embeddings — deliberately
     the simplest thing that works, because what matters is that this decision
     is legible and made in code, not that it is clever.
+
+    The overlap required scales down to the question's own length: a
+    single-word question like "revenue" can only ever overlap by 1 no matter
+    how it is asked, so demanding `CHAT_FACT_MATCH_MIN_OVERLAP` regardless
+    would make every single-metric question unmatchable by construction. A
+    longer question still needs the fuller overlap, which is what keeps a
+    stray shared word from misfiring a match.
     """
-    q_tokens = _tokens(question)
+    q_tokens = _question_tokens(question)
     if not q_tokens:
         return []
+    required = min(CHAT_FACT_MATCH_MIN_OVERLAP, len(q_tokens))
 
     scored: list[tuple[int, dt.date, Fact]] = []
     for fact in facts:
         overlap = len(q_tokens & _fact_tokens(fact))
-        if overlap >= CHAT_FACT_MATCH_MIN_OVERLAP:
+        if overlap >= required:
             scored.append((overlap, fact.period_end, fact))
 
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -264,6 +297,167 @@ def _wider_candidates(all_facts: Sequence[Fact], message: str) -> list[Fact]:
     return _match_facts(message, wider)
 
 
+# --- Valuation (DCF) ------------------------------------------------------
+# "Value", deliberately excluded from the trigger words below, is too generic
+# — it appears in ordinary fact labels ("value of total assets") that are not
+# valuation questions at all. The words kept are ones a reader uses only when
+# actually asking for an intrinsic-value estimate.
+_VALUATION_TRIGGER_WORDS = frozenset(
+    {"dcf", "discounted", "intrinsic", "worth", "valuation", "valuations", "valued"}
+)
+
+
+def _is_valuation_question(question: str) -> bool:
+    return bool(_tokens(question) & _VALUATION_TRIGGER_WORDS)
+
+
+def _money(value: float, unit: str | None) -> str:
+    suffix = f" {unit}" if unit else ""
+    return f"{value:,.0f}{suffix}"
+
+
+def _dcf_input_claims(
+    result: m07_analysis.DcfResult, facts_by_id: dict[str, Fact]
+) -> list[ChatClaim]:
+    """Certified claims for the real facts the calculation actually used."""
+    claims: list[ChatClaim] = []
+    for fact_id, label in (
+        (result.base_fcf_fact_id, "Free cash flow"),
+        (result.net_debt_fact_id, "Net debt"),
+        (result.shares_fact_id, "Diluted shares outstanding"),
+    ):
+        if fact_id is None:
+            continue
+        fact = facts_by_id.get(fact_id)
+        if fact is None:
+            continue
+        period = fact.fiscal_year if fact.fiscal_year is not None else fact.period_end
+        claims.append(
+            ChatClaim(
+                text=f"{label} (FY{period}): {fact.display_value}.",
+                tier=fact.tier,
+                fact_id=fact.fact_id,
+                source_url=fact.source_url,
+                source_type=fact.source_type,
+                accession_no=fact.accession_no,
+                filed_date=fact.filed_date,
+            )
+        )
+    return claims
+
+
+def _dcf_assumption_claims(
+    result: m07_analysis.DcfResult, base_fact: Fact | None
+) -> list[ChatClaim]:
+    """Assumption claims: the rates used, and the resulting estimate.
+
+    Both are `is_assumption` — the estimate is grouped with its assumptions
+    rather than presented as a plain figure, because its correctness depends
+    entirely on them: a different discount rate changes the number even
+    though every real input behind it stays the same.
+    """
+    unit = base_fact.unit if base_fact is not None else None
+
+    assumptions_text = (
+        f"This estimate assumes a {_pct(result.discount_rate.value)} discount "
+        f"rate, {_pct(result.fcf_growth_rate.value)} free cash flow growth "
+        f"for {result.projection_years} years, and a "
+        f"{_pct(result.terminal_growth_rate.value)} terminal growth rate."
+    )
+    assumptions_note = " ".join(
+        (
+            result.discount_rate.note,
+            result.fcf_growth_rate.note,
+            result.terminal_growth_rate.note,
+            "None of these are filed figures.",
+        )
+    )
+
+    result_parts = [
+        f"Estimated enterprise value: {_money(result.enterprise_value or 0.0, unit)}."
+    ]
+    if result.equity_value is not None:
+        result_parts.append(
+            f"Estimated equity value: {_money(result.equity_value, unit)}."
+        )
+    if result.value_per_share is not None:
+        result_parts.append(
+            f"Estimated value per share: {_money(result.value_per_share, unit)}."
+        )
+
+    return [
+        ChatClaim(
+            text=assumptions_text,
+            is_assumption=True,
+            assumption_note=assumptions_note,
+        ),
+        ChatClaim(
+            text=" ".join(result_parts),
+            is_assumption=True,
+            assumption_note=(
+                "A discounted-cash-flow estimate, not a reported or audited "
+                "figure — it depends entirely on the assumptions above, not "
+                "on filed data alone."
+            ),
+        ),
+    ]
+
+
+def _pct(value: float) -> str:
+    return f"{value * 100:.1f}%"
+
+
+async def _answer_valuation_question(
+    report_id: str, all_facts: Sequence[Fact], user_turn: ChatTurn
+) -> ChatTurn:
+    """Answers a valuation question with a DCF scenario over this filer's
+    real facts, mixing certified inputs with clearly labelled assumptions."""
+    raw_facts = [fact for fact in all_facts if not fact.is_calculated]
+    # `all_facts` may already carry the metrics `project_dcf` needs, computed
+    # once when the report itself was generated — the wider recompute below
+    # only fills in what the filer's own sector template left out, it does
+    # not replace what is already there.
+    wider = (
+        m07_analysis.analyse(
+            raw_facts, sic_code=None, groups=m07_analysis.ALL_METRIC_GROUPS
+        ).facts
+        if raw_facts
+        else ()
+    )
+    combined = [*all_facts, *wider]
+    result = m07_analysis.project_dcf(combined)
+
+    if result.unavailable_reason is not None:
+        assistant_turn = _not_found_turn(result.unavailable_reason)
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
+
+    facts_by_id = {fact.fact_id: fact for fact in combined}
+    base_fact = (
+        facts_by_id.get(result.base_fcf_fact_id)
+        if result.base_fcf_fact_id is not None
+        else None
+    )
+    claims = _dcf_input_claims(result, facts_by_id) + _dcf_assumption_claims(
+        result, base_fact
+    )
+
+    assistant_turn = _new_turn(
+        ChatRole.ASSISTANT,
+        claims=claims,
+        content=" ".join(claim.text for claim in claims),
+        not_found=False,
+    )
+    await _persist(
+        report_id,
+        user_turn,
+        assistant_turn,
+        tool_calls=[{"tool": "project_dcf"}],
+        highest_tier_used=None,
+    )
+    return assistant_turn
+
+
 async def answer_question(report_id: str, message: str) -> ChatTurn:
     """Answers one question about a completed report.
 
@@ -288,6 +482,9 @@ async def answer_question(report_id: str, message: str) -> ChatTurn:
         assistant_turn = _not_found_turn(DATA_UNAVAILABLE_TEXT)
         await _persist(report_id, user_turn, assistant_turn)
         return assistant_turn
+
+    if _is_valuation_question(message):
+        return await _answer_valuation_question(report_id, all_facts, user_turn)
 
     highest_tier: int | None = None
     candidates = _match_facts(message, all_facts)

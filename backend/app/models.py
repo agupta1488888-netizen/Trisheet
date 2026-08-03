@@ -1025,8 +1025,9 @@ class ReportMetrics(WireModel):
 # --- Chat assistant ----------------------------------------------------------
 # A question about a completed report, answered from facts already stored for
 # it (tier 1) or derivable from the same reported facts under a wider metric
-# selection (tier 2). Nothing here reaches a company website or the open web —
-# those are separate, deliberately deferred phases. See app/modules/chat_agent.
+# selection (tier 2), or from a DCF scenario built over those same facts. A
+# company website and the open web are separate, deliberately deferred phases.
+# See app/modules/chat_agent.
 
 
 class ChatRole(StrEnum):
@@ -1037,15 +1038,21 @@ class ChatRole(StrEnum):
 class ChatClaim(WireModel):
     """One segment of an assistant turn, individually sourced.
 
-    A turn answering "not found" and a turn citing a filed figure are different
-    claims about the world, and this model cannot represent the two ambiguously:
-    a claim either names the tier-1/tier-2 fact it rests on, or it is marked
-    `not_found` and names nothing. There is no third shape — a claim that is
-    neither is not constructable, the same discipline `Fact` applies to itself.
+    Exactly one of three shapes, never ambiguously:
+
+    - Certified: names the tier-1/tier-2 fact it rests on.
+    - Assumption: a modelling choice (a DCF discount rate, a growth rate, or
+      a result computed from one) that names no filing and cannot be
+      certified — `assumption_note` says what it is and why it isn't a fact.
+    - Not found: the question could not be answered from this report's filed
+      data. Carries no value, no tier, no citation, no assumption.
+
+    A claim that is none of these, or more than one, is not constructable —
+    the same discipline `Fact` applies to itself.
     """
 
     text: str
-    #: 1 (filing) or 2 (company source). None only when `not_found`.
+    #: 1 (filing) or 2 (company source). None unless certified.
     tier: SourceTier | None = None
     fact_id: str | None = None
     source_url: HttpUrl | None = None
@@ -1055,6 +1062,14 @@ class ChatClaim(WireModel):
     #: This segment states that the question could not be answered from this
     #: report's filed data. Carries no value, no tier, no citation.
     not_found: bool = False
+    #: This segment is a modelling choice or a figure computed from one — a
+    #: DCF discount rate, a growth assumption, or the resulting estimate.
+    #: Never paired with a tier or fact id: an assumption names no filing.
+    is_assumption: bool = False
+    #: Required whenever `is_assumption`. States what the assumption is and
+    #: that it is not a sourced figure, so it cannot be read as a fact by
+    #: omission.
+    assumption_note: str | None = None
 
     @model_validator(mode="after")
     def _check_invariants(self) -> Self:
@@ -1063,15 +1078,37 @@ class ChatClaim(WireModel):
             raise ValueError(message)
 
         if self.not_found:
+            if (
+                self.tier is not None
+                or self.fact_id is not None
+                or self.is_assumption
+            ):
+                message = (
+                    "A not-found claim cannot also carry a tier, a fact id, "
+                    "or be marked as an assumption."
+                )
+                raise ValueError(message)
+            return self
+
+        if self.is_assumption:
             if self.tier is not None or self.fact_id is not None:
-                message = "A not-found claim cannot also carry a tier or fact id."
+                message = (
+                    "An assumption claim cannot also carry a tier or fact "
+                    "id — it names no filing."
+                )
+                raise ValueError(message)
+            if not (self.assumption_note or "").strip():
+                message = (
+                    "An assumption claim must carry the note stating what "
+                    "the assumption is and that it is not a sourced figure."
+                )
                 raise ValueError(message)
             return self
 
         if self.tier is None or self.fact_id is None:
             message = (
-                "A claim that is not not_found must carry the tier and fact id "
-                "of the fact it rests on."
+                "A claim that is not not_found and not an assumption must "
+                "carry the tier and fact id of the fact it rests on."
             )
             raise ValueError(message)
 

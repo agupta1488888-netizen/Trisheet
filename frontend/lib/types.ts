@@ -442,16 +442,23 @@ export interface ComplianceSummary {
 
    This pass covers Tier 1 (already-certified report facts) and Tier 2
    (freshly computed from the filer's own data) only. There is no web search,
-   no company-website fetching and no "unverified" tier — every claim the
-   assistant makes is either a certified citation or an honest "not found".
+   no company-website fetching and no general web search — every claim the
+   assistant makes is a certified citation, an honest "not found", or (for a
+   valuation question) a modelling assumption, labelled as one and never
+   presented as a filed figure.
    =========================================================================== */
 
 export type ChatRole = "user" | "assistant";
 
 /**
- * One claim inside a turn. `tier` and `factId` are null together only when
- * `notFound` is true — a claim either certifies to a source or says so
- * plainly, it never does both.
+ * One claim inside a turn — exactly one of three shapes:
+ *
+ * - Certified: `tier` and `factId` are set, citing a real fact.
+ * - Assumption: `isAssumption` is true and `assumptionNote` explains what the
+ *   assumption is — a DCF discount/growth rate, or a figure computed from
+ *   one. Never paired with a tier or fact id: it names no filing.
+ * - Not found: `notFound` is true, carrying no value, tier, citation, or
+ *   assumption.
  */
 export interface ChatClaim {
   text: string;
@@ -464,6 +471,10 @@ export interface ChatClaim {
   accessionNo: string | null;
   filedDate: string | null;
   notFound: boolean;
+  /** A modelling choice or a figure computed from one — never a sourced fact. */
+  isAssumption: boolean;
+  /** Required whenever `isAssumption`. States what the assumption is. */
+  assumptionNote: string | null;
 }
 
 export interface ChatTurn {

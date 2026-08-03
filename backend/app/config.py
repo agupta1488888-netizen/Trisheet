@@ -2073,6 +2073,32 @@ CHAT_FACT_MATCH_MIN_OVERLAP = 2
 #: context without helping the model answer.
 CHAT_TOOL_RESULT_FACT_LIMIT = 20
 
+# --- DCF assumption defaults --------------------------------------------------
+# Fixed, clearly-labelled illustrative values — never derived from this
+# filer's market data, beta or peers. Deriving a discount rate from market
+# inputs would be the system forming a view, the same reasoning m07's REIT
+# NAV comment gives for refusing to invent a capitalisation rate. A caller may
+# override any of these with its own supplied assumption; what never happens
+# is the system picking one on its own from data that could make it look
+# sourced.
+
+#: Illustrative discount rate (a WACC proxy), applied when the caller supplies
+#: none.
+DCF_DEFAULT_DISCOUNT_RATE = 0.09
+
+#: Illustrative annual growth rate applied to the base free cash flow over the
+#: projection window, when the caller supplies none.
+DCF_DEFAULT_FCF_GROWTH_RATE = 0.03
+
+#: Illustrative perpetual growth rate used in the Gordon-growth terminal
+#: value, when the caller supplies none. Must be below the discount rate or
+#: the terminal value is not a finite number.
+DCF_DEFAULT_TERMINAL_GROWTH_RATE = 0.02
+
+#: Years of free cash flow explicitly projected before the terminal value
+#: takes over, when the caller supplies none.
+DCF_DEFAULT_PROJECTION_YEARS = 5
+
 
 class Settings(BaseSettings):
     """Environment-backed settings. Instantiated once via `get_settings`."""

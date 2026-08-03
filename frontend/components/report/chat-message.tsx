@@ -3,8 +3,10 @@
 /**
  * One turn in the assistant conversation.
  *
- * A claim renders one of two ways, deliberately only two — this pass ships
- * Tier 1 and Tier 2 only, there is no "unverified" state to render:
+ * A claim renders one of three ways, never ambiguously — there is still no
+ * "unverified" tier here (no company website, no web search), but a
+ * valuation question introduces a real third shape alongside certified
+ * citations and "not found":
  *
  *  - The claim cites a fact already in this report's `SourceIndex`: render
  *    the exact `SourceMarker` the rest of the document uses, so the marker
@@ -13,6 +15,10 @@
  *    that was never part of the original index): render a small inline
  *    citation with the same tier colour and the same accession/date
  *    formatting the rail already uses, without duplicating that formatting.
+ *  - The claim is a modelling assumption — a DCF discount/growth rate, or a
+ *    figure computed from one: render it with an "assumption" label instead
+ *    of a citation, the direct analogue of `CalculatedLabel`'s "calculated"
+ *    label, so it is never mistaken for a sourced figure.
  *
  * A `notFound` claim is not an error state — it is the assistant declining
  * to guess, and it reads as plainly as the rest of the interface's honest
@@ -72,6 +78,24 @@ function FreshCitation({ claim }: { claim: ChatClaim }) {
   );
 }
 
+/**
+ * The "assumption" label — the DCF analogue of `CalculatedLabel`. Where a
+ * calculated figure's formula is a tooltip, an assumption's tooltip is why it
+ * is not a sourced fact at all.
+ */
+function AssumptionLabel({ note }: { note: string }) {
+  return (
+    <span className="ml-2 align-middle text-[0.68rem] text-muted-foreground">
+      <abbr
+        title={note}
+        className="cursor-help no-underline decoration-dotted underline-offset-2 hover:underline"
+      >
+        assumption
+      </abbr>
+    </span>
+  );
+}
+
 function Claim({ claim }: { claim: ChatClaim }) {
   const { index } = useProvenance();
 
@@ -79,6 +103,17 @@ function Claim({ claim }: { claim: ChatClaim }) {
     return (
       <p className="text-sm leading-relaxed text-muted-foreground">
         {claim.text.trim() === "" ? NOT_FOUND_TEXT : claim.text}
+      </p>
+    );
+  }
+
+  if (claim.isAssumption) {
+    return (
+      <p className="text-sm leading-relaxed text-ink">
+        {claim.text}
+        {claim.assumptionNote !== null ? (
+          <AssumptionLabel note={claim.assumptionNote} />
+        ) : null}
       </p>
     );
   }
