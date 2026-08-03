@@ -29,6 +29,24 @@ logger = logging.getLogger(__name__)
 #: Elements whose text is markup, not prose.
 _NON_PROSE_TAGS = ("script", "style", "head", "noscript")
 
+#: Block-level elements after which a paragraph break belongs. EDGAR's
+#: inline-XBRL markup wraps short phrases in their own elements with no
+#: whitespace between them in the source; `text_content()` concatenates
+#: every descendant text node with no separator at all, so without this a
+#: filing heading and the paragraph after it fuse into one word. Block tags
+#: get a full paragraph break so downstream paragraph-splitting (risk
+#: headings, item boundaries) still works; everything else gets a single
+#: space so adjacent inline runs never fuse.
+_BLOCK_TAGS = frozenset(
+    {
+        "address", "article", "aside", "blockquote", "br", "dd", "div",
+        "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form",
+        "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main",
+        "nav", "ol", "p", "pre", "section", "table", "tr", "td", "th",
+        "ul",
+    }
+)
+
 #: Collapses the runs of whitespace that HTML-to-text conversion leaves behind.
 _WHITESPACE = re.compile(r"[^\S\n]+")
 _BLANK_LINES = re.compile(r"\n{3,}")
@@ -109,8 +127,27 @@ def html_to_text(markup: str) -> str:
             if parent is not None:
                 parent.remove(element)
 
+    _insert_separators(document)
     text = document.text_content()
     return normalise_whitespace(text)
+
+
+def _insert_separators(document: html.HtmlElement) -> None:
+    """Gives every element a tail separator so flattening can't fuse words.
+
+    `lxml`'s `text_content()` concatenates descendant text nodes with
+    nothing between them, which is invisible for ordinary HTML (browsers
+    render each element on its own line or with surrounding whitespace in
+    the markup) but not for inline-XBRL filings, where adjacent tagged
+    phrases often have zero whitespace between them in the source.
+    """
+    for element in document.iter():
+        separator = "\n\n" if element.tag in _BLOCK_TAGS else " "
+        if element.tail:
+            if not element.tail[:1].isspace():
+                element.tail = separator + element.tail
+        else:
+            element.tail = separator
 
 
 def normalise_whitespace(text: str) -> str:
