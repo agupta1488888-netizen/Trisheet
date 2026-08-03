@@ -9,30 +9,59 @@
  * reader semantics for free — the visible control is the label.
  */
 
+import { useId } from "react";
+
 import { cn } from "@/lib/utils";
-import { DEPTH_OPTIONS } from "@/lib/constants";
+import { CUSTOM_PERIODS_MAX, CUSTOM_PERIODS_MIN, DEPTH_OPTIONS } from "@/lib/constants";
 import type { AnalysisDepth } from "@/lib/types";
+
+/** `null` reads as "not entered yet", distinct from an in-range value. */
+function customPeriodsError(customPeriods: number | null): string | null {
+  if (customPeriods === null) {
+    return "Enter a number of years.";
+  }
+  if (
+    !Number.isInteger(customPeriods) ||
+    customPeriods < CUSTOM_PERIODS_MIN ||
+    customPeriods > CUSTOM_PERIODS_MAX
+  ) {
+    return `Enter a whole number between ${CUSTOM_PERIODS_MIN} and ${CUSTOM_PERIODS_MAX}.`;
+  }
+  return null;
+}
 
 export function DepthSelector({
   value,
   onChange,
+  customPeriods,
+  onCustomPeriodsChange,
   name,
   disabled = false,
 }: {
   value: AnalysisDepth;
   onChange: (value: AnalysisDepth) => void;
+  /** Only meaningful when `value` is "custom"; ignored otherwise. */
+  customPeriods: number | null;
+  onCustomPeriodsChange: (value: number | null) => void;
   name: string;
   disabled?: boolean;
 }) {
+  const customInputId = useId();
+  const isCustomSelected = value === "custom";
+  const customError = isCustomSelected
+    ? customPeriodsError(customPeriods)
+    : null;
+
   return (
     <fieldset disabled={disabled} className="min-w-0">
       <legend className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
         Analysis depth
       </legend>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {DEPTH_OPTIONS.map((option) => {
           const isSelected = option.value === value;
+          const isCustom = option.value === "custom";
           return (
             <label
               key={option.value}
@@ -66,13 +95,56 @@ export function DepthSelector({
                 >
                   {option.label}
                 </span>
-                <span className="ref text-xs text-muted-foreground">
-                  {option.periodsLabel}
-                </span>
+                {isCustom ? null : (
+                  <span className="ref text-xs text-muted-foreground">
+                    {option.periodsLabel}
+                  </span>
+                )}
               </span>
               <span className="text-sm leading-snug text-muted-foreground">
                 {option.summary}
               </span>
+
+              {isCustom ? (
+                <span className="mt-1 flex items-center gap-2">
+                  <label
+                    htmlFor={customInputId}
+                    className="text-xs text-muted-foreground"
+                  >
+                    Years
+                  </label>
+                  <input
+                    id={customInputId}
+                    type="number"
+                    inputMode="numeric"
+                    min={CUSTOM_PERIODS_MIN}
+                    max={CUSTOM_PERIODS_MAX}
+                    step={1}
+                    value={customPeriods ?? ""}
+                    disabled={disabled}
+                    aria-invalid={isCustomSelected && customError !== null}
+                    className="ref w-16 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm tabular-nums focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                    onFocus={() => {
+                      if (!isSelected) {
+                        onChange("custom");
+                      }
+                    }}
+                    onChange={(event) => {
+                      if (!isSelected) {
+                        onChange("custom");
+                      }
+                      const raw = event.target.value;
+                      onCustomPeriodsChange(raw === "" ? null : Number(raw));
+                    }}
+                  />
+                </span>
+              ) : null}
+
+              {isCustom && isCustomSelected && customError !== null ? (
+                <span role="alert" className="text-xs text-flag">
+                  {customError}
+                </span>
+              ) : null}
             </label>
           );
         })}

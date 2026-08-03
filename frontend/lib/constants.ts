@@ -54,7 +54,21 @@ export const DEPTH_OPTIONS: readonly DepthOption[] = [
     summary: "Every disclosed period, narrative sections and risk factors.",
     periodsLabel: "10y",
   },
+  {
+    value: "custom",
+    label: "Custom",
+    summary: "Choose exactly how many annual periods to include.",
+    periodsLabel: "set below",
+  },
 ];
+
+/**
+ * Bounds on the "custom" depth's period count. Must stay in sync with
+ * CUSTOM_PERIODS_MIN / CUSTOM_PERIODS_MAX in backend/app/config.py — the
+ * server is the one that actually enforces them.
+ */
+export const CUSTOM_PERIODS_MIN = 1;
+export const CUSTOM_PERIODS_MAX = 15;
 
 /**
  * Offered as starting points, not defaults. Deliberately spans a domestic

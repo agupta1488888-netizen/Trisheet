@@ -20,6 +20,7 @@ import Link from "next/link";
 import { SECTION_NAV_LABEL } from "@/lib/constants";
 import { buildSourceIndex } from "@/lib/provenance";
 import { SECTION_ORDER, type ReportDocument } from "@/lib/types";
+import { ChatPanel } from "@/components/report/chat-panel";
 import { ComplianceStrip } from "@/components/report/compliance-strip";
 import { ProvenanceProvider } from "@/components/report/provenance-context";
 import { ProvenanceRail } from "@/components/report/provenance-rail";
@@ -60,7 +61,7 @@ export function ReportView({ document }: { document: ReportDocument }) {
 
   return (
     <ProvenanceProvider index={index}>
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-x-10 px-5 py-10 pb-28 sm:px-8 lg:grid-cols-[9rem_minmax(0,1fr)_17rem] lg:pb-16">
+      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-x-10 px-5 py-10 pb-40 sm:px-8 lg:grid-cols-[9rem_minmax(0,1fr)_17rem] lg:pb-16">
         <SectionSidebar ids={sections.map((section) => section.id)} />
 
         <main id="report" className="min-w-0">
@@ -99,6 +100,8 @@ export function ReportView({ document }: { document: ReportDocument }) {
 
         <ProvenanceRail index={index} />
       </div>
+
+      <ChatPanel reportId={document.report.id} />
     </ProvenanceProvider>
   );
 }

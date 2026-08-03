@@ -209,7 +209,7 @@ export interface ApiError {
  * How far the pipeline goes. Depth changes how many periods are extracted and
  * which modules run — it never changes the provenance rules.
  */
-export type AnalysisDepth = "brief" | "standard" | "full";
+export type AnalysisDepth = "brief" | "standard" | "full" | "custom";
 
 export interface DepthOption {
   value: AnalysisDepth;
@@ -435,6 +435,45 @@ export interface ComplianceSummary {
   /** True when every figure in the report resolved to a Tier 1 or 2 source. */
   passed: boolean;
   verifiedAt: string;
+}
+
+/* ===========================================================================
+   Chat
+
+   This pass covers Tier 1 (already-certified report facts) and Tier 2
+   (freshly computed from the filer's own data) only. There is no web search,
+   no company-website fetching and no "unverified" tier — every claim the
+   assistant makes is either a certified citation or an honest "not found".
+   =========================================================================== */
+
+export type ChatRole = "user" | "assistant";
+
+/**
+ * One claim inside a turn. `tier` and `factId` are null together only when
+ * `notFound` is true — a claim either certifies to a source or says so
+ * plainly, it never does both.
+ */
+export interface ChatClaim {
+  text: string;
+  tier: 1 | 2 | null;
+  /** Set when citing a fact already stored for this report. */
+  factId: string | null;
+  sourceUrl: string | null;
+  /** e.g. "sec_filing", "sec_xbrl". */
+  sourceType: string | null;
+  accessionNo: string | null;
+  filedDate: string | null;
+  notFound: boolean;
+}
+
+export interface ChatTurn {
+  id: string;
+  role: ChatRole;
+  claims: readonly ChatClaim[];
+  /** Plain-text fallback rendering of the turn. */
+  content: string;
+  notFound: boolean;
+  createdAt: string;
 }
 
 /* ===========================================================================

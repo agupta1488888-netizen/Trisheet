@@ -14,7 +14,7 @@
 import { useCallback, useId, useState } from "react";
 
 import type { ApiResult } from "@/lib/api";
-import { DEFAULT_DEPTH } from "@/lib/constants";
+import { CUSTOM_PERIODS_MAX, CUSTOM_PERIODS_MIN, DEFAULT_DEPTH } from "@/lib/constants";
 import type {
   AnalysisDepth,
   ApiError,
@@ -32,7 +32,20 @@ export interface TickerFormProps {
     depth: AnalysisDepth,
   ) => Promise<ApiResult<Resolution>>;
   /** Called once a single filer is settled on, whether directly or by choice. */
-  onResolved: (resolution: Resolution, depth: AnalysisDepth) => void;
+  onResolved: (
+    resolution: Resolution,
+    depth: AnalysisDepth,
+    periods: number | null,
+  ) => void;
+}
+
+function isCustomPeriodsValid(periods: number | null): boolean {
+  return (
+    periods !== null &&
+    Number.isInteger(periods) &&
+    periods >= CUSTOM_PERIODS_MIN &&
+    periods <= CUSTOM_PERIODS_MAX
+  );
 }
 
 export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
@@ -41,14 +54,18 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
 
   const [query, setQuery] = useState("");
   const [depth, setDepth] = useState<AnalysisDepth>(DEFAULT_DEPTH);
+  const [customPeriods, setCustomPeriods] = useState<number | null>(null);
   const [isResolving, setIsResolving] = useState(false);
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const isCustomDepthInvalid =
+    depth === "custom" && !isCustomPeriodsValid(customPeriods);
+
   const submit = useCallback(
     async (rawQuery: string) => {
       const trimmed = rawQuery.trim();
-      if (trimmed === "" || isResolving) {
+      if (trimmed === "" || isResolving || isCustomDepthInvalid) {
         return;
       }
 
@@ -65,13 +82,13 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
       }
 
       if (result.data.outcome === "resolved") {
-        onResolved(result.data, depth);
+        onResolved(result.data, depth, depth === "custom" ? customPeriods : null);
         return;
       }
 
       setResolution(result.data);
     },
-    [depth, isResolving, onResolved, resolve],
+    [customPeriods, depth, isCustomDepthInvalid, isResolving, onResolved, resolve],
   );
 
   const choose = useCallback(
@@ -126,6 +143,8 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
             name={depthName}
             value={depth}
             onChange={setDepth}
+            customPeriods={customPeriods}
+            onCustomPeriodsChange={setCustomPeriods}
             disabled={isResolving}
           />
         </div>
@@ -133,7 +152,9 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
         <div className="mt-12">
           <button
             type="submit"
-            disabled={isResolving || query.trim() === ""}
+            disabled={
+              isResolving || query.trim() === "" || isCustomDepthInvalid
+            }
             className="w-full rounded-xl bg-emerald-600 px-10 py-5 text-lg font-semibold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none motion-reduce:transition-none sm:w-auto"
           >
             {isResolving ? "Resolving…" : "Build profile"}

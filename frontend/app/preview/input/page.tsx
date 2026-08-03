@@ -93,6 +93,7 @@ export default function PreviewInput() {
   const [started, setStarted] = useState<{
     resolution: Resolution;
     depth: AnalysisDepth;
+    periods: number | null;
   } | null>(null);
 
   return (
@@ -102,8 +103,8 @@ export default function PreviewInput() {
       <InputScreen
         search={search}
         resolve={resolve}
-        onStart={(resolution, depth) => {
-          setStarted({ resolution, depth });
+        onStart={(resolution, depth, periods) => {
+          setStarted({ resolution, depth, periods });
         }}
       />
 
@@ -120,8 +121,9 @@ export default function PreviewInput() {
             · {started.resolution.company?.name}
           </p>
           <p className="ref mt-1 text-xs text-muted-foreground">
-            CIK {started.resolution.company?.cik} · {started.depth} analysis ·
-            the live screen would queue a report and navigate here
+            CIK {started.resolution.company?.cik} · {started.depth} analysis
+            {started.periods === null ? "" : ` (${started.periods}y)`} · the
+            live screen would queue a report and navigate here
           </p>
         </div>
       )}

@@ -9,6 +9,7 @@
 import type {
   AnalysisDepth,
   ApiError,
+  ChatTurn,
   Report,
   ReportDocument,
   Resolution,
@@ -140,15 +141,26 @@ export async function resolveTicker(
   });
 }
 
-/** Queues a report. The run itself is followed on the progress screen. */
+/**
+ * Queues a report. The run itself is followed on the progress screen.
+ *
+ * `periods` is only meaningful (and only sent) when `depth` is "custom" —
+ * the API rejects a request that sets it for any other depth.
+ */
 export async function createReport(
   cik: string,
   ticker: string,
   depth: AnalysisDepth,
+  periods: number | null = null,
 ): Promise<ApiResult<Report>> {
   return apiRequest<Report>("/reports", {
     method: "POST",
-    body: JSON.stringify({ cik, ticker, depth }),
+    body: JSON.stringify({
+      cik,
+      ticker,
+      depth,
+      periods: depth === "custom" ? periods : null,
+    }),
   });
 }
 
@@ -167,5 +179,23 @@ export async function fetchReportDocument(
 ): Promise<ApiResult<ReportDocument>> {
   return apiRequest<ReportDocument>(`/reports/${reportId}/document`, {
     cache: "no-store",
+  });
+}
+
+/**
+ * Sends one message to the report's assistant and returns the reply turn.
+ *
+ * The backend answers 404 when the report does not exist, 409 when it has
+ * not finished generating yet, and 503 when the assistant is unconfigured.
+ * All three arrive as an ordinary `ApiError` — this function does not branch
+ * on them, the caller renders `error.message` in the interface's voice.
+ */
+export async function sendChatMessage(
+  reportId: string,
+  message: string,
+): Promise<ApiResult<ChatTurn>> {
+  return apiRequest<ChatTurn>(`/reports/${reportId}/chat`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
   });
 }
