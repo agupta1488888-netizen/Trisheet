@@ -1178,17 +1178,24 @@ PEER_GROUP_MARKERS = (
     "selected peer companies",
 )
 
-#: Phrases that mark the competition discussion in an annual report.
+#: Phrases that mark the competition discussion in an annual report. The
+#: bare word "competition" is deliberately excluded: it appears throughout
+#: ordinary risk-factor boilerplate ("intense competition for talent",
+#: "highly competitive industry") with no named competitor nearby, and
+#: matching it opened a window practically anywhere in the document.
 COMPETITION_MARKERS = (
-    "competition",
     "we compete",
     "our competitors",
     "principal competitors",
     "competitive landscape",
 )
 
-#: Characters of text either side of a marker that are scanned for names.
-PEER_CONTEXT_WINDOW_CHARS = 8_000
+#: Characters of text either side of a marker that are scanned for names. A
+#: filer's actual named peer or competitor list sits in the same sentence or
+#: short passage as the marker phrase, not thousands of characters away —
+#: a wide window pulls in unrelated names (e.g. a proxy's compensation
+#: consultant, mentioned near "peer group" but not part of it).
+PEER_CONTEXT_WINDOW_CHARS = 400
 
 #: Cap on the document text parsed out of one filing. Proxies and 10-Ks run to
 #: a few hundred kilobytes; far more means something unexpected.
@@ -1243,6 +1250,15 @@ PEER_NAME_STOPWORDS = frozenset(
         "technologies",
         "solutions",
         "partners",
+        "paid",
+        "people",
+        "emerging",
+        "compensation",
+        "committee",
+        "consultant",
+        "consulting",
+        "benchmark",
+        "benchmarking",
     }
 )
 

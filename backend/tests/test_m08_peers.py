@@ -1,9 +1,13 @@
-"""Tests for m08's peer comparison: financials and valuation, side by side.
+"""Tests for m08: peer name extraction and peer comparison.
 
-Peer selection itself (the ladder in `select_peers`) already has thorough
-coverage through the pipeline's integration surface; these tests target the
-newer `build_peer_comparison` path — the pure row-building arithmetic, and the
-orchestration that reads a peer's own filings the way the subject's are read.
+`build_peer_comparison` is covered here directly — the pure row-building
+arithmetic, and the orchestration that reads a peer's own filings the way the
+subject's are read. `find_company_names` and `_capitalised_runs` (the ladder's
+name-extraction step, public per the module's own docstring precisely so it
+can be exercised without a network) are covered directly too: this is the
+step that decides who ends up on the comparables table, and a false positive
+there — a compensation consultant mistaken for a peer, a generic word
+colliding with an obscure ticker — reaches the report with no further check.
 
 Network calls are never exercised here. `build_peer_comparison` delegates to
 m01/m02/m03/m05, which are monkeypatched with fakes, so what is under test is
@@ -18,7 +22,11 @@ from typing import cast
 
 import pytest
 
-from app.config import PEER_COMPARISON_MAX_COUNT
+from app.config import (
+    COMPETITION_MARKERS,
+    PEER_COMPARISON_MAX_COUNT,
+    PEER_CONTEXT_WINDOW_CHARS,
+)
 from app.models import (
     Company,
     ExtractionMethod,
@@ -32,7 +40,9 @@ from app.models import (
 )
 from app.modules import m02_discovery, m03_financials, m05_market
 from app.modules import m08_peers as m08
+from app.modules.m01_resolver import IndexEntry
 from app.modules.m08_peers import PeerComparison, PeerComparisonRow
+from app.services import document
 from app.services.edgar import EdgarClient
 from tests.conftest import APPLE_ACCESSION, make_company, make_fact
 
@@ -150,6 +160,83 @@ def _subject_facts() -> list[Fact]:
         ),
         _market_fact(),
     ]
+
+
+# --- Peer name extraction ------------------------------------------------
+#
+# These target the precision fix for false-positive peers: a proxy's
+# compensation consultant mistaken for a named peer, and a generic
+# capitalised word colliding with an obscure ticker (both observed live for
+# a NIKE report, which is what motivated the fix).
+
+_NAME_INDEX_ENTRIES = [
+    IndexEntry(cik="0000320193", ticker="AAPL", name="Apple Inc"),
+    IndexEntry(cik="0000789019", ticker="MSFT", name="Microsoft Corp"),
+    IndexEntry(cik="0000105620", ticker="PAYD", name="Paid Inc"),
+    IndexEntry(cik="0000320187", ticker="NKE", name="Nike Inc"),
+]
+
+
+def _name_index() -> m08._NameIndex:
+    return m08._NameIndex(_NAME_INDEX_ENTRIES)
+
+
+def test_find_company_names_resolves_a_capitalised_run() -> None:
+    text = (
+        "Our compensation peer group consists of Apple Inc and Microsoft Corp."
+    )
+
+    found = m08.find_company_names(text, _name_index())
+
+    assert [entry.ticker for entry in found] == ["AAPL", "MSFT"]
+
+
+def test_find_company_names_rejects_stopword_collisions() -> None:
+    # "Paid Inc" is a real ticker in the index, but the word "paid" collides
+    # constantly with ordinary prose ("employees are paid competitively")
+    # that names no company at all.
+    text = "Paid Inc is a stopword collision, not a company mentioned here."
+
+    found = m08.find_company_names(text, _name_index())
+
+    assert found == []
+
+
+def test_find_company_names_ignores_unresolved_capitalised_phrases() -> None:
+    text = "The Emerging Markets Group discussed strategy with People Analytics."
+
+    found = m08.find_company_names(text, _name_index())
+
+    assert found == []
+
+
+def test_competition_markers_exclude_the_bare_word() -> None:
+    # "competition" alone is ordinary risk-factor boilerplate ("competition
+    # for talent") and previously opened a window anywhere it appeared, with
+    # no named competitor nearby — that false-positive source is removed by
+    # keeping only phrases that actually precede a named list.
+    assert "competition" not in COMPETITION_MARKERS
+    assert "we compete" in COMPETITION_MARKERS
+
+
+def test_peer_context_window_stays_close_to_the_marker() -> None:
+    # A filer's named peer/competitor list sits next to the marker phrase.
+    # Apple Inc, mentioned a thousand characters away from "peer group" in
+    # unrelated prose, must not be swept into the same window.
+    filler = "This paragraph discusses unrelated matters. " * 30
+    text = (
+        f"Our compensation peer group consists of Microsoft Corp. {filler}"
+        "Apple Inc is also discussed far below."
+    )
+
+    windows = document.windows_around(
+        text, ("peer group",), PEER_CONTEXT_WINDOW_CHARS
+    )
+
+    assert windows
+    joined = " ".join(windows)
+    assert "Microsoft Corp" in joined
+    assert "Apple Inc" not in joined
 
 
 # --- Pure helpers -------------------------------------------------------
