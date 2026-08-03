@@ -773,6 +773,10 @@ class ProseBlock(WireModel):
     id: str
     text: str
     fact_ids: tuple[str, ...] = ()
+    #: Set only when `text` is the filer's own words quoted verbatim rather
+    #: than generated prose, so a reader can tell which filing item it came
+    #: from (e.g. "From Item 1. Business").
+    label: str | None = None
 
 
 class FigureEmphasis(StrEnum):

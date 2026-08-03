@@ -683,9 +683,15 @@ def _business_section(
     prose = list(_prose_blocks(inputs, SectionId.BUSINESS, cited))
 
     # Where no prose was generated, the filer's own words are quoted directly
-    # rather than leaving the section empty. This is the filing, not a summary.
+    # rather than leaving the section empty. This is the filing, not a
+    # summary — and Item 1 and Item 7 are two different filing items, so each
+    # quote carries its own label rather than reading as one undivided block.
     if not prose:
-        for metric in ("business.description", "business.mdna"):
+        labels = {
+            "business.description": "From item 1. Business",
+            "business.mdna": "From item 7. Management's discussion and analysis",
+        }
+        for metric, label in labels.items():
             fact = index.latest.get(metric)
             if fact is None:
                 continue
@@ -695,6 +701,7 @@ def _business_section(
                     id=f"business-{metric.rsplit('.', 1)[-1]}",
                     text=m04_narrative.summary_of(fact),
                     fact_ids=(fact.fact_id,),
+                    label=label,
                 )
             )
 
