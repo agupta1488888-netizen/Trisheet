@@ -290,6 +290,9 @@ export interface ProseBlock {
   id: string;
   text: string;
   factIds: readonly string[];
+  /** Set only when `text` is the filer's own words quoted verbatim, naming
+   * which filing item it came from (e.g. "From item 1. Business"). */
+  label?: string | null;
 }
 
 /** A labelled figure in a section table, bound to the fact behind it. */

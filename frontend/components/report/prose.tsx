@@ -43,13 +43,15 @@ export function Prose({ blocks }: { blocks: readonly ProseBlock[] }) {
   return (
     <div className="mt-4 space-y-4">
       {blocks.map((block) => (
-        <p
-          key={block.id}
-          className="max-w-prose text-[0.95rem] leading-relaxed text-ink"
-        >
-          {block.text}
-          <Citations factIds={block.factIds} />
-        </p>
+        <div key={block.id}>
+          {block.label != null && block.label !== "" && (
+            <p className="mb-1 text-xs text-ink/60">{block.label}</p>
+          )}
+          <p className="max-w-prose text-[0.95rem] leading-relaxed text-ink">
+            {block.text}
+            <Citations factIds={block.factIds} />
+          </p>
+        </div>
       ))}
     </div>
   );
