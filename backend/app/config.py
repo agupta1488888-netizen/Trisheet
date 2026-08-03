@@ -2131,7 +2131,7 @@ CHAT_WEBFETCH_MAX_PAGE_CHARS = 12_000
 
 #: Assistant turns permitted for one report within the rolling window below.
 #: Deliberately generous for ordinary use, tight enough to bound a script.
-CHAT_RATE_LIMIT_MAX_TURNS = 20
+CHAT_RATE_LIMIT_MAX_TURNS = 50
 
 #: The rolling window `CHAT_RATE_LIMIT_MAX_TURNS` applies over.
 CHAT_RATE_LIMIT_WINDOW_MINUTES = 10
