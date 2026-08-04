@@ -258,13 +258,28 @@ def scale(usage: TokenUsage, factor: float) -> TokenUsage:
     )
 
 
+def _api_key() -> str:
+    """The configured key, with surrounding whitespace removed.
+
+    A platform's own environment-variable UI is a surprisingly common source
+    of a stray leading or trailing space — this deployment's `x-api-key`
+    header carried one, and h11 rejects a header value that starts with
+    whitespace outright: every call failed with an opaque `APIConnectionError`
+    that gave no hint the key itself was the problem. `is_configured` already
+    stripped before checking truthiness; the value actually handed to the SDK
+    did not, which is what let a whitespace-mangled key look "configured" and
+    fail anyway. One function now, so the two cannot disagree again.
+    """
+    return get_settings().anthropic_api_key.get_secret_value().strip()
+
+
 def is_configured() -> bool:
     """True when an API key is present.
 
     Callers use this to skip the model entirely rather than build a prompt and
     then fail on it.
     """
-    return bool(get_settings().anthropic_api_key.get_secret_value().strip())
+    return bool(_api_key())
 
 
 def reset_client() -> None:
@@ -322,7 +337,7 @@ def _get_client() -> _AnthropicClient:
         _client = cast(
             "_AnthropicClient",
             AsyncAnthropic(
-                api_key=get_settings().anthropic_api_key.get_secret_value(),
+                api_key=_api_key(),
                 http_client=_get_http_client(),
                 max_retries=LLM_MAX_RETRIES,
             ),

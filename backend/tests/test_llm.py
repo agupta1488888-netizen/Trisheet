@@ -257,3 +257,47 @@ async def test_close_client_closes_the_http_client(
     assert llm._client is None
     assert llm._http_client is None
     assert http_client.is_closed
+
+
+def _mangled_settings() -> Any:
+    """A key with the exact shape production's had: a leading space."""
+    from pydantic import SecretStr
+
+    from app.config import Settings
+
+    return Settings(anthropic_api_key=SecretStr(" test-key"))
+
+
+def test_is_configured_true_despite_a_leading_space() -> None:
+    assert bool(_mangled_settings().anthropic_api_key.get_secret_value().strip())
+
+
+async def test_a_whitespace_mangled_key_is_stripped_before_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug, pinned down directly.
+
+    Production had ANTHROPIC_API_KEY set with a leading space — a platform
+    environment-variable UI quirk, not anything this codebase wrote. Every
+    call failed with an opaque APIConnectionError, because h11 rejects a
+    header value that starts with whitespace outright. is_configured already
+    stripped before checking truthiness; the value actually handed to the SDK
+    did not, which is what let the mangled key look configured and then fail
+    anyway. Both now go through `_api_key`, so they cannot disagree again.
+    """
+    import anthropic
+
+    monkeypatch.setattr(llm, "get_settings", _mangled_settings)
+    monkeypatch.setattr(llm, "_client", None)
+    monkeypatch.setattr(llm, "_http_client", None)
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    _FakeAsyncAnthropic.last_kwargs = None
+
+    llm._get_client()
+
+    assert _FakeAsyncAnthropic.last_kwargs is not None
+    assert _FakeAsyncAnthropic.last_kwargs["api_key"] == "test-key"
+
+    http_client = llm._http_client
+    if http_client is not None:
+        await http_client.aclose()

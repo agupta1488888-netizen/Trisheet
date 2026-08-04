@@ -39,17 +39,33 @@ class DatabaseUnavailableError(DatabaseError):
 _client: Client | None = None
 
 
+def _credentials() -> tuple[str, str]:
+    """The URL and key, with surrounding whitespace removed.
+
+    A platform's own environment-variable entry UI is a surprisingly common
+    source of a stray leading or trailing space — Anthropic's key carried one
+    on this deployment (see llm._api_key for the fuller account) and every
+    call failed opaquely because the value used to check "is this configured"
+    was stripped while the value actually sent was not, letting a
+    whitespace-mangled credential look configured and then fail anyway. Both
+    credentials here are exposed to the same environment-variable UI, so both
+    are stripped the same way, from the one place that reads them.
+    """
+    settings = get_settings()
+    return (
+        settings.supabase_url.strip(),
+        settings.supabase_service_role_key.get_secret_value().strip(),
+    )
+
+
 def is_configured() -> bool:
     """True when both Supabase settings are present.
 
     Callers use this to degrade rather than crash: persistence is a sink, not
     a source, and only EDGAR is a hard dependency.
     """
-    settings = get_settings()
-    return bool(
-        settings.supabase_url.strip()
-        and settings.supabase_service_role_key.get_secret_value().strip()
-    )
+    url, key = _credentials()
+    return bool(url and key)
 
 
 def get_client() -> Client:
@@ -70,14 +86,11 @@ def get_client() -> Client:
         )
         raise DatabaseNotConfiguredError(message)
 
-    settings = get_settings()
+    url, key = _credentials()
     try:
         from supabase import create_client
 
-        _client = create_client(
-            settings.supabase_url,
-            settings.supabase_service_role_key.get_secret_value(),
-        )
+        _client = create_client(url, key)
     except ImportError as cause:
         message = "The supabase package is not installed."
         raise DatabaseUnavailableError(message) from cause

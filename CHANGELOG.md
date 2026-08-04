@@ -17,6 +17,32 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — the actual cause of the unreachable model (2026-08-04)
+
+The `httpx.AsyncClient` change below was real and worth keeping, but it was
+not the cause of production's empty prose — deployed reports still had none
+after it shipped, still spending real time per call rather than failing
+instantly, which was the sign something had merely changed rather than been
+fixed. A second, narrower probe that unwrapped the full exception chain
+(the first one stopped one level short) found the actual fault:
+`LocalProtocolError("Illegal header value b' sk-ant-...'")` — a leading
+space in the deployed `ANTHROPIC_API_KEY`, almost certainly from how it was
+entered into Railway's own environment-variable field. h11 rejects a header
+value that starts with whitespace outright, and the SDK wraps that as the
+same opaque `APIConnectionError` seen before.
+
+- `llm`: `is_configured` already stripped the key before checking its
+  truthiness; `_get_client` handed the SDK the raw, unstripped value. That
+  mismatch is what let a whitespace-mangled key read as "configured" and then
+  fail on every call. Both now go through one `_api_key` function, so they
+  cannot disagree again.
+- `db`: the identical shape, for the identical reason — `is_configured`
+  stripped the Supabase URL and service role key before checking them;
+  `get_client` did not strip either before handing them to `create_client`.
+  Both credentials are entered through the same environment-variable UI as
+  Anthropic's, so this was a live risk, not a hypothetical one. Fixed the
+  same way, with the same `_credentials` shape.
+
 ### Fixed — the model was unreachable in production (2026-08-04)
 
 - `llm`: every prose generation call was failing on the deployed backend with
