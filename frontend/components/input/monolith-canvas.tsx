@@ -30,13 +30,20 @@
  * touching its coefficients.
  *
  * Performance notes, in the order they matter:
- *   - Each slab renders its own transmission buffer, plus a backside pass.
- *     That is the price of letting the layers refract each other, which is
- *     the point of the object; `transmissionSampler` would collapse them onto
- *     the renderer's single shared pass, but that pass excludes transmissive
- *     meshes, so the stack would read as six flat cards. Resolution (192) and
- *     samples (3) are held low to pay for it, and the backside pass runs at
- *     96. If frames drop, lower those before removing the effect.
+ *   - Each slab renders its own transmission buffer every frame. That is the
+ *     price of letting the layers refract each other, which is the point of
+ *     the object; `transmissionSampler` would collapse them onto the
+ *     renderer's single shared pass, but that pass excludes transmissive
+ *     meshes, so the stack would read as six flat cards.
+ *   - Six passes is the ceiling this scene can afford. `backside` was tried
+ *     and removed: it adds a second pass per slab, and twelve passes plus a
+ *     512 environment froze the renderer outright. `thickness` carries the
+ *     sense of volume on its own. Do not re-enable it without measuring.
+ *   - `ContactShadows` uses `frames={1}`, baking once instead of re-rendering
+ *     the scene from below every frame. The object turns slowly enough that a
+ *     static shadow is indistinguishable, and it was a full extra pass.
+ *   - Resolution (128) and samples (2) are held deliberately low. If frames
+ *     drop further, lower those before removing refraction entirely.
  *   - The environment is built from `Lightformer` geometry rather than an HDR
  *     preset, so there is no texture to download and nothing to fail offline
  *     or behind a strict CSP.
@@ -596,10 +603,11 @@ function Monolith({
  * overhead softbox for the top faces, two narrow high-intensity strips raking
  * the left and right edges (these are what draw the bright white chamfer
  * lines), a back light for silhouette separation, and a dim floor bounce so
- * the underside is not dead. Resolution stays at 256: the polished edges
- * reflect the sources sharply enough that 512 is worth reaching for if the
- * rim strips ever read as smeared, but it doubles the cubemap cost and the
- * strips hold at 256 with the widths above.
+ * the underside is not dead. Resolution stays at 256, and is not a knob to
+ * turn: 512 was measured, and together with the transmission passes it froze
+ * the renderer outright — see the performance notes at the top of this file.
+ * The rim strips hold at 256 at the widths above, which is what that budget
+ * buys.
  */
 function Studio() {
   return (
