@@ -13,10 +13,20 @@ from typing import Any
 import pytest
 
 from app.config import CHAT_RATE_LIMIT_MAX_TURNS
-from app.models import ChatRole, Report, ReportStatus, SourceTier, SourceType
+from app.models import (
+    AnalysisDepth,
+    ChatRole,
+    ComplianceReport,
+    Report,
+    ReportDocument,
+    ReportStatus,
+    SourceNote,
+    SourceTier,
+    SourceType,
+)
 from app.modules import chat_agent
 from app.services import db, llm, runlog, webfetch
-from tests.conftest import make_fact
+from tests.conftest import make_company, make_fact
 
 REPORT_ID = "22222222-2222-2222-2222-222222222222"
 
@@ -904,3 +914,191 @@ async def test_suggests_nothing_when_facts_cannot_be_read(
     suggestions = await chat_agent.suggest_questions(REPORT_ID)
 
     assert suggestions == []
+
+
+# --- Links supplied with the report request -------------------------------
+# Read once by m13_sources when the report was generated, and carried on the
+# assembled document. Tried before a pasted URL or a web search, and — the
+# part worth asserting — never consulted when the report's own facts already
+# answered, and never able to end the turn on a miss.
+
+
+def _document_with_notes(notes: tuple[SourceNote, ...]) -> ReportDocument:
+    return ReportDocument(
+        report=_report(),
+        company=make_company(),
+        depth=AnalysisDepth.STANDARD,
+        compliance=ComplianceReport(
+            passed=True,
+            verified_at=dt.datetime(2024, 11, 1, tzinfo=dt.UTC),
+            fact_count=1,
+            figure_count=1,
+            cited_figure_count=1,
+            coverage_ratio=1.0,
+            coverage_display="100%",
+        ),
+        source_notes=notes,
+    )
+
+
+def _note(text: str = "The company opened a plant in Ohio.") -> SourceNote:
+    return SourceNote(
+        text=text,
+        source_url="https://investor.example.com/newsroom",
+        source_type=SourceType.COMPANY_SITE,
+        tier=SourceTier.COMPANY,
+        fetched_at=dt.datetime(2024, 11, 1, tzinfo=dt.UTC),
+    )
+
+
+def _stub_document(
+    monkeypatch: pytest.MonkeyPatch, notes: tuple[SourceNote, ...]
+) -> None:
+    monkeypatch.setattr(
+        runlog, "document_for", lambda report_id: _document_with_notes(notes)
+    )
+
+
+async def test_supplied_links_answer_when_the_report_facts_come_up_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [make_fact(metric="income.revenue", label="Revenue")]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _stub_document(monkeypatch, (_note(),))
+    _stub_llm(
+        monkeypatch,
+        {
+            "claims": [
+                {"text": "The company opened a plant in Ohio.", "note_id": "0"}
+            ],
+            "not_found": False,
+        },
+    )
+
+    turn = await chat_agent.answer_question(REPORT_ID, "Any new plants?")
+
+    assert not turn.not_found
+    assert len(turn.claims) == 1
+    claim = turn.claims[0]
+    # Cited to the page it was read from, at the tier a supplied page carries
+    # — never to a filing, and never with an accession number it does not have.
+    assert str(claim.source_url) == "https://investor.example.com/newsroom"
+    assert claim.tier == SourceTier.COMPANY
+    assert claim.source_type == SourceType.COMPANY_SITE
+    assert claim.fact_id is None
+    assert claim.accession_no is None
+
+
+async def test_supplied_links_are_not_consulted_when_facts_already_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A supplied link is a fallback, not a preference. A question the
+    filings answer must still be answered from the filings."""
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    def _refuse_document(report_id: str) -> object:
+        message = "The document should not have been read for a tier-1 hit."
+        raise AssertionError(message)
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    monkeypatch.setattr(runlog, "document_for", _refuse_document)
+    _stub_llm(
+        monkeypatch,
+        {
+            "claims": [
+                {"text": "Revenue was 100.", "fact_id": revenue.fact_id}
+            ],
+            "not_found": False,
+        },
+    )
+
+    turn = await chat_agent.answer_question(REPORT_ID, "What was revenue?")
+
+    assert not turn.not_found
+    assert turn.claims[0].fact_id == revenue.fact_id
+
+
+async def test_a_miss_on_supplied_links_falls_through_to_a_pasted_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Supplying a link must never cost the reader a fallback they would
+    otherwise have had, so a miss here continues the cascade."""
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [make_fact(metric="income.revenue", label="Revenue")]
+
+    async def _fetch_page(url: str) -> webfetch.FetchedPage:
+        return webfetch.FetchedPage(
+            url="https://example.com/about", text="Founded in 1999."
+        )
+
+    answers = [
+        # The supplied notes have nothing on it.
+        {"claims": [], "not_found": True},
+        # The pasted page does.
+        {"claims": [{"text": "The company was founded in 1999."}], "not_found": False},
+    ]
+
+    async def _answer(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return answers.pop(0)
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    monkeypatch.setattr(chat_agent.webfetch, "fetch_page", _fetch_page)
+    monkeypatch.setattr(llm, "complete_json", _answer)
+    _stub_document(monkeypatch, (_note(),))
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "When was it founded?", "https://example.com/about"
+    )
+
+    assert not turn.not_found
+    assert str(turn.claims[0].source_url) == "https://example.com/about"
+
+
+async def test_a_claim_citing_an_unknown_note_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same discipline `_parse_claims` applies to a fact id: an id that
+    was not supplied is dropped, never trusted."""
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [make_fact(metric="income.revenue", label="Revenue")]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _stub_document(monkeypatch, (_note(),))
+    _stub_llm(
+        monkeypatch,
+        {
+            "claims": [{"text": "Invented.", "note_id": "47"}],
+            "not_found": False,
+        },
+    )
+
+    turn = await chat_agent.answer_question(REPORT_ID, "Any new plants?")
+
+    assert turn.not_found
+
+
+async def test_no_supplied_links_leaves_the_cascade_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ordinary case: no link was attached, so nothing extra is tried
+    and the turn ends exactly where it did before."""
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [make_fact(metric="income.revenue", label="Revenue")]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    monkeypatch.setattr(runlog, "document_for", lambda report_id: None)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "What is the capital of France?"
+    )
+
+    assert turn.not_found

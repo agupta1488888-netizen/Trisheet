@@ -26,7 +26,16 @@ The cascade
     estimate) — never presenting the estimate as a filed figure. See
     `_answer_valuation_question`.
 
-    When tiers 1-2 come up empty and the reader supplied a company URL
+    When tiers 1-2 come up empty, links supplied with the report request
+    are tried first among the fallbacks. `m13_sources` already read and
+    quoted those pages when the report was generated, so answering from
+    them costs one model call rather than a fetch plus a call, and they are
+    the sources this reader chose for this report. A miss falls through to
+    the fallbacks below rather than ending the turn. Nothing on this path
+    can produce a figure for the statements: a `SourceNote` is not a `Fact`
+    and never becomes one. See `_answer_from_source_notes`.
+
+    When that comes up empty too and the reader supplied a company URL
     (`ChatRequest.pasted_url`), `services.webfetch` reads that one page —
     guarded against being pointed somewhere unsafe — and the model answers
     from its text alone, cited as tier 2 / `SourceType.COMPANY_SITE`: real,
@@ -101,7 +110,16 @@ from app.config import (
     CHAT_WEB_SEARCH_ENABLED,
     CHAT_WEBFETCH_MAX_PAGE_CHARS,
 )
-from app.models import ChatClaim, ChatRole, ChatTurn, Fact, SourceTier, SourceType
+from app.models import (
+    ChatClaim,
+    ChatRole,
+    ChatTurn,
+    Fact,
+    ReportDocument,
+    SourceNote,
+    SourceTier,
+    SourceType,
+)
 from app.modules import m06_factstore, m07_analysis
 from app.modules.m10_writer import render_fact_table
 from app.services import db, llm, runlog, webfetch
@@ -655,6 +673,185 @@ async def _answer_from_company_site(
     return assistant_turn
 
 
+# --- Links the reader supplied with the request (tier 2) -----------------
+# Read once, when the report was generated (`m13_sources`), and carried on
+# the assembled document. Reached before a pasted URL or a web search:
+# these pages were already fetched and already quoted, so answering from
+# them costs one model call rather than a fetch plus a call — and they are
+# the sources this reader chose for this report, which makes them a better
+# fallback than the open web.
+#
+# Nothing here can produce a figure for the financial statements. A
+# `SourceNote` is not a `Fact` and never becomes one; see `m13_sources`.
+
+_SOURCE_NOTES_SYSTEM_PROMPT = """\
+You answer one question about a company using notes already read off pages \
+the reader supplied when they requested this report. These are not \
+government filings — they are self-reported pages, and nothing verified \
+that they belong to the company.
+
+Rules:
+
+1. Use only what the supplied notes actually say. Never calculate, never \
+recall a figure from memory, never estimate.
+2. Every claim you make must name the single note id it rests on, in that \
+claim's note_id field. Never cite an id that is not in the list.
+3. If the notes do not actually answer the question — even if they are on a \
+related topic — set not_found to true and return an empty claims array.
+4. Never present a note as filed, audited or confirmed. These pages were \
+supplied by the reader, not verified.
+5. Each claim is one complete sentence. Sentence case, no markdown, no \
+bullet points, no headings. Do not use the word "AI". Do not address the \
+reader.
+6. Be brief. Answer the question, nothing more.
+"""
+
+_SOURCE_NOTES_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "One sentence answering part of the "
+                        "question.",
+                    },
+                    "note_id": {
+                        "type": "string",
+                        "description": "Id of the one supplied note this "
+                        "claim rests on.",
+                    },
+                },
+                "required": ["text", "note_id"],
+                "additionalProperties": False,
+            },
+        },
+        "not_found": {
+            "type": "boolean",
+            "description": "True when the supplied notes do not answer the "
+            "question asked.",
+        },
+    },
+    "required": ["claims", "not_found"],
+    "additionalProperties": False,
+}
+
+
+def _stored_source_notes(report_id: str) -> list[SourceNote]:
+    """Source notes on this report's assembled document, if it is still held.
+
+    The document lives in memory for the life of the worker, the same way
+    `runlog.get_report` does — so this degrades to no notes rather than
+    failing when it has been evicted.
+    """
+    document = runlog.document_for(report_id)
+    if not isinstance(document, ReportDocument):
+        return []
+    return list(document.source_notes)
+
+
+def _render_source_notes(notes: Sequence[SourceNote]) -> str:
+    """The notes as an id-labelled list, the way `render_fact_table` renders
+    facts — an id the model must cite, resolved back in code afterwards."""
+    return "\n".join(
+        f"[{index}] {note.text} (read from {note.source_url})"
+        for index, note in enumerate(notes)
+    )
+
+
+def _parse_note_claims(
+    answer: dict[str, Any], notes: Sequence[SourceNote]
+) -> list[ChatClaim]:
+    """Claims whose cited note id actually exists. Mirrors `_parse_claims`."""
+    if answer.get("not_found") is True:
+        return []
+
+    raw = answer.get("claims")
+    if not isinstance(raw, list):
+        return []
+
+    claims: list[ChatClaim] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+
+        note_id = item.get("note_id")
+        if not isinstance(note_id, str):
+            continue
+        try:
+            note = notes[int(note_id)]
+        except (ValueError, IndexError):
+            logger.warning(
+                "Chat dropped a claim citing a note that was not supplied",
+                extra={"note_id": note_id},
+            )
+            continue
+
+        claims.append(
+            ChatClaim(
+                text=text.strip(),
+                tier=note.tier,
+                source_url=note.source_url,
+                source_type=note.source_type,
+            )
+        )
+    return claims
+
+
+async def _answer_from_source_notes(
+    report_id: str,
+    ticker: str,
+    message: str,
+    notes: Sequence[SourceNote],
+    user_turn: ChatTurn,
+) -> ChatTurn | None:
+    """Answers from links supplied with the request, or None to continue the
+    cascade — an unanswerable question here is not an answer, it is a miss."""
+    try:
+        answer = await llm.complete_json(
+            _SOURCE_NOTES_SYSTEM_PROMPT,
+            (
+                f"Ticker: {ticker}\n\n"
+                f"Question: {message}\n\n"
+                f"Notes available:\n{_render_source_notes(notes)}\n"
+            ),
+            _SOURCE_NOTES_SCHEMA,
+            purpose="chat:source_notes",
+        )
+    except llm.LlmError as cause:
+        logger.warning(
+            "Chat model call failed",
+            extra={"report_id": report_id},
+            exc_info=cause,
+        )
+        return None
+
+    claims = _parse_note_claims(answer, notes)
+    if not claims:
+        return None
+
+    assistant_turn = _new_turn(
+        ChatRole.ASSISTANT,
+        claims=claims,
+        content=" ".join(claim.text for claim in claims),
+        not_found=False,
+    )
+    await _persist(
+        report_id,
+        user_turn,
+        assistant_turn,
+        tool_calls=[{"tool": "source_notes", "considered": len(notes)}],
+        highest_tier_used=2,
+    )
+    return assistant_turn
+
+
 # --- General web search (tier 4, last resort) ----------------------------
 # Reached only when tiers 1-2 came up empty, no pasted URL was offered (or a
 # pasted URL was tried and this is chosen instead — see `answer_question`'s
@@ -1081,6 +1278,19 @@ async def _route_question(
             highest_tier = 1
 
     if not candidates:
+        # Links supplied with the report request come first among the
+        # fallbacks: already fetched, already quoted, and chosen by this
+        # reader for this report. A miss here falls through rather than
+        # ending the turn — having supplied a link should never cost the
+        # reader the fallbacks they would otherwise have had.
+        notes = _stored_source_notes(report_id)
+        if notes:
+            from_notes = await _answer_from_source_notes(
+                report_id, ticker, message, notes, user_turn
+            )
+            if from_notes is not None:
+                return from_notes
+
         # Tier 2 (a pasted company URL) and tier 4 (general web search) are
         # alternate last resorts, not chained attempts within one request —
         # a pasted URL is the reader's own explicit fallback and is trusted
