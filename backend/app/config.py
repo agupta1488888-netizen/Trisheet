@@ -2454,6 +2454,38 @@ CHAT_RATE_LIMIT_MAX_TURNS = 50
 #: The rolling window `CHAT_RATE_LIMIT_MAX_TURNS` applies over.
 CHAT_RATE_LIMIT_WINDOW_MINUTES = 10
 
+# --- Report creation rate limiting --------------------------------------------
+# `POST /reports` has no auth either, and a report costs far more than a chat
+# turn: dozens of rate-limited EDGAR requests and several model calls. The
+# EDGAR limiter already stops the SEC being hammered, but it does so by making
+# every concurrent caller wait — so an unbounded caller degrades the service
+# for everyone and spends model budget doing it.
+#
+# Held in process rather than in the database, unlike the chat limit. That is
+# a deliberate difference: the chat limit counts a report's own history, which
+# is already persisted, whereas this counts anonymous callers, which is not
+# something worth a table. One backend instance is the current deployment (see
+# docs/deployment.md — the EDGAR token bucket requires it), so in-process is
+# the whole population. Were the backend scaled out, this would need to move
+# to a shared store, and the same is true of the EDGAR limiter beside it.
+
+#: Reports one caller may start within the rolling window below. Enough for
+#: someone genuinely comparing a handful of companies; not enough to run a
+#: ticker list through it.
+REPORT_RATE_LIMIT_MAX_RUNS = 10
+
+#: The rolling window `REPORT_RATE_LIMIT_MAX_RUNS` applies over.
+REPORT_RATE_LIMIT_WINDOW_MINUTES = 10
+
+#: Callers tracked at once. Bounds the limiter's own memory: past this the
+#: least recently seen is evicted, which is safe because an evicted caller has
+#: by definition not started a report recently.
+REPORT_RATE_LIMIT_MAX_CALLERS = 4_096
+
+#: So a window declared in minutes can be compared against a clock reading in
+#: seconds without a bare 60 appearing at the comparison.
+SECONDS_PER_MINUTE = 60.0
+
 # --- General web search (tier 4, last resort) ---------------------------------
 # Reached only after tiers 1-3 (own facts, wider derivation, company site)
 # have all come up empty. Gated behind its own flag, separate from

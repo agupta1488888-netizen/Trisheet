@@ -17,6 +17,22 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security — report creation is rate limited (2026-08-04)
+
+- `main`: a per-caller rolling limit on `POST /reports`, which had none. The
+  endpoint has no authentication and a report costs dozens of rate-limited
+  EDGAR reads and several model calls, so one unbounded caller degraded the
+  service for everyone — the EDGAR token bucket makes concurrent callers wait
+  rather than dropping them — while spending model budget doing it.
+- A refused attempt is deliberately not recorded, so a caller who keeps
+  retrying is not locked out for longer the harder they try. Tracked callers
+  are bounded, so the limiter cannot become a memory leak with an unbounded
+  key space. The clock is injected, so the window boundary is tested exactly
+  rather than slept through.
+- In process, not in the database, and the reason is written down: the
+  deployment is a single backend instance because the EDGAR limiter requires
+  one. Scaling out means moving both to a shared store, together.
+
 ### Added — the printed profile has a cover (2026-08-04)
 
 - `m12`: the PDF opens on a title page — brand mark, company, ticker, listing

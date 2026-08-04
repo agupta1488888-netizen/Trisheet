@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+import time
+from collections import OrderedDict, deque
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Query, Request, Response
@@ -30,6 +32,10 @@ from app.config import (
     MAX_RESOLUTION_CANDIDATES,
     METRICS_DEFAULT_WINDOW_HOURS,
     METRICS_MAX_WINDOW_HOURS,
+    REPORT_RATE_LIMIT_MAX_CALLERS,
+    REPORT_RATE_LIMIT_MAX_RUNS,
+    REPORT_RATE_LIMIT_WINDOW_MINUTES,
+    SECONDS_PER_MINUTE,
     Settings,
     get_settings,
 )
@@ -80,9 +86,106 @@ def _error(
     return JSONResponse(status_code=status, content=body.model_dump())
 
 
+class _ReportRateLimiter:
+    """Bounds how many reports one caller may start in a rolling window.
+
+    A report is expensive in a way a request is not: dozens of rate-limited
+    EDGAR reads and several model calls. The EDGAR token bucket already stops
+    the SEC being hammered, but it does so by making every concurrent caller
+    wait — so one unbounded caller degrades the service for everyone else
+    while spending model budget doing it.
+
+    In-process, and deliberately so. The chat limiter counts a report's own
+    persisted history; there is no equivalent table for anonymous callers and
+    creating one to hold ten timestamps would be the wrong trade. The current
+    deployment is a single backend instance — the EDGAR limiter requires that
+    too — so in process is the whole population. Scaling out means moving both
+    this and the EDGAR bucket to a shared store, together.
+
+    Timestamps are monotonic, so a clock adjustment cannot widen or collapse
+    the window.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_runs: int,
+        window_seconds: float,
+        max_callers: int,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._max_runs = max_runs
+        self._window = window_seconds
+        self._max_callers = max_callers
+        # Injected so a test can advance time rather than sleep for it, and
+        # so the window's boundary can be asserted on exactly instead of
+        # approached with a real clock that may or may not have ticked.
+        self._clock = clock
+        self._seen: OrderedDict[str, deque[float]] = OrderedDict()
+
+    def allow(self, caller: str) -> bool:
+        """True when this caller may start a report, recording it if so."""
+        now = self._clock()
+        history = self._seen.get(caller)
+        if history is None:
+            history = deque()
+            self._seen[caller] = history
+
+        while history and now - history[0] > self._window:
+            history.popleft()
+
+        if len(history) >= self._max_runs:
+            # Not recorded: a refused attempt must not extend the window it
+            # was refused by, or a caller who keeps retrying is locked out for
+            # longer the harder they try.
+            self._seen.move_to_end(caller)
+            return False
+
+        history.append(now)
+        self._seen.move_to_end(caller)
+        self._evict()
+        return True
+
+    def _evict(self) -> None:
+        """Drops the least recently seen callers past the ceiling.
+
+        Safe by construction: the caller evicted is the one that has gone
+        longest without starting a report, so its window is the closest to
+        having expired anyway.
+        """
+        while len(self._seen) > self._max_callers:
+            self._seen.popitem(last=False)
+
+
+def _caller_of(request: Request) -> str:
+    """Who to attribute a report to, for rate limiting only.
+
+    Behind Railway's proxy the socket address is the proxy, so the first
+    address in `X-Forwarded-For` is the caller. It is spoofable, which is
+    acceptable here: this bounds accidental and casual load, and anything
+    needing to resist a determined caller needs authentication, not a header
+    the client controls.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    client = request.client
+    return client.host if client is not None else "unknown"
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Builds the application. Accepts settings so tests can inject their own."""
     resolved = settings if settings is not None else get_settings()
+
+    # Per application, not per module: a test building a second app gets a
+    # second limiter rather than inheriting the first one's history.
+    _report_limiter = _ReportRateLimiter(
+        max_runs=REPORT_RATE_LIMIT_MAX_RUNS,
+        window_seconds=REPORT_RATE_LIMIT_WINDOW_MINUTES * SECONDS_PER_MINUTE,
+        max_callers=REPORT_RATE_LIMIT_MAX_CALLERS,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -307,7 +410,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- Reports ------------------------------------------------------------
 
     @app.post("/reports", status_code=202, response_model=None, tags=["reports"])
-    async def create_report(request: CreateReportRequest) -> Response | Report:
+    async def create_report(
+        request: CreateReportRequest, http_request: Request
+    ) -> Response | Report:
         """Queues a report and answers immediately with its job id.
 
         The run itself happens in the background. Nothing here waits on EDGAR:
@@ -316,6 +421,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         if not resolved.edgar_configured:
             return _edgar_unconfigured()
+
+        caller = _caller_of(http_request)
+        if not _report_limiter.allow(caller):
+            logger.warning(
+                "Report creation refused by the rate limit",
+                extra={"ticker": request.ticker},
+            )
+            return _error(
+                429,
+                "report_rate_limited",
+                "You have started "
+                f"{REPORT_RATE_LIMIT_MAX_RUNS} reports in the last "
+                f"{REPORT_RATE_LIMIT_WINDOW_MINUTES} minutes, which is the "
+                "limit. Try again shortly.",
+            )
 
         report = runlog.create_report(
             request.ticker, request.cik, request.depth
