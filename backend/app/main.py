@@ -328,6 +328,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.cik,
                 request.depth,
                 request.periods,
+                [str(url) for url in request.source_urls],
             ),
             name=f"report:{report.id}",
         )

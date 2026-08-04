@@ -1915,7 +1915,14 @@ DEPTH_PROFILES: dict[str, DepthProfile] = {
         segments=True,
         peers=True,
         developments=True,
-        allow_model_peers=False,
+        # On at the default depth as of 2026-08-04. The rung only *proposes*
+        # names: every one is resolved to a CIK and its figures read from its
+        # own filings, so nothing about provenance loosens. Leaving it off
+        # meant a filer whose proxy names no compensation peer group and whose
+        # SIC code is thinly populated produced no comparables at all, which
+        # is a worse answer than a proposed name that then has to earn its
+        # place by filing.
+        allow_model_peers=True,
     ),
     "full": DepthProfile(
         periods=10,
@@ -1951,6 +1958,7 @@ PIPELINE_STEP_LABELS: tuple[tuple[str, str], ...] = (
     ("m03", "Extracting reported figures"),
     ("m04", "Reading the annual report"),
     ("m05", "Fetching market data"),
+    ("m13", "Reading the supplied links"),
     ("m07", "Computing derived metrics"),
     ("m08", "Selecting peers"),
     ("m09", "Building the developments timeline"),
@@ -1966,6 +1974,7 @@ STEP_COUNT_LABELS: dict[str, str] = {
     "m03": "facts",
     "m04": "sections",
     "m05": "figures",
+    "m13": "notes",
     "m07": "derived",
     "m08": "peers",
     "m09": "events",
@@ -2121,6 +2130,33 @@ WEBFETCH_TIMEOUT_SECONDS = 8.0
 #: Characters of a fetched page's text shown to the model. A page can be
 #: arbitrarily long; only its leading portion enters the prompt.
 CHAT_WEBFETCH_MAX_PAGE_CHARS = 12_000
+
+# --- User-supplied source links (m13) -----------------------------------------
+# A reader may attach a link — an investor-relations page, a press release,
+# any other resource — when requesting a report. What comes back is read and
+# quoted, never turned into a Fact: SOURCE_TYPE_TIERS maps company_site to
+# tier 2 and SECTION_3_ALLOWED_TIERS admits tier 2, so a Fact built from a
+# pasted page would be admitted into the financial highlights table beside
+# figures traced to a filing. m13_sources therefore produces SourceNote, a
+# shape the fact store cannot accept at all.
+#
+# Note also that nothing here can verify a link really is the company's own
+# site: Company carries no website field and EDGAR submissions do not supply
+# one. These are recorded as user-supplied and unverified, and the interface
+# says so rather than implying a check that did not happen.
+
+#: Links accepted per report. More than a handful stops being provenance and
+#: starts being a reading list, and each one costs a fetch plus a model call.
+SOURCE_LINKS_MAX = 3
+
+#: Statements kept from any single page. A long page can support far more;
+#: past this it is padding a report rather than sourcing it.
+SOURCE_NOTES_MAX_PER_URL = 6
+
+#: Characters of a fetched page shown to the model. Separate from the chat's
+#: own limit so the two can move independently — this one runs inside report
+#: generation, where a larger budget is affordable, not inside a chat turn.
+SOURCE_LINK_MAX_PAGE_CHARS = 12_000
 
 # --- Chat rate limiting --------------------------------------------------------
 # The chat endpoint has no auth of any kind (see main.py), and every turn costs

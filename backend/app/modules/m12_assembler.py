@@ -81,6 +81,7 @@ from app.models import (
     SegmentMixPoint,
     SegmentMixSeries,
     SeriesMeta,
+    SourceNote,
 )
 from app.modules import m04_narrative, m08_peers
 from app.services import storage
@@ -378,6 +379,10 @@ class AssemblyInput:
     peer_comparison: m08_peers.PeerComparison | None = None
     events: Sequence[DevelopmentEvent] = ()
     artifacts: Sequence[ArtifactRef] = ()
+    #: Statements read off links the reader supplied. Carried through to the
+    #: document untouched and never indexed with `facts` — they are not facts,
+    #: and `_build_index` is what feeds the tables.
+    source_notes: Sequence[SourceNote] = ()
 
 
 # --- Fact indexing -----------------------------------------------------------
@@ -515,6 +520,7 @@ def assemble_document(inputs: AssemblyInput) -> ReportDocument:
         charts=_charts(inputs, index),
         compliance=inputs.compliance,
         artifacts=tuple(inputs.artifacts),
+        source_notes=tuple(inputs.source_notes),
     )
 
     logger.info(

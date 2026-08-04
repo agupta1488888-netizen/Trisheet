@@ -32,6 +32,7 @@ from app.config import (
     FACT_ID_LENGTH,
     FACT_ID_PREFIX,
     NOT_DISCLOSED_TEXT,
+    SOURCE_LINKS_MAX,
 )
 
 #: Applied to every model the API serialises. `serialize_by_alias` means a
@@ -298,6 +299,31 @@ class Company(BaseModel):
     reporting_currency: str | None = Field(
         default=None,
         description="ISO 4217 code the filer reports in. None when undetermined.",
+    )
+
+    # Identity, as EDGAR's own submissions document reports it. Every one of
+    # these is optional because a filer that does not state one renders "Not
+    # disclosed" — the same rule that governs every other absent figure. None
+    # of them is ever inferred from narrative text: a guessed headquarters or
+    # headcount is exactly the failure mode rule 5 exists to prevent.
+    headquarters: str | None = Field(
+        default=None,
+        description="Business address, as filed. City and region, not the street.",
+    )
+    exchange: str | None = Field(
+        default=None,
+        description="Exchange the security lists on, as EDGAR reports it.",
+    )
+    state_of_incorporation: str | None = Field(
+        default=None, description="Two-letter state or country code, as filed."
+    )
+    employees: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Headcount from dei:EntityNumberOfEmployees when the filer tags "
+            "it. None when it does not — never estimated from prose."
+        ),
     )
 
 
@@ -699,6 +725,14 @@ class CreateReportRequest(WireModel):
     periods: int | None = Field(
         default=None, ge=CUSTOM_PERIODS_MIN, le=CUSTOM_PERIODS_MAX
     )
+    #: Links the reader attached — an investor-relations page, a press
+    #: release, anything else they consider relevant. Read by m13_sources and
+    #: quoted as `SourceNote`, never converted into a `Fact`. A list rather
+    #: than a single URL so accepting a second one later is not a change to
+    #: the wire format; the interface sends one today.
+    source_urls: list[HttpUrl] = Field(
+        default_factory=list, max_length=SOURCE_LINKS_MAX
+    )
 
     @model_validator(mode="after")
     def _check_periods_matches_depth(self) -> Self:
@@ -830,12 +864,30 @@ class FigureTable(WireModel):
     unit_note: str
 
 
+class RiskCategory(StrEnum):
+    """What kind of hazard a disclosed risk describes.
+
+    A classification of the filer's own heading, not a judgement about it. The
+    system never rates a risk's likelihood or severity — a probability the
+    filing does not state is a number the filing does not contain.
+    """
+
+    FINANCIAL = "financial"
+    OPERATIONAL = "operational"
+    MARKET = "market"
+    REGULATORY = "regulatory"
+    LEGAL = "legal"
+
+
 class RiskItem(WireModel):
     """One risk as the filer discloses it. Never ranked, never editorialised."""
 
     id: str
     heading: str
     summary: str
+    #: None when the heading matches no category's markers. An unclassified
+    #: risk is shown without a tag rather than forced into the nearest one.
+    category: RiskCategory | None = None
     fact_ids: tuple[str, ...] = ()
 
 
@@ -962,6 +1014,57 @@ class ArtifactRef(WireModel):
     unavailable_reason: str | None = None
 
 
+class SourceNote(WireModel):
+    """One statement read off a link the reader supplied.
+
+    Deliberately not a `Fact`, and the distinction is the whole point of the
+    type. `SOURCE_TYPE_TIERS` maps `company_site` to tier 2 and
+    `SECTION_3_ALLOWED_TIERS` admits tier 2, so a `Fact` built from a pasted
+    page would pass `m06_factstore._admit` and be rendered in the financial
+    highlights table beside figures traced to a filing. Nothing that reaches
+    the fact store can be allowed to come from here, so this shape exists
+    instead — the fact store cannot accept it, and `m13_sources` does not
+    import `Fact` at all.
+
+    It also carries no `accession_no` and no `filed_date`, for the same reason
+    `ChatClaim` does not: a web page has neither, and inventing one so the
+    field could be populated would be fabricating provenance.
+
+    `tier` is 2 (`company_site`) or 4 (`news`), never 1 or 3. Note that
+    nothing verifies a link really is the company's own site — `Company`
+    carries no website field and EDGAR submissions supply none — which is
+    what `is_user_supplied` records, and what the interface must say rather
+    than implying a check that did not happen.
+    """
+
+    text: str
+    source_url: HttpUrl
+    source_type: SourceType
+    tier: SourceTier
+    #: When the page was read. A page is not immutable the way a filing is, so
+    #: a citation to one is only meaningful with the moment it was taken.
+    fetched_at: dt.datetime
+    #: Always true today. Present so a note whose origin was verified could be
+    #: distinguished later without a migration, rather than the absence of the
+    #: field being read as verification.
+    is_user_supplied: bool = True
+
+    @model_validator(mode="after")
+    def _check_invariants(self) -> Self:
+        if not self.text.strip():
+            message = "A source note's text is blank."
+            raise ValueError(message)
+
+        if self.tier not in (SourceTier.COMPANY, SourceTier.NEWS):
+            message = (
+                "A source note is tier 2 or 4. Tier 1 is a filing and tier 3 "
+                "is market data; neither can come from a pasted link."
+            )
+            raise ValueError(message)
+
+        return self
+
+
 class ReportDocument(WireModel):
     """Everything the report view renders. Read-only to the browser."""
 
@@ -977,6 +1080,9 @@ class ReportDocument(WireModel):
     charts: ReportCharts = Field(default_factory=ReportCharts)
     compliance: ComplianceReport
     artifacts: tuple[ArtifactRef, ...] = ()
+    #: Statements read off links the reader supplied. Rendered in their own
+    #: section, never merged into `facts` — see `SourceNote`.
+    source_notes: tuple[SourceNote, ...] = ()
 
 
 # --- Monitoring -------------------------------------------------------------

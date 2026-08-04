@@ -29,7 +29,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import TypeVar
@@ -53,6 +53,7 @@ from app.models import (
     Report,
     ReportDocument,
     ReportStatus,
+    SourceNote,
     StepState,
 )
 from app.modules import (
@@ -68,8 +69,9 @@ from app.modules import (
     m10_writer,
     m11_factcheck,
     m12_assembler,
+    m13_sources,
 )
-from app.services import edgar, llm, runlog
+from app.services import edgar, llm, runlog, webfetch
 from app.services.edgar import EdgarClient
 from app.services.runlog import RunSummary, StepEvent
 
@@ -144,6 +146,10 @@ class _Work:
     compliance: ComplianceReport | None = None
     artifacts: list[ArtifactRef] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #: Kept apart from `facts` deliberately. These come from links the reader
+    #: supplied, and nothing from a pasted page may reach the fact store —
+    #: see `m13_sources` for why the separation is structural.
+    source_notes: list[SourceNote] = field(default_factory=list)
 
 
 class _Tracker:
@@ -227,6 +233,7 @@ def _reader_message(failure: BaseException) -> str:
         m06_factstore.FactStoreError,
         edgar.EdgarError,
         llm.LlmError,
+        webfetch.WebfetchError,
         PipelineError,
     )
     if isinstance(failure, known):
@@ -264,6 +271,7 @@ async def run(
     cik: str,
     depth: AnalysisDepth = AnalysisDepth.STANDARD,
     periods: int | None = None,
+    source_urls: Sequence[str] = (),
 ) -> RunOutcome:
     """Generates one report, start to finish.
 
@@ -277,6 +285,9 @@ async def run(
             already enforces that this is set exactly when depth is CUSTOM
             (`CreateReportRequest`), so it is trusted here rather than
             re-validated.
+        source_urls: Links the reader attached. Read by m13 into
+            `SourceNote`, which cannot become a `Fact` — a supplied link
+            never reaches the financial highlights table.
 
     Returns:
         A `RunOutcome`. A failed run returns one too, carrying the reason —
@@ -299,7 +310,9 @@ async def run(
             # would be waste — and the shared instance is the one closed at
             # application shutdown.
             client = edgar.get_client()
-            await _extract(tracker, work, client, ticker, cik, profile)
+            await _extract(
+                tracker, work, client, ticker, cik, profile, source_urls
+            )
         except PipelineError as failure:
             return _failed(report_id, ticker, cik, str(failure), tracker, started)
         except (edgar.EdgarError, m01_resolver.ResolutionError) as failure:
@@ -384,6 +397,7 @@ async def _extract(
     ticker: str,
     cik: str,
     profile: DepthProfile,
+    source_urls: Sequence[str] = (),
 ) -> None:
     """Everything that reads from a source. Raises only on a hard dependency."""
     report_id = tracker.report_id
@@ -452,6 +466,26 @@ async def _extract(
         outcome.done(len(quotes))
 
     await _optional(tracker, "m05", work, market)
+
+    async def sources(outcome: _Outcome) -> None:
+        if not source_urls:
+            outcome.skip("No link was supplied.", 0)
+            return
+        notes = await m13_sources.read_sources(source_urls, ticker)
+        # Into `source_notes`, never `facts`. m06's gate runs over `facts`
+        # alone, so this is what keeps a supplied page out of the financial
+        # highlights table — see `m13_sources` for why that matters.
+        work.source_notes.extend(notes)
+        if not notes:
+            outcome.skip(
+                "The supplied link could not be read, or had nothing to "
+                "record. The report is generated without it.",
+                0,
+            )
+            return
+        outcome.done(len(notes))
+
+    await _optional(tracker, "m13", work, sources)
 
     runlog.set_status(report_id, ReportStatus.ANALYSING)
 
@@ -616,6 +650,7 @@ async def _assemble(
                 peers=work.peers,
                 peer_comparison=work.peer_comparison,
                 events=work.events,
+                source_notes=work.source_notes,
             )
         )
         artifacts = await m12_assembler.publish(report_id, built)
