@@ -343,6 +343,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if inner is not None:
                 result["sdk_error_cause"] = repr(inner)
 
+        # Differential: the SDK builds its own httpx.AsyncClient with custom
+        # TCP keepalive socket_options and explicit proxy-environment mounts
+        # (anthropic._base_client.AsyncHttpxClientWrapper), unless a client is
+        # passed in — then it is used exactly as given. The raw httpx call
+        # above works and this differs from it only in which of those two
+        # paths built the client, so this isolates which one is at fault.
+        try:
+            import httpx
+            from anthropic import AsyncAnthropic
+
+            plain_client = httpx.AsyncClient(timeout=15)
+            sdk_with_plain_client = AsyncAnthropic(
+                api_key="diagnostic-only-invalid-key",
+                http_client=plain_client,
+                max_retries=0,
+            )
+            try:
+                await sdk_with_plain_client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=1,
+                    messages=[{"role": "user", "content": "ping"}],
+                )
+                result["sdk_with_plain_httpx_client"] = "ok"
+            except Exception as cause:  # noqa: BLE001 — diagnostic
+                result["sdk_with_plain_httpx_client_error"] = repr(cause)
+                result["sdk_with_plain_httpx_client_error_type"] = type(
+                    cause
+                ).__name__
+            finally:
+                await plain_client.aclose()
+        except Exception as cause:  # noqa: BLE001 — diagnostic
+            result["sdk_with_plain_httpx_client_setup_error"] = repr(cause)
+
+        import os
+
+        result["proxy_env_present"] = {
+            key: True
+            for key in (
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "ALL_PROXY",
+                "NO_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "all_proxy",
+                "no_proxy",
+            )
+            if os.environ.get(key)
+        }
+
         return result
 
     # --- Resolution ---------------------------------------------------------
