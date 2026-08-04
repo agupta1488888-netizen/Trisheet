@@ -21,11 +21,22 @@
  * only tint, and it is barely perceptible. Any hue introduced here would
  * break the register the rest of the page is holding.
  *
+ * On the glass, since it is the whole object: a transmissive material is
+ * almost entirely a picture of its surroundings. An earlier version of this
+ * file rendered as a black slab, and the cause was not the shader — it was
+ * that `background` had been set to near-black and the environment held four
+ * dim lights. Transmission of 1 against a black backdrop is, correctly, black.
+ * If this ever looks wrong again, check what the material can *see* before
+ * touching its coefficients.
+ *
  * Performance notes, in the order they matter:
- *   - `transmissionSampler` puts every slab on the renderer's single shared
- *     transmission pass. Without it each of the six materials allocates and
- *     renders its own buffer every frame, which is roughly a 6x cost and the
- *     difference between 60fps and 20fps on integrated graphics.
+ *   - Each slab renders its own transmission buffer, plus a backside pass.
+ *     That is the price of letting the layers refract each other, which is
+ *     the point of the object; `transmissionSampler` would collapse them onto
+ *     the renderer's single shared pass, but that pass excludes transmissive
+ *     meshes, so the stack would read as six flat cards. Resolution (192) and
+ *     samples (3) are held low to pay for it, and the backside pass runs at
+ *     96. If frames drop, lower those before removing the effect.
  *   - The environment is built from `Lightformer` geometry rather than an HDR
  *     preset, so there is no texture to download and nothing to fail offline
  *     or behind a strict CSP.
@@ -40,6 +51,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
+  ContactShadows,
   Environment,
   Lightformer,
   PerformanceMonitor,
@@ -92,9 +104,9 @@ const READ_TOTAL =
 
 // --- Motion --------------------------------------------------------------
 
-const FLOAT_AMPLITUDE = 0.045;
-const FLOAT_SPEED = 0.5;
-const SPIN_SPEED = 0.075;
+const FLOAT_AMPLITUDE = 0.055;
+const FLOAT_SPEED = 0.34;
+const SPIN_SPEED = 0.035;
 const TILT_X = 0.16;
 const PARALLAX_X = 0.16;
 const PARALLAX_Y = 0.1;
@@ -104,15 +116,26 @@ const DAMP_FAST = 6;
 // --- Palette -------------------------------------------------------------
 
 
-const GLASS_COLOR = "#c9ccd2";
+const GLASS_COLOR = "#dadde1";
 /**
- * What the transmission pass samples where the scene is empty. Without an
- * explicit dark value the glass samples the studio lights and renders as a
- * solid pale block — the single thing most likely to make this look wrong.
+ * What the transmission pass samples where the scene is empty.
+ *
+ * This was previously near-black (#0a0a0d), which is why the object rendered
+ * as a black slab: transmission is 1, so the material is almost entirely
+ * "what is behind it", and what was behind it was black. Nothing behind the
+ * monolith is lit, so this stands in for a lit studio backdrop. It is the
+ * single most load-bearing value in the file.
  */
-const GLASS_BACKGROUND = new THREE.Color("#0a0a0d");
-const GLASS_ATTENUATION = "#4a4f57";
-const BASE_COLOR = "#101013";
+const GLASS_BACKGROUND = new THREE.Color("#3f434a");
+/**
+ * Beer-Lambert absorption. At 1.1 the diagonal path through six stacked
+ * slabs was several attenuation lengths, so the glass absorbed almost
+ * everything before it reached the eye. Four units is roughly the depth of
+ * the whole stack, which leaves it smoked rather than opaque.
+ */
+const GLASS_ATTENUATION = "#70757d";
+const GLASS_ATTENUATION_DISTANCE = 2.4;
+const BASE_COLOR = "#16161a";
 const LABEL_COLOR = "rgba(255,255,255,0.72)";
 const PARTICLE_COLOR = "#ffffff";
 const DATALINE_COLOR = "#ffffff";
@@ -288,22 +311,29 @@ function Slab({
         smoothness={SLAB_SMOOTHNESS}
         creaseAngle={0.4}
       >
+        {/* The `transmissionSampler` flag is deliberately absent. With it,
+            drei skips its own framebuffer pass and falls back to the built-in
+            transmission target, which excludes transmissive meshes by design —
+            so the slabs could not refract each other, and the stack read as
+            six flat cards. Without it each slab renders its own buffer and you
+            can see layers through layers, which is the whole point of the
+            object. The cost is one extra scene pass per slab, paid for by
+            dropping resolution and samples. */}
         <MeshTransmissionMaterial
-          transmissionSampler
-          samples={4}
-          resolution={256}
+          samples={2}
+          resolution={128}
           transmission={1}
-          thickness={1.1}
-          roughness={0.09}
-          ior={1.46}
-          chromaticAberration={0.045}
-          anisotropicBlur={0.3}
-          distortion={0.06}
-          distortionScale={0.18}
+          thickness={2}
+          roughness={0.1}
+          ior={1.5}
+          chromaticAberration={0.03}
+          anisotropicBlur={0.25}
+          distortion={0.04}
+          distortionScale={0.14}
           temporalDistortion={0}
           color={GLASS_COLOR}
           background={GLASS_BACKGROUND}
-          attenuationDistance={1.1}
+          attenuationDistance={GLASS_ATTENUATION_DISTANCE}
           attenuationColor={GLASS_ATTENUATION}
         />
       </RoundedBox>
@@ -315,7 +345,7 @@ function Slab({
         <meshBasicMaterial
           color="#ffffff"
           transparent
-          opacity={0.075}
+          opacity={0.03}
           depthWrite={false}
         />
       </mesh>
@@ -444,10 +474,14 @@ function Base() {
         smoothness={3}
         creaseAngle={0.4}
       >
+        {/* Matte, not metal. At metalness 0.85 this was ~100% environment
+            reflection, and the environment is nearly black, so it rendered as
+            a black void. A machined anodised pedestal is a dielectric. */}
         <meshStandardMaterial
           color={BASE_COLOR}
-          roughness={0.34}
-          metalness={0.85}
+          roughness={0.62}
+          metalness={0}
+          envMapIntensity={0.3}
         />
       </RoundedBox>
       {/* Top chamfer catch-light. */}
@@ -461,22 +495,6 @@ function Base() {
         />
       </mesh>
 
-      {/* A soft pool of light on the floor. Cheaper than a shadow pass and it
-          does the same job: without something under it the object reads as
-          floating in a void rather than standing on a surface. */}
-      <mesh
-        position={[0, -BASE_HEIGHT / 2 - 0.004, 0]}
-        rotation={[-Math.PI / 2, 0, 0]}
-      >
-        <circleGeometry args={[3.4, 64]} />
-        <meshBasicMaterial
-          color="#ffffff"
-          transparent
-          opacity={0.05}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
     </group>
   );
 }
@@ -566,43 +584,71 @@ function Monolith({
 }
 
 /**
- * Studio lighting built from geometry rather than an HDR file: three soft
- * boxes standing in for a key light, a fill and a rim. This is what puts the
- * long specular streaks along the slab edges, and it downloads nothing.
+ * The studio, built from geometry rather than an HDR file so nothing has to
+ * download and nothing fails offline or behind a strict CSP.
+ *
+ * A glass object is almost entirely a picture of its surroundings, so this
+ * rig *is* the material — no amount of tuning the shader compensates for an
+ * environment that is mostly black, which is what the previous four dim
+ * lightformers amounted to.
+ *
+ * Five sources, in the order a product photographer would place them: a broad
+ * overhead softbox for the top faces, two narrow high-intensity strips raking
+ * the left and right edges (these are what draw the bright white chamfer
+ * lines), a back light for silhouette separation, and a dim floor bounce so
+ * the underside is not dead. Resolution stays at 256: the polished edges
+ * reflect the sources sharply enough that 512 is worth reaching for if the
+ * rim strips ever read as smeared, but it doubles the cubemap cost and the
+ * strips hold at 256 with the widths above.
  */
 function Studio() {
   return (
     <Environment resolution={256}>
+      {/* Key: broad, soft, overhead. */}
       <Lightformer
         form="rect"
-        intensity={2.1}
+        intensity={3.2}
         color="#ffffff"
-        position={[0, 5, -2]}
-        scale={[10, 6, 1]}
+        position={[0, 6, 1]}
+        scale={[12, 7, 1]}
         rotation={[Math.PI / 2, 0, 0]}
       />
+      {/* Rim left and right: narrow and bright. Width is deliberately small —
+          a wide source washes the face, a narrow one draws an edge. */}
       <Lightformer
         form="rect"
-        intensity={0.85}
+        intensity={10}
         color="#ffffff"
-        position={[-5, 1, 1]}
-        scale={[3, 8, 1]}
+        position={[-4.6, 1.2, 1.4]}
+        scale={[0.7, 9, 1]}
         rotation={[0, Math.PI / 2, 0]}
       />
       <Lightformer
         form="rect"
-        intensity={0.85}
+        intensity={7.5}
         color="#ffffff"
-        position={[5, 0, 2]}
-        scale={[3, 8, 1]}
+        position={[4.6, 0.4, 1.8]}
+        scale={[0.7, 9, 1]}
         rotation={[0, -Math.PI / 2, 0]}
       />
+      {/* Back light, for separation from a near-black page. */}
+      <Lightformer
+        form="rect"
+        intensity={2.6}
+        color="#ffffff"
+        position={[0, 1.5, -6]}
+        scale={[7, 5, 1]}
+        rotation={[0, 0, 0]}
+      />
+      {/* Floor bounce. Dim on purpose: enough to keep the underside of the
+          stack and the pedestal's chamfer alive, not enough to flatten the
+          contact shadow underneath. */}
       <Lightformer
         form="circle"
-        intensity={0.4}
+        intensity={0.7}
         color="#ffffff"
-        position={[0, -4, 1]}
-        scale={[6, 6, 1]}
+        position={[0, -4.5, 1]}
+        scale={[8, 8, 1]}
         rotation={[-Math.PI / 2, 0, 0]}
       />
     </Environment>
@@ -672,15 +718,41 @@ export function MonolithCanvas({
     // kill the parallax while leaving everything else working.
     <Canvas
       dpr={[1, 1.75]}
-      gl={{ antialias: true, alpha: true }}
-      camera={{ position: [0, 0.5, 11.2], fov: 30, near: 0.1, far: 40 }}
+      // AgX rather than R3F's ACESFilmic default. ACES has an aggressive toe
+      // that crushes shadows, which on an object this dark removed most of
+      // the tonal separation in the glass before it ever reached the screen.
+      // AgX holds the low end and rolls off highlights without desaturating,
+      // which is why it has become the default for product renders.
+      gl={{
+        antialias: true,
+        alpha: true,
+        toneMapping: THREE.AgXToneMapping,
+        toneMappingExposure: 1.0,
+      }}
+      camera={{ position: [0, 0.6, 8.4], fov: 30, near: 0.1, far: 40 }}
       frameloop={reducedMotion ? "demand" : "always"}
     >
       <StillFrameNudge active={reducedMotion} />
       {animate ? <DprGovernor /> : null}
-      <ambientLight intensity={0.12} />
+      <ambientLight intensity={0.18} />
       <Studio />
       <Monolith hovered={hovered} readToken={readToken} animate={animate} />
+
+      {/* A real contact shadow, replacing the additive white disc that used to
+          sit here. That disc was a *glow* — it lightened exactly where contact
+          darkening belongs, which is why the pedestal never looked like it was
+          standing on anything. Positioned in world space, outside the rotating
+          group, so the shadow stays on the floor while the object turns. */}
+      <ContactShadows
+        position={[0, -1.32, 0]}
+        scale={11}
+        blur={2.8}
+        opacity={0.75}
+        far={4}
+        resolution={512}
+        color="#000000"
+        frames={1}
+      />
     </Canvas>
   );
 }
