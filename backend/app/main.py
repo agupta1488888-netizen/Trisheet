@@ -252,6 +252,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             edgar_configured=resolved.edgar_configured,
         )
 
+    @app.get("/debug/llm-ping", include_in_schema=False)
+    async def debug_llm_ping() -> dict[str, object]:
+        """TEMPORARY. Exercises exactly llm.complete_json — the real path
+        m10 calls — and reports the full exception chain. Remove once the
+        cause of empty prose sections is found.
+        """
+        result: dict[str, object] = {}
+        try:
+            answer = await llm.complete_json(
+                system="Reply with {\"ok\": true}.",
+                user="ping",
+                schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}},
+                    "required": ["ok"],
+                },
+                purpose="debug:ping",
+                max_tokens=16,
+            )
+            result["answer"] = answer
+        except Exception as cause:  # noqa: BLE001 — diagnostic, wants everything
+            chain: list[str] = [repr(cause)]
+            current = cause.__cause__
+            while current is not None:
+                chain.append(repr(current))
+                current = current.__cause__
+            result["error_chain"] = chain
+            result["error_type"] = type(cause).__name__
+        return result
+
     # --- Resolution ---------------------------------------------------------
 
     @app.post("/resolve", response_model=None, tags=["resolve"])
