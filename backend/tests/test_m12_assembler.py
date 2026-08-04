@@ -195,6 +195,22 @@ def test_the_cover_suppresses_the_running_header() -> None:
     assert "string-set: company-name content();" in markup
 
 
+def test_the_cover_box_includes_its_own_padding() -> None:
+    # Confirmed live: without box-sizing: border-box, a 297mm height plus
+    # 24mm top-and-bottom padding renders as a 345mm box on a 297mm page,
+    # and the closing lines of the cover spill onto an otherwise-blank
+    # second page. This only asserts the declaration exists — actual layout
+    # needs a renderer this suite does not have — but the declaration is
+    # the entire fix, so its absence is the entire regression.
+    markup = render_html(_document())
+
+    cover_start = markup.index(".cover {")
+    cover_end = markup.index("}", cover_start)
+    cover_rule = markup[cover_start:cover_end]
+
+    assert "box-sizing: border-box" in cover_rule
+
+
 def test_contents_lists_a_section_that_could_not_be_built() -> None:
     # Silently omitting it would imply the profile was never meant to have
     # that section. Naming the reason is the honest answer.

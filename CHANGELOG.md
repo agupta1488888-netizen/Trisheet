@@ -17,6 +17,17 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — the cover overflowed onto a second page (2026-08-05)
+
+- `m12`: `.cover` set `height: 297mm` and `padding: 24mm 20mm` without
+  `box-sizing: border-box`, so the padding added to the height rather than
+  being carved out of it — a 345mm box on a 297mm page. Confirmed by reading
+  a real PDF rendered in production (WeasyPrint is unavailable on this
+  machine, so `render_html`'s structure is what the test suite could check
+  locally; this is what the rendered output itself was checked for): the
+  statement and issued-date lines spilled onto an otherwise-blank second
+  page. One property, and the whole fix.
+
 ### Fixed — a month-day fragment was flagged as an unsourced figure (2026-08-05)
 
 - `m11`: the figure scanner split a parenthesised month-day like "(06-30)" —

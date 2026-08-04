@@ -1452,6 +1452,11 @@ h3 { font-size: 9pt; margin-top: 10pt; }
   break-after: page;
   background: #14201C;
   color: #FBFAF7;
+  /* border-box, deliberately: without it the 24mm/20mm padding below adds
+     to the 297mm height rather than being carved out of it, making the true
+     box 345mm against a 297mm page — confirmed live, where the statement
+     and issued-date lines spilled onto an otherwise-blank second page. */
+  box-sizing: border-box;
   height: 297mm;
   padding: 24mm 20mm;
   display: flex;
