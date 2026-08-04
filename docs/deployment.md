@@ -100,6 +100,18 @@ again, and a report is a snapshot of a moment.
   never cached across runs; a stale price is worse than no price.
 - Re-running a ticker produces a fresh report against the current manifest.
 
+**A restart loses the rendered document, not the report.** `runlog` persists
+the report record and every fact durably; the assembled document and the
+PDF/XLSX links it serves are held in process memory only, deliberately —
+`record_document`'s own docstring is explicit that re-persisting a projection
+of facts already in the database risks a second copy that disagrees with
+them. The practical consequence: a backend restart or a redeploy — including
+one prompted by an unrelated code change — makes every report generated
+before it briefly unreachable by document or download link, even though
+`GET /reports/{id}` still resolves and the facts are intact. Re-running the
+same ticker regenerates both immediately. Worth knowing before a live demo:
+avoid deploying between generating a report and presenting it.
+
 At production scale the natural design is a nightly job that walks the EDGAR
 daily index, notices which tracked filers have filed since the last pass, and
 invalidates only those companies' derived data. The permanent filing cache
