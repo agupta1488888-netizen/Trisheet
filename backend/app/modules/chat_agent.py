@@ -23,7 +23,15 @@ The cascade
     same reported and derived facts, and the reply mixes certified claims
     (the real free cash flow, net debt and share count it used) with
     assumption claims (the discount and growth rates, and the resulting
-    estimate) — never presenting the estimate as a filed figure. See
+    estimate) — never presenting the estimate as a filed figure. A
+    sensitivity question ("how sensitive is this to the discount rate?") or a
+    scenario question ("what's the bull and bear case?") runs the same DCF
+    several times instead of once — `project_dcf_sensitivity` /
+    `project_dcf_scenarios` — and the reply becomes one assumption claim per
+    discount-rate point or named case, still built from the one set of
+    certified inputs. None of this ever reaches the model: every valuation
+    reply, plain or multi-point, is composed in Python from `DcfResult` /
+    `DcfSensitivityResult` / `DcfScenarioResult` alone. See
     `_answer_valuation_question`.
 
     When tiers 1-2 come up empty, links supplied with the report request
@@ -52,6 +60,13 @@ The cascade
     the exact page it came from and is rendered least like a filing. See
     `_answer_from_web_search`.
 
+    Absolute last resort, past even web search: an ungrounded general-purpose
+    reply, tried only when everything above (including web search) came up
+    empty, and only when `CHAT_GENERAL_CHAT_ENABLED` is on — off by default,
+    same reasoning as web search, one step further, since this tier isn't
+    grounded in any of this system's own data at all. See
+    `_answer_with_general_chat`.
+
 A comparison question ("how does this compare to competitors?") widens the
     tier 1-2 candidate pool to include every stored peer fact (metric prefix
     "peer.") rather than fetching a peer's filings fresh — see
@@ -61,6 +76,14 @@ A greeting, "thanks", or a "what can you do" question is answered from a
     fixed reply, never run through the cascade above — see
     `_small_talk_reply`. This is deliberately narrow: anything else still
     goes through the whole cascade, honest "not found" included.
+
+A question asking this assistant to make the call for the reader ("suggest",
+    "recommend", "should I buy") is answered from a fixed redirect explaining
+    what it does instead — see `_is_advice_question`/`_ADVICE_REPLY`. Checked
+    only after the valuation/sensitivity/scenario gate, so a compound
+    question like "suggest me a valuation" still gets the real valuation
+    (which already ends in its own not-a-recommendation line) rather than
+    being intercepted here.
 
 The immediately preceding exchange is used two ways for a follow-up like
     "and last year's?", which names no metric on its own: re-resolving the
@@ -104,6 +127,7 @@ from pydantic import ValidationError
 
 from app.config import (
     CHAT_FACT_MATCH_MIN_OVERLAP,
+    CHAT_GENERAL_CHAT_ENABLED,
     CHAT_RATE_LIMIT_MAX_TURNS,
     CHAT_RATE_LIMIT_WINDOW_MINUTES,
     CHAT_TOOL_RESULT_FACT_LIMIT,
@@ -164,6 +188,45 @@ headings. Do not use the word "AI". Do not address the reader.
 only to understand what a follow-up like "and last year's?" refers to — \
 never as a source for a figure. Every figure you state must still cite a \
 fact id from this turn's own table, never the previous answer's wording.
+"""
+
+#: Used instead of `SYSTEM_PROMPT` for a question asking for an evaluative
+#: read (a trend, a peer comparison, "any red flags") rather than a specific
+#: number — see `_is_insight_question`. Same seven rules, plus one bounded
+#: addition permitting a single interpretive closing sentence. The boundary
+#: this draws — describing what filed data shows, never what a reader should
+#: do about it — mirrors `_NO_RECOMMENDATION_TEXT` in the valuation path.
+INSIGHT_SYSTEM_PROMPT = """\
+You answer one question about a company report, using only facts that have \
+already been extracted from a filing or computed in Python.
+
+Rules:
+
+1. Use only the values in the supplied fact table. Never calculate, never \
+recall a figure from memory, never estimate, never interpolate.
+2. Write a figure exactly as its display value gives it.
+3. Every claim you make must name the single fact id it rests on, in that \
+claim's fact_id field. Never cite an id that is not in the table.
+4. If the supplied facts do not actually answer the question — even if they \
+are on a related topic — set not_found to true and return an empty claims \
+array. Do not answer a different question than the one asked.
+5. Sentence case. Plain sentences, no markdown, no bullet points, no \
+headings. Do not use the word "AI". Do not address the reader.
+6. Be brief. Answer the question, nothing more.
+7. A previous question and answer may be supplied for context. Use them \
+only to understand what a follow-up like "and last year's?" refers to — \
+never as a source for a figure. Every figure you state must still cite a \
+fact id from this turn's own table, never the previous answer's wording.
+8. You may add ONE additional closing sentence stating plainly what the \
+supplied facts together suggest — a trend, a gap versus a peer figure in \
+the table, a concentration — but only when the facts actually support a \
+clear reading. If they do not, do not add one; answer with the figures \
+alone. This sentence must still cite a single fact id like every other \
+claim, and must never use investment-recommendation language: no "buy", \
+"sell", "hold", "should invest", "undervalued", "overvalued", "price \
+target", "good investment", "bad investment", "outperform"/"underperform" \
+as a rating, or any similar verdict. State what the data shows, never what \
+the reader should do about it.
 """
 
 _ANSWER_SCHEMA: dict[str, Any] = {
@@ -261,13 +324,37 @@ def _match_facts(question: str, facts: Sequence[Fact]) -> list[Fact]:
     return [fact for _, _, fact in scored[:CHAT_TOOL_RESULT_FACT_LIMIT]]
 
 
+#: Phrases that make a claim read as investment advice rather than a
+#: description of filed data. Checked as substrings against the model's own
+#: claim text (lowercased) — `INSIGHT_SYSTEM_PROMPT` is the one place this
+#: system lets the model write a sentence beyond restating a supplied
+#: figure, so this is the one place a banned-phrase filter earns its keep.
+#: Runs unconditionally, not just in insight mode: prompt discipline alone
+#: is not proof, the same reasoning `_parse_claims` already applies to a
+#: cited fact id that was never actually supplied.
+_RECOMMENDATION_PHRASES = (
+    "should buy", "should sell", "should invest", "buy this stock",
+    "sell this stock", "strong buy", "strong sell", "buy rating",
+    "sell rating", "hold rating", "price target", "undervalued",
+    "overvalued", "good investment", "bad investment", "worth buying",
+    "worth investing", "outperform", "underperform",
+)
+
+
+def _reads_as_recommendation(text: str) -> bool:
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _RECOMMENDATION_PHRASES)
+
+
 def _parse_claims(
     answer: dict[str, Any], allowed: dict[str, Fact]
 ) -> list[ChatClaim]:
     """Turns the model's answer into claims, dropping unsupplied citations.
 
     Mirrors `m10_writer._parse_sentences`: a cited id that was not in the
-    table offered to the model is removed rather than trusted.
+    table offered to the model is removed rather than trusted. A claim that
+    reads as investment advice (`_reads_as_recommendation`) is dropped the
+    same way, regardless of whether it also cites a real fact id.
     """
     if answer.get("not_found") is True:
         return []
@@ -278,12 +365,16 @@ def _parse_claims(
 
     claims: list[ChatClaim] = []
     unknown: list[str] = []
+    recommendations = 0
 
     for item in raw:
         if not isinstance(item, dict):
             continue
         text = item.get("text")
         if not isinstance(text, str) or not text.strip():
+            continue
+        if _reads_as_recommendation(text):
+            recommendations += 1
             continue
 
         fact_id = item.get("fact_id")
@@ -322,6 +413,11 @@ def _parse_claims(
         logger.warning(
             "Chat dropped citations to facts that were not supplied",
             extra={"unknown_fact_ids": unknown},
+        )
+    if recommendations:
+        logger.warning(
+            "Chat dropped a claim that read as investment advice",
+            extra={"count": recommendations},
         )
 
     return claims
@@ -425,6 +521,46 @@ def _small_talk_reply(message: str) -> str | None:
     return None
 
 
+# --- Advice redirect --------------------------------------------------------
+# A question asking this assistant to make the call for the reader —
+# "suggest", "recommend", "should I buy" — rather than asking about
+# something this system can actually compute. Checked from `_route_question`
+# only *after* the valuation/sensitivity/scenario gate: a compound question
+# like "suggest me a valuation" still gets the real valuation (which already
+# ends in its own not-a-recommendation line, see `_no_recommendation_claim`)
+# rather than being intercepted here. This exists so a pure "what should I
+# do" question gets an honest, specific redirect instead of a bare "not
+# found" — the same reasoning `_HELP_REPLY` already applies to "what can you
+# do" — never a fabricated suggestion.
+
+_ADVICE_TRIGGER_WORDS = frozenset(
+    {"suggest", "recommend", "recommendation", "recommendations", "advise", "advice"}
+)
+#: Substring checks, not exact matches — mirrors `_HELP_PHRASES`.
+_ADVICE_TRIGGER_PHRASES = (
+    "should i buy", "should i sell", "should i invest", "your opinion",
+    "what do you think", "good investment", "bad investment", "good buy",
+    "worth buying", "worth investing",
+)
+
+_ADVICE_REPLY = (
+    "This report doesn't give investment recommendations — it won't tell "
+    "you whether to buy, sell, or hold. It can run a valuation estimate "
+    "(\"what is this worth?\"), show how that estimate moves under "
+    "different assumptions (\"how sensitive is this to the discount "
+    "rate?\", \"what's the bull and bear case?\"), or read out what a trend "
+    "or peer comparison actually shows (\"is the margin trend "
+    "concerning?\"). Ask any of those instead."
+)
+
+
+def _is_advice_question(question: str) -> bool:
+    normalised = question.lower()
+    return bool(_tokens(question) & _ADVICE_TRIGGER_WORDS) or any(
+        phrase in normalised for phrase in _ADVICE_TRIGGER_PHRASES
+    )
+
+
 # --- Peer comparison --------------------------------------------------------
 # Peer facts (metric prefix "peer.") are already stored for a report that ran
 # with peers enabled — m08_peers computes and cites them the same as any
@@ -458,6 +594,32 @@ def _with_peer_facts(candidates: list[Fact], all_facts: Sequence[Fact]) -> list[
         if fact.metric.startswith("peer.") and fact.fact_id not in seen
     ]
     return (candidates + peer_facts)[:CHAT_TOOL_RESULT_FACT_LIMIT]
+
+
+# --- Interpretive insight ---------------------------------------------------
+# A question asking for an evaluative read (is this healthy/risky/concerning)
+# rather than a specific number. Deliberately excludes forward-looking words
+# ("outlook", "will") — interpreting what the filed data already shows is in
+# scope; predicting what happens next is a different, larger feature this
+# does not attempt. A comparison question already implies the reader wants
+# this evaluative read too (see `_route_question`), so `_is_peer_question`
+# also opts in without needing its own separate wording here.
+
+_INSIGHT_TRIGGER_WORDS = frozenset(
+    {
+        "concerning", "concern", "concerns", "healthy", "unhealthy",
+        "worrying", "worrisome", "risky",
+    }
+)
+#: Substring checks, not exact matches — mirrors `_HELP_PHRASES`.
+_INSIGHT_TRIGGER_PHRASES = ("red flag",)
+
+
+def _is_insight_question(question: str) -> bool:
+    normalised = question.lower()
+    return bool(_tokens(question) & _INSIGHT_TRIGGER_WORDS) or any(
+        phrase in normalised for phrase in _INSIGHT_TRIGGER_PHRASES
+    )
 
 
 # --- Conversation memory -----------------------------------------------
@@ -1008,6 +1170,95 @@ async def _answer_from_web_search(
     return assistant_turn
 
 
+# --- General chat (ungrounded, gated, absolute last resort) ---------------
+# Reached only from `answer_question`, only after every other tier —
+# facts, valuation, peer/insight widening, source notes, a pasted URL, and
+# web search — has come up empty, and only when `CHAT_GENERAL_CHAT_ENABLED`
+# is on (off by default, same reasoning as `CHAT_WEB_SEARCH_ENABLED`, one
+# step further: this tier isn't grounded in any of this system's own data at
+# all, not even a fetched page). This is the one place the "never use the
+# word AI" rule is deliberately not enforced — a genuinely open-ended
+# assistant that refuses to answer "are you an AI?" honestly is a worse, not
+# safer, general assistant. Every other chat path, and the report view
+# itself, keep that rule exactly as before.
+
+GENERAL_CHAT_SYSTEM_PROMPT = """\
+You are a helpful, general-purpose conversational assistant embedded in the \
+Trisheet company-report chat panel. This particular question is not about \
+the report or any filed financial data — reached only after Trisheet's own \
+data, peer facts, and any supplied company page came up empty for it — so \
+answer it as a knowledgeable general assistant would.
+
+Rules:
+1. Be helpful, direct, and honest, as in an ordinary conversation. You may \
+answer honestly if asked what you are.
+2. Never state a specific number or fact about the report's own company as \
+if it were verified — you were not given its filed data this turn. If the \
+question turns out to be about the company after all, say so and suggest \
+the reader ask again using report language (a metric name, "valuation", \
+"compare to peers").
+3. Sentence case, plain prose — no markdown, no bullet points, no headings.
+4. Keep answers reasonably brief, as a chat reply, not an essay.
+"""
+
+_GENERAL_CHAT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "reply": {
+            "type": "string",
+            "description": "A brief, direct reply to the reader's message.",
+        },
+    },
+    "required": ["reply"],
+    "additionalProperties": False,
+}
+
+
+async def _answer_with_general_chat(
+    report_id: str, message: str, user_turn: ChatTurn
+) -> ChatTurn:
+    """The absolute last resort: an ungrounded, general-purpose reply.
+
+    Reached only from `answer_question`, only after every trusted and
+    semi-trusted source above has come up empty, and only when
+    `CHAT_GENERAL_CHAT_ENABLED` is on.
+    """
+    try:
+        answer = await llm.complete_json(
+            GENERAL_CHAT_SYSTEM_PROMPT,
+            message,
+            _GENERAL_CHAT_SCHEMA,
+            purpose="chat:general",
+        )
+    except llm.LlmError as cause:
+        logger.warning(
+            "Chat model call failed",
+            extra={"report_id": report_id},
+            exc_info=cause,
+        )
+        assistant_turn = _not_found_turn(MODEL_UNAVAILABLE_TEXT)
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
+
+    reply = answer.get("reply")
+    if not isinstance(reply, str) or not reply.strip():
+        assistant_turn = _not_found_turn()
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
+
+    assistant_turn = _new_turn(
+        ChatRole.ASSISTANT, claims=(), content=reply.strip(), not_found=False
+    )
+    await _persist(
+        report_id,
+        user_turn,
+        assistant_turn,
+        tool_calls=[{"tool": "general_chat"}],
+        highest_tier_used=None,
+    )
+    return assistant_turn
+
+
 # --- Valuation (DCF) ------------------------------------------------------
 # "Value", deliberately excluded from the trigger words below, is too generic
 # — it appears in ordinary fact labels ("value of total assets") that are not
@@ -1022,20 +1273,53 @@ def _is_valuation_question(question: str) -> bool:
     return bool(_tokens(question) & _VALUATION_TRIGGER_WORDS)
 
 
+#: A sensitivity question asks how the same DCF estimate moves across
+#: discount rates, rather than for a single point estimate. Both the noun
+#: ("sensitivity analysis") and the adjective ("how sensitive is this") are
+#: kept — `_tokens` matching is exact-token, not stemmed, and the suggested
+#: chip in `suggest_questions` uses the adjective form.
+_SENSITIVITY_TRIGGER_WORDS = frozenset({"sensitivity", "sensitive"})
+
+#: A scenario question asks for named bull/bear cases rather than a single
+#: point estimate. Checked against confirmed to collide with nothing else in
+#: this codebase before being added (see the m07/config comments these words
+#: are new alongside).
+_SCENARIO_TRIGGER_WORDS = frozenset({"scenario", "scenarios", "bull", "bear"})
+
+
+def _is_sensitivity_question(question: str) -> bool:
+    return bool(_tokens(question) & _SENSITIVITY_TRIGGER_WORDS)
+
+
+def _is_scenario_question(question: str) -> bool:
+    return bool(_tokens(question) & _SCENARIO_TRIGGER_WORDS)
+
+
 def _money(value: float, unit: str | None) -> str:
     suffix = f" {unit}" if unit else ""
     return f"{value:,.0f}{suffix}"
 
 
 def _dcf_input_claims(
-    result: m07_analysis.DcfResult, facts_by_id: dict[str, Fact]
+    *,
+    base_fcf_fact_id: str | None,
+    net_debt_fact_id: str | None,
+    shares_fact_id: str | None,
+    facts_by_id: dict[str, Fact],
 ) -> list[ChatClaim]:
-    """Certified claims for the real facts the calculation actually used."""
+    """Certified claims for the real facts the calculation actually used.
+
+    Takes the three fact ids directly rather than a whole `DcfResult` —
+    `DcfSensitivityResult` and `DcfScenarioResult` carry the same three ids
+    at their own top level (the real inputs never change between points or
+    cases, only the assumption does), so one function serves all three
+    valuation shapes without a duck-typed or unioned parameter.
+    """
     claims: list[ChatClaim] = []
     for fact_id, label in (
-        (result.base_fcf_fact_id, "Free cash flow"),
-        (result.net_debt_fact_id, "Net debt"),
-        (result.shares_fact_id, "Diluted shares outstanding"),
+        (base_fcf_fact_id, "Free cash flow"),
+        (net_debt_fact_id, "Net debt"),
+        (shares_fact_id, "Diluted shares outstanding"),
     ):
         if fact_id is None:
             continue
@@ -1118,6 +1402,93 @@ def _pct(value: float) -> str:
     return f"{value * 100:.1f}%"
 
 
+def _dcf_sensitivity_claims(
+    result: m07_analysis.DcfSensitivityResult, base_fact: Fact | None
+) -> list[ChatClaim]:
+    """One assumption claim per discount-rate point.
+
+    Mirrors `_dcf_assumption_claims`: every point is a modelling choice, not
+    a filed figure, so every claim here is `is_assumption=True`. The real
+    inputs behind every point (free cash flow, net debt, shares) don't change
+    between points — they're covered once by `_dcf_input_claims` at the call
+    site, never repeated per point.
+    """
+    unit = base_fact.unit if base_fact is not None else None
+    claims: list[ChatClaim] = []
+    for point in result.points:
+        rate_text = _pct(point.discount_rate.value)
+        if point.result.unavailable_reason is not None:
+            claims.append(
+                ChatClaim(
+                    text=(
+                        f"At a {rate_text} discount rate: "
+                        f"{point.result.unavailable_reason}"
+                    ),
+                    is_assumption=True,
+                    assumption_note=point.discount_rate.note,
+                )
+            )
+            continue
+
+        value_text = (
+            f"estimated value per share {_money(point.result.value_per_share, unit)}"
+            if point.result.value_per_share is not None
+            else (
+                "estimated enterprise value "
+                f"{_money(point.result.enterprise_value or 0.0, unit)}"
+            )
+        )
+        claims.append(
+            ChatClaim(
+                text=f"At a {rate_text} discount rate: {value_text}.",
+                is_assumption=True,
+                assumption_note=point.discount_rate.note,
+            )
+        )
+    return claims
+
+
+def _dcf_scenario_claims(
+    result: m07_analysis.DcfScenarioResult, base_fact: Fact | None
+) -> list[ChatClaim]:
+    """One assumption claim per named growth scenario.
+
+    Mirrors `_dcf_sensitivity_claims` for the free-cash-flow growth axis
+    instead of the discount-rate axis.
+    """
+    unit = base_fact.unit if base_fact is not None else None
+    claims: list[ChatClaim] = []
+    for case in result.cases:
+        growth_text = _pct(case.fcf_growth_rate.value)
+        label = f"{case.name.capitalize()} case ({growth_text} free cash flow growth)"
+        if case.result.unavailable_reason is not None:
+            claims.append(
+                ChatClaim(
+                    text=f"{label}: {case.result.unavailable_reason}",
+                    is_assumption=True,
+                    assumption_note=case.fcf_growth_rate.note,
+                )
+            )
+            continue
+
+        value_text = (
+            f"estimated value per share {_money(case.result.value_per_share, unit)}"
+            if case.result.value_per_share is not None
+            else (
+                "estimated enterprise value "
+                f"{_money(case.result.enterprise_value or 0.0, unit)}"
+            )
+        )
+        claims.append(
+            ChatClaim(
+                text=f"{label}: {value_text}.",
+                is_assumption=True,
+                assumption_note=case.fcf_growth_rate.note,
+            )
+        )
+    return claims
+
+
 #: Appended to every valuation answer. A reader asking "is this worth
 #: investing in" is asking for a verdict; the estimate above is the closest
 #: this system gets, and repeating the same DCF figures for a rephrased
@@ -1141,11 +1512,41 @@ def _no_recommendation_claim() -> ChatClaim:
     )
 
 
+async def _finish_valuation_turn(
+    report_id: str, user_turn: ChatTurn, claims: list[ChatClaim], tool_name: str
+) -> ChatTurn:
+    """Builds and persists the assistant turn shared by every valuation
+    branch (plain / sensitivity / scenario) — the only difference between
+    them is which claims were built and which m07 function produced them."""
+    assistant_turn = _new_turn(
+        ChatRole.ASSISTANT,
+        claims=claims,
+        content=" ".join(claim.text for claim in claims),
+        not_found=False,
+    )
+    await _persist(
+        report_id,
+        user_turn,
+        assistant_turn,
+        tool_calls=[{"tool": tool_name}],
+        highest_tier_used=None,
+    )
+    return assistant_turn
+
+
 async def _answer_valuation_question(
-    report_id: str, all_facts: Sequence[Fact], user_turn: ChatTurn
+    report_id: str, all_facts: Sequence[Fact], user_turn: ChatTurn, message: str
 ) -> ChatTurn:
     """Answers a valuation question with a DCF scenario over this filer's
-    real facts, mixing certified inputs with clearly labelled assumptions."""
+    real facts, mixing certified inputs with clearly labelled assumptions.
+
+    A plain valuation question runs one DCF at the default/supplied
+    assumptions. A sensitivity question (`_is_sensitivity_question`) instead
+    re-runs it across several discount rates; a scenario question
+    (`_is_scenario_question`) re-runs it across named bear/base/bull growth
+    cases. Both reuse `project_dcf` itself via `project_dcf_sensitivity` /
+    `project_dcf_scenarios` in m07_analysis — no DCF maths lives twice.
+    """
     raw_facts = [fact for fact in all_facts if not fact.is_calculated]
     # `all_facts` may already carry the metrics `project_dcf` needs, computed
     # once when the report itself was generated — the wider recompute below
@@ -1159,6 +1560,60 @@ async def _answer_valuation_question(
         else ()
     )
     combined = [*all_facts, *wider]
+    facts_by_id = {fact.fact_id: fact for fact in combined}
+
+    if _is_sensitivity_question(message):
+        sensitivity = m07_analysis.project_dcf_sensitivity(combined)
+        if sensitivity.unavailable_reason is not None:
+            assistant_turn = _not_found_turn(sensitivity.unavailable_reason)
+            await _persist(report_id, user_turn, assistant_turn)
+            return assistant_turn
+
+        base_fact = (
+            facts_by_id.get(sensitivity.base_fcf_fact_id)
+            if sensitivity.base_fcf_fact_id is not None
+            else None
+        )
+        claims = (
+            _dcf_input_claims(
+                base_fcf_fact_id=sensitivity.base_fcf_fact_id,
+                net_debt_fact_id=sensitivity.net_debt_fact_id,
+                shares_fact_id=sensitivity.shares_fact_id,
+                facts_by_id=facts_by_id,
+            )
+            + _dcf_sensitivity_claims(sensitivity, base_fact)
+            + [_no_recommendation_claim()]
+        )
+        return await _finish_valuation_turn(
+            report_id, user_turn, claims, "project_dcf_sensitivity"
+        )
+
+    if _is_scenario_question(message):
+        scenario = m07_analysis.project_dcf_scenarios(combined)
+        if scenario.unavailable_reason is not None:
+            assistant_turn = _not_found_turn(scenario.unavailable_reason)
+            await _persist(report_id, user_turn, assistant_turn)
+            return assistant_turn
+
+        base_fact = (
+            facts_by_id.get(scenario.base_fcf_fact_id)
+            if scenario.base_fcf_fact_id is not None
+            else None
+        )
+        claims = (
+            _dcf_input_claims(
+                base_fcf_fact_id=scenario.base_fcf_fact_id,
+                net_debt_fact_id=scenario.net_debt_fact_id,
+                shares_fact_id=scenario.shares_fact_id,
+                facts_by_id=facts_by_id,
+            )
+            + _dcf_scenario_claims(scenario, base_fact)
+            + [_no_recommendation_claim()]
+        )
+        return await _finish_valuation_turn(
+            report_id, user_turn, claims, "project_dcf_scenarios"
+        )
+
     result = m07_analysis.project_dcf(combined)
 
     if result.unavailable_reason is not None:
@@ -1166,32 +1621,22 @@ async def _answer_valuation_question(
         await _persist(report_id, user_turn, assistant_turn)
         return assistant_turn
 
-    facts_by_id = {fact.fact_id: fact for fact in combined}
     base_fact = (
         facts_by_id.get(result.base_fcf_fact_id)
         if result.base_fcf_fact_id is not None
         else None
     )
     claims = (
-        _dcf_input_claims(result, facts_by_id)
+        _dcf_input_claims(
+            base_fcf_fact_id=result.base_fcf_fact_id,
+            net_debt_fact_id=result.net_debt_fact_id,
+            shares_fact_id=result.shares_fact_id,
+            facts_by_id=facts_by_id,
+        )
         + _dcf_assumption_claims(result, base_fact)
         + [_no_recommendation_claim()]
     )
-
-    assistant_turn = _new_turn(
-        ChatRole.ASSISTANT,
-        claims=claims,
-        content=" ".join(claim.text for claim in claims),
-        not_found=False,
-    )
-    await _persist(
-        report_id,
-        user_turn,
-        assistant_turn,
-        tool_calls=[{"tool": "project_dcf"}],
-        highest_tier_used=None,
-    )
-    return assistant_turn
+    return await _finish_valuation_turn(report_id, user_turn, claims, "project_dcf")
 
 
 async def answer_question(
@@ -1248,8 +1693,21 @@ async def _route_question(
         await _persist(report_id, user_turn, assistant_turn)
         return assistant_turn
 
-    if _is_valuation_question(message):
-        return await _answer_valuation_question(report_id, all_facts, user_turn)
+    if (
+        _is_valuation_question(message)
+        or _is_sensitivity_question(message)
+        or _is_scenario_question(message)
+    ):
+        return await _answer_valuation_question(
+            report_id, all_facts, user_turn, message
+        )
+
+    if _is_advice_question(message):
+        assistant_turn = _new_turn(
+            ChatRole.ASSISTANT, claims=(), content=_ADVICE_REPLY, not_found=False
+        )
+        await _persist(report_id, user_turn, assistant_turn)
+        return assistant_turn
 
     prior = await _recent_exchange(report_id)
 
@@ -1273,6 +1731,17 @@ async def _route_question(
             highest_tier = 2
 
     if _is_peer_question(message):
+        candidates = _with_peer_facts(candidates, all_facts)
+        if candidates and highest_tier is None:
+            highest_tier = 1
+
+    # A comparison question already implies the reader wants the evaluative
+    # read `_is_insight_question` unlocks, so it opts in too, without needing
+    # its own separate wording — and gets the same peer widening, since an
+    # insight question ("any red flags in the margin trend?") benefits from
+    # the same peer context even when it never says "peer" or "compare".
+    insight_mode = _is_insight_question(message) or _is_peer_question(message)
+    if insight_mode:
         candidates = _with_peer_facts(candidates, all_facts)
         if candidates and highest_tier is None:
             highest_tier = 1
@@ -1303,6 +1772,11 @@ async def _route_question(
             return await _answer_from_web_search(
                 report_id, ticker, message, user_turn
             )
+        # Absolute last resort, and gated off by default — web search is
+        # tried first when both are on, since it is at least reading real
+        # pages; general chat is grounded in nothing at all.
+        if CHAT_GENERAL_CHAT_ENABLED:
+            return await _answer_with_general_chat(report_id, message, user_turn)
         assistant_turn = _not_found_turn()
         await _persist(report_id, user_turn, assistant_turn)
         return assistant_turn
@@ -1311,7 +1785,7 @@ async def _route_question(
 
     try:
         answer = await llm.complete_json(
-            SYSTEM_PROMPT,
+            INSIGHT_SYSTEM_PROMPT if insight_mode else SYSTEM_PROMPT,
             _build_user_prompt(ticker, message, candidates, prior=prior),
             _ANSWER_SCHEMA,
             purpose="chat:answer",
@@ -1389,6 +1863,8 @@ async def suggest_questions(report_id: str) -> list[str]:
 
     if "cashflow.free_cash_flow" in present:
         suggestions.append("What is this company worth?")
+        suggestions.append("How sensitive is this to the discount rate?")
+        suggestions.append("What's the bull and bear case?")
 
     return suggestions[:_MAX_SUGGESTIONS]
 

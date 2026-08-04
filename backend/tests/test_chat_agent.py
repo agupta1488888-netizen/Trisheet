@@ -302,6 +302,122 @@ async def test_valuation_question_with_no_free_cash_flow_is_not_found(
     assert turn.not_found
 
 
+async def test_sensitivity_question_never_calls_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mirrors test_valuation_question_never_calls_the_model — the
+    sensitivity path is project_dcf run several times, still pure Python."""
+    fcf = make_fact(
+        metric="cashflow.free_cash_flow",
+        label="Free cash flow",
+        value=100.0,
+        display_value="100",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+        is_calculated=True,
+        formula="net cash from operating activities − capital expenditure",
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [fcf]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "How sensitive is this to the discount rate?"
+    )
+
+    assert not turn.not_found
+    certified = [claim for claim in turn.claims if not claim.is_assumption]
+    assumptions = [claim for claim in turn.claims if claim.is_assumption]
+    assert len(certified) == 1
+    assert certified[0].fact_id == fcf.fact_id
+    # One assumption claim per default discount-rate step, plus the closing
+    # no-recommendation caveat.
+    assert len(assumptions) == 6
+    assert all(claim.assumption_note for claim in assumptions)
+    assert all(claim.tier is None and claim.fact_id is None for claim in assumptions)
+    assert any("does not" in claim.text.lower() for claim in assumptions)
+    assert sum("discount rate" in claim.text.lower() for claim in assumptions) == 5
+
+
+async def test_sensitivity_question_with_no_free_cash_flow_is_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "How sensitive is this to the discount rate?"
+    )
+
+    assert turn.not_found
+
+
+async def test_scenario_question_never_calls_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mirrors test_valuation_question_never_calls_the_model — the scenario
+    path is project_dcf run for bear/base/bull, still pure Python."""
+    fcf = make_fact(
+        metric="cashflow.free_cash_flow",
+        label="Free cash flow",
+        value=100.0,
+        display_value="100",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+        is_calculated=True,
+        formula="net cash from operating activities − capital expenditure",
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [fcf]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "What's the bull and bear case?"
+    )
+
+    assert not turn.not_found
+    certified = [claim for claim in turn.claims if not claim.is_assumption]
+    assumptions = [claim for claim in turn.claims if claim.is_assumption]
+    assert len(certified) == 1
+    assert certified[0].fact_id == fcf.fact_id
+    # One assumption claim per named case (bear/base/bull), plus the closing
+    # no-recommendation caveat.
+    assert len(assumptions) == 4
+    assert all(claim.assumption_note for claim in assumptions)
+    assert all(claim.tier is None and claim.fact_id is None for claim in assumptions)
+    assert any("bear case" in claim.text.lower() for claim in assumptions)
+    assert any("bull case" in claim.text.lower() for claim in assumptions)
+
+
+async def test_scenario_question_with_no_free_cash_flow_is_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(REPORT_ID, "What's the bull and bear case?")
+
+    assert turn.not_found
+
+
 async def test_no_pasted_url_stays_not_found_without_fetching_anything(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -602,6 +718,126 @@ async def test_pasted_url_is_tried_before_web_search(
     assert turn.claims[0].source_type == SourceType.COMPANY_SITE
 
 
+# --- General chat ------------------------------------------------------
+
+
+async def test_general_chat_is_never_tried_while_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`CHAT_GENERAL_CHAT_ENABLED` is off by default — confirms the flag
+    actually gates the call, not just the config default. General chat uses
+    the same `llm.complete_json` every grounded answer uses, so `_refuse_llm`
+    alone proves it was never reached."""
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    monkeypatch.setattr(chat_agent, "CHAT_GENERAL_CHAT_ENABLED", False)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "What is the capital of France?"
+    )
+
+    assert turn.not_found
+
+
+async def test_general_chat_answers_when_enabled_and_everything_else_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    monkeypatch.setattr(chat_agent, "CHAT_GENERAL_CHAT_ENABLED", True)
+    _stub_llm(monkeypatch, {"reply": "Paris is the capital of France."})
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "What is the capital of France?"
+    )
+
+    assert not turn.not_found
+    assert turn.claims == ()
+    assert turn.content == "Paris is the capital of France."
+
+
+async def test_web_search_is_tried_before_general_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When both are enabled, web search — at least grounded in a real
+    fetched page — wins; general chat is not also consulted."""
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    async def _search(
+        system: str, user: str, schema: dict[str, Any], *, purpose: str
+    ) -> dict[str, Any]:
+        return {
+            "claims": [
+                {
+                    "text": "The company was founded in 1999.",
+                    "source_url": "https://news.example.com/story",
+                }
+            ],
+            "not_found": False,
+        }
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    monkeypatch.setattr(chat_agent, "CHAT_WEB_SEARCH_ENABLED", True)
+    monkeypatch.setattr(chat_agent, "CHAT_GENERAL_CHAT_ENABLED", True)
+    monkeypatch.setattr(llm, "complete_json_with_web_search", _search)
+    _refuse_llm(monkeypatch)  # complete_json — general chat's path — must not run
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "When was the company founded?"
+    )
+
+    assert not turn.not_found
+    assert turn.claims[0].source_url is not None
+
+
+async def test_general_chat_never_overrides_a_grounded_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A question that matches a real fact must still get the grounded
+    answer even with general chat enabled — it is the absolute last resort,
+    never a first choice."""
+    revenue = make_fact(
+        metric="income.revenue",
+        label="Revenue",
+        value=1000.0,
+        display_value="1,000",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    monkeypatch.setattr(chat_agent, "CHAT_GENERAL_CHAT_ENABLED", True)
+    _stub_llm(
+        monkeypatch,
+        {
+            "claims": [{"text": "Revenue was 1,000.", "fact_id": revenue.fact_id}],
+            "not_found": False,
+        },
+    )
+
+    turn = await chat_agent.answer_question(REPORT_ID, "What was revenue?")
+
+    assert not turn.not_found
+    assert len(turn.claims) == 1
+    assert turn.claims[0].fact_id == revenue.fact_id
+
+
 # --- Small talk -------------------------------------------------------------
 
 
@@ -648,6 +884,76 @@ async def test_help_question_gets_a_canned_reply(
     turn = await chat_agent.answer_question(REPORT_ID, "What can you do?")
 
     assert "valuation" in turn.content.lower()
+
+
+async def test_advice_question_gets_a_canned_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _load_facts(report_id: str) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "Can you suggest me on this company?"
+    )
+
+    assert not turn.not_found
+    assert turn.claims == ()
+    assert "recommendation" in turn.content.lower()
+
+
+async def test_advice_phrase_also_gets_the_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"Should I buy" is a phrase, not a single trigger word — confirms the
+    substring check, not just the token-set check, catches it."""
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(REPORT_ID, "Should I buy this stock?")
+
+    assert not turn.not_found
+    assert "recommendation" in turn.content.lower()
+
+
+async def test_compound_advice_and_valuation_question_still_gets_the_valuation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The advice redirect must never win over a question that also asks for
+    something this system can actually compute — this compound phrasing is
+    exactly the case it was designed not to break."""
+    fcf = make_fact(
+        metric="cashflow.free_cash_flow",
+        label="Free cash flow",
+        value=100.0,
+        display_value="100",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+        is_calculated=True,
+        formula="net cash from operating activities − capital expenditure",
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [fcf]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "Suggest me on this company and do the valuation"
+    )
+
+    assert not turn.not_found
+    certified = [claim for claim in turn.claims if not claim.is_assumption]
+    assert len(certified) == 1
+    assert certified[0].fact_id == fcf.fact_id
 
 
 # --- Peer comparison ----------------------------------------------------
@@ -731,6 +1037,207 @@ async def test_non_peer_question_does_not_pull_in_peer_facts(
     )
 
     assert turn.not_found
+
+
+# --- Interpretive insight -------------------------------------------------
+
+
+async def test_insight_question_widens_to_peer_facts_without_peer_wording(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"Concerning" carries no peer/compare wording of its own, but insight
+    mode widens to peer facts anyway — the same widening `_is_peer_question`
+    already gets, reached through a different trigger."""
+    peer_margin = make_fact(
+        metric="peer.comparison.MSFT.margin.net",
+        label="MSFT — Net margin",
+        value=0.28,
+        display_value="28.0%",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+        tier=SourceTier.FILING,
+        source_type=SourceType.SEC_FILING,
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [peer_margin]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _stub_llm(
+        monkeypatch,
+        {
+            "claims": [
+                {
+                    "text": "MSFT's net margin was 28.0%.",
+                    "fact_id": peer_margin.fact_id,
+                }
+            ],
+            "not_found": False,
+        },
+    )
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "Is the margin trend concerning?"
+    )
+
+    assert not turn.not_found
+    assert len(turn.claims) == 1
+    assert turn.claims[0].fact_id == peer_margin.fact_id
+
+
+async def test_insight_question_uses_the_insight_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    margin = make_fact(
+        metric="margin.net",
+        label="Net margin",
+        value=0.22,
+        display_value="22.0%",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [margin]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+
+    captured: dict[str, Any] = {}
+
+    async def _answer(
+        system: str, user: str, schema: dict[str, Any], *, purpose: str
+    ) -> dict[str, Any]:
+        captured["system"] = system
+        return {
+            "claims": [{"text": "Net margin was 22.0%.", "fact_id": margin.fact_id}],
+            "not_found": False,
+        }
+
+    monkeypatch.setattr(llm, "complete_json", _answer)
+
+    await chat_agent.answer_question(REPORT_ID, "Is the net margin concerning?")
+
+    assert captured["system"] == chat_agent.INSIGHT_SYSTEM_PROMPT
+
+
+async def test_comparison_question_also_gets_insight_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A comparison question already implies the evaluative read — it must
+    not need its own separate insight wording to get it."""
+    peer_margin = make_fact(
+        metric="peer.comparison.MSFT.margin.net",
+        label="MSFT — Net margin",
+        value=0.28,
+        display_value="28.0%",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+        tier=SourceTier.FILING,
+        source_type=SourceType.SEC_FILING,
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [peer_margin]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+
+    captured: dict[str, Any] = {}
+
+    async def _answer(
+        system: str, user: str, schema: dict[str, Any], *, purpose: str
+    ) -> dict[str, Any]:
+        captured["system"] = system
+        return {
+            "claims": [
+                {
+                    "text": "MSFT's net margin was 28.0%.",
+                    "fact_id": peer_margin.fact_id,
+                }
+            ],
+            "not_found": False,
+        }
+
+    monkeypatch.setattr(llm, "complete_json", _answer)
+
+    await chat_agent.answer_question(REPORT_ID, "How does this compare to peers?")
+
+    assert captured["system"] == chat_agent.INSIGHT_SYSTEM_PROMPT
+
+
+async def test_a_claim_using_recommendation_language_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recommendation-language filter runs unconditionally — even a
+    claim that cites a real, supplied fact id is dropped if its text reads
+    as investment advice."""
+    margin = make_fact(
+        metric="margin.net",
+        label="Net margin",
+        value=0.15,
+        display_value="15.0%",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [margin]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _stub_llm(
+        monkeypatch,
+        {
+            "claims": [{"text": "This looks undervalued.", "fact_id": margin.fact_id}],
+            "not_found": False,
+        },
+    )
+
+    turn = await chat_agent.answer_question(REPORT_ID, "What is the net margin?")
+
+    assert turn.not_found
+    assert len(turn.claims) == 1
+    assert turn.claims[0].not_found
+
+
+async def test_plain_factual_question_is_unaffected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard: interpretive insight is additive only — an ordinary
+    question with no insight/peer wording behaves exactly as before."""
+    revenue = make_fact(
+        metric="income.revenue",
+        label="Revenue",
+        value=1000.0,
+        display_value="1,000",
+        fiscal_year=2024,
+        period_start=None,
+        period_end=dt.date(2024, 9, 28),
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+
+    captured: dict[str, Any] = {}
+
+    async def _answer(
+        system: str, user: str, schema: dict[str, Any], *, purpose: str
+    ) -> dict[str, Any]:
+        captured["system"] = system
+        return {
+            "claims": [{"text": "Revenue was 1,000.", "fact_id": revenue.fact_id}],
+            "not_found": False,
+        }
+
+    monkeypatch.setattr(llm, "complete_json", _answer)
+
+    await chat_agent.answer_question(REPORT_ID, "What was revenue?")
+
+    assert captured["system"] == chat_agent.SYSTEM_PROMPT
 
 
 # --- Conversation memory --------------------------------------------------
