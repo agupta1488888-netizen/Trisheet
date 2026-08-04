@@ -159,3 +159,101 @@ async def test_client_construction_failure_raises_llm_unavailable(
 
     with pytest.raises(llm.LlmUnavailableError):
         await llm.complete_json("system", "user", SCHEMA, purpose="test:ping")
+
+
+# --- Client construction ------------------------------------------------------
+# `_get_client` had no test at all before this — every test above bypasses it
+# by monkeypatching `_get_client` itself. These exercise the real
+# construction path directly, because it is exactly the path that failed in
+# production: AsyncAnthropic, left to build its own httpx.AsyncClient, sets
+# TCP keepalive socket_options and mounts a transport per scheme from the
+# environment's proxy variables. On the deployed container that reliably
+# raised APIConnectionError even though DNS, the TLS handshake and a plain
+# httpx request to the same host all succeeded. Passing http_client
+# explicitly is what skips that construction, and is the one thing worth
+# pinning down here.
+
+
+class _FakeAsyncAnthropic:
+    """Records what it was constructed with; makes no real connection."""
+
+    last_kwargs: dict[str, Any] | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        _FakeAsyncAnthropic.last_kwargs = kwargs
+        self.messages = None
+
+
+def _configured_settings() -> Any:
+    from pydantic import SecretStr
+
+    from app.config import Settings
+
+    return Settings(anthropic_api_key=SecretStr("test-key"))
+
+
+async def test_the_sdk_is_given_an_explicit_http_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import anthropic
+    import httpx
+
+    monkeypatch.setattr(llm, "get_settings", _configured_settings)
+    monkeypatch.setattr(llm, "_client", None)
+    monkeypatch.setattr(llm, "_http_client", None)
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    _FakeAsyncAnthropic.last_kwargs = None
+
+    llm._get_client()
+
+    assert _FakeAsyncAnthropic.last_kwargs is not None
+    given = _FakeAsyncAnthropic.last_kwargs.get("http_client")
+    assert isinstance(given, httpx.AsyncClient)
+    await given.aclose()
+
+
+async def test_the_http_client_is_reused_across_anthropic_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # reset_client forces a new AsyncAnthropic on the next call — a
+    # configuration reload, in production — but there is no reason that
+    # should also discard a working connection pool.
+    import anthropic
+    import httpx
+
+    monkeypatch.setattr(llm, "get_settings", _configured_settings)
+    monkeypatch.setattr(llm, "_client", None)
+    monkeypatch.setattr(llm, "_http_client", None)
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+
+    llm._get_client()
+    first = llm._http_client
+    llm.reset_client()
+    llm._get_client()
+    second = llm._http_client
+
+    assert first is second
+    assert isinstance(first, httpx.AsyncClient)
+    await first.aclose()
+
+
+async def test_close_client_closes_the_http_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import anthropic
+    import httpx
+
+    monkeypatch.setattr(llm, "get_settings", _configured_settings)
+    monkeypatch.setattr(llm, "_client", None)
+    monkeypatch.setattr(llm, "_http_client", None)
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+
+    llm._get_client()
+    http_client = llm._http_client
+    assert isinstance(http_client, httpx.AsyncClient)
+
+    await llm.close_client()
+
+    assert llm._client is None
+    assert llm._http_client is None
+    assert http_client.is_closed

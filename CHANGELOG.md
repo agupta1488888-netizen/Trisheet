@@ -17,6 +17,34 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — the model was unreachable in production (2026-08-04)
+
+- `llm`: every prose generation call was failing on the deployed backend with
+  `APIConnectionError('Connection error.')`, silently — m10 catches the
+  failure per section and the report still assembled, so every deployed
+  report was a table dump with no analyst narrative and nothing said so.
+  Diagnosed by adding a temporary probe endpoint: DNS, the TLS handshake and
+  a plain `httpx.AsyncClient` request to `api.anthropic.com` all succeeded
+  from the same container, which meant the fault was specific to how the SDK
+  itself opens a connection. `AsyncAnthropic`, left to build its own client,
+  sets TCP keepalive `socket_options` at the transport level before
+  connecting and mounts a transport per scheme from the environment's proxy
+  variables — confirmed by passing a plain `httpx.AsyncClient` in and
+  watching the same call go through with a real (401) response instead of a
+  connection failure. `_get_client` now builds and passes that client
+  explicitly, which skips the SDK's own construction entirely.
+- `llm`: the explicit `httpx.AsyncClient` is held separately from the cached
+  Anthropic client and reused across a `reset_client` call — a configuration
+  reload has no reason to also discard a working connection pool. Added
+  `close_client`, mirroring `edgar.close_client`, and wired it into the same
+  application-shutdown hook.
+- `main`: removed the temporary `/debug/anthropic-net` probe now that the
+  cause is fixed. Left running it would have become a real cost: the
+  connection now succeeds, so every unauthenticated hit would have spent
+  Anthropic tokens on a live call — exactly what the report rate limit
+  elsewhere exists to prevent, on a sibling endpoint that limit does not
+  cover.
+
 ### Added — the report surfaces what the backend already produced (2026-08-04)
 
 - `frontend/report`: a download control. The backend has rendered a PDF and an

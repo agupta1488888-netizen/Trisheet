@@ -33,6 +33,22 @@ Public interface
     complete_json_with_web_search(system, user, schema, *, purpose) -> dict
     is_configured() -> bool
     reset_client() -> None
+    close_client() -> None
+
+On the explicit http_client below
+    AsyncAnthropic builds its own httpx.AsyncClient when none is given, and
+    that construction does more than a plain one: it sets TCP keepalive
+    socket_options at the transport level and mounts a transport per scheme
+    from the environment's proxy variables
+    (anthropic._base_client.AsyncHttpxClientWrapper). On this deployment that
+    reliably failed every call with `APIConnectionError('Connection error.')`
+    even though DNS, the TLS handshake and a plain httpx request to the same
+    host all succeeded — diagnosed by passing a plain client to the SDK and
+    watching the same call go through, which is the config below. The keepalive
+    `setsockopt` calls are believed to be the specific cause: platforms with
+    sandboxed or virtualised networking (this one included) can reject them
+    outright, and httpcore surfaces that as an opaque connect failure rather
+    than naming the socket option that was refused.
 """
 
 from __future__ import annotations
@@ -44,6 +60,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, Protocol, cast
+
+import httpx
 
 from app.config import (
     LLM_CACHE_READ_MULTIPLIER,
@@ -100,6 +118,11 @@ class _AnthropicClient(Protocol):
 
 
 _client: _AnthropicClient | None = None
+#: The transport the SDK is given explicitly rather than left to build its
+#: own. Held separately from `_client` because `reset_client` — used to force
+#: a rebuilt Anthropic client on configuration reload — has no reason to tear
+#: down a working connection pool along with it.
+_http_client: httpx.AsyncClient | None = None
 
 
 # --- Token accounting --------------------------------------------------------
@@ -245,13 +268,41 @@ def is_configured() -> bool:
 
 
 def reset_client() -> None:
-    """Drops the cached client. Used by tests and on configuration reload."""
+    """Drops the cached Anthropic client. Used by tests and on config reload.
+
+    Leaves the underlying `httpx.AsyncClient` in place. That connection pool
+    is not tied to any one Anthropic client and there is no reason to tear it
+    down along with it — `close_client` is the one that does that, on
+    application shutdown.
+    """
     global _client  # noqa: PLW0603 — one process-wide pooled client by design
     _client = None
 
 
+async def close_client() -> None:
+    """Closes the owned httpx client. Called on application shutdown."""
+    global _client, _http_client  # noqa: PLW0603 — mirrors edgar.close_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
+    _client = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """The transport handed to the SDK, built once and reused."""
+    global _http_client  # noqa: PLW0603 — mirrors _get_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS)
+    return _http_client
+
+
 def _get_client() -> _AnthropicClient:
-    """Returns the shared async client, building it on first use."""
+    """Returns the shared async client, building it on first use.
+
+    Given its own `http_client` explicitly rather than left to build one — see
+    the module docstring for why the SDK's own construction reliably fails on
+    this deployment while an equivalent plain client succeeds.
+    """
     global _client  # noqa: PLW0603 — mirrors reset_client
     if _client is not None:
         return _client
@@ -272,7 +323,7 @@ def _get_client() -> _AnthropicClient:
             "_AnthropicClient",
             AsyncAnthropic(
                 api_key=get_settings().anthropic_api_key.get_secret_value(),
-                timeout=LLM_TIMEOUT_SECONDS,
+                http_client=_get_http_client(),
                 max_retries=LLM_MAX_RETRIES,
             ),
         )
