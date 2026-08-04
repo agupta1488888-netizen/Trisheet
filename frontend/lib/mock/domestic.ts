@@ -952,4 +952,18 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
     passed: true,
     verifiedAt: "2025-11-28T14:33:20Z",
   },
+  // A link the reader attached. Present in this fixture so the preview shows
+  // the section populated; the foreign fixture leaves it empty so the other
+  // case is covered too. Never a figure — a source note cannot carry one
+  // into the statements, which is the whole point of the separate shape.
+  sourceNotes: [
+    {
+      text: "The company describes its services segment as its fastest-growing business by revenue.",
+      sourceUrl: "https://investor.example.com/newsroom/q4-summary",
+      sourceType: "company_site",
+      tier: 2,
+      fetchedAt: "2025-11-28T14:32:40Z",
+      isUserSupplied: true,
+    },
+  ],
 };

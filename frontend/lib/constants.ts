@@ -11,6 +11,20 @@ import type { AnalysisDepth, DepthOption, SectionId } from "@/lib/types";
 /** Missing data reads this. Never "N/A", never blank, never zero. */
 export const NOT_DISCLOSED = "Not disclosed";
 
+/**
+ * The heading over statements read off a link the reader attached. Names who
+ * supplied it, because that is the single most important thing about it.
+ */
+export const SOURCE_NOTES_HEADING = "Sources you supplied";
+
+/**
+ * Says plainly what these are and are not. Nothing verifies that a supplied
+ * link is the company's own site — no such check is available — so the copy
+ * claims only what is true: the page was read, and it was read then.
+ */
+export const SOURCE_NOTES_NOTE =
+  "Read from links supplied with this request, not from filings. These pages are self-reported and were not verified, and nothing here is used in the figures above.";
+
 /** Section headings, in brief order. */
 export const SECTION_TITLE: Readonly<Record<SectionId, string>> = {
   snapshot: "Snapshot",

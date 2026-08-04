@@ -147,12 +147,19 @@ export async function resolveTicker(
  *
  * `periods` is only meaningful (and only sent) when `depth` is "custom" —
  * the API rejects a request that sets it for any other depth.
+ *
+ * `sourceUrls` are links the reader attached. They are read into cited
+ * source notes and never become facts, so one cannot put a figure into the
+ * financial highlights table — see `m13_sources` on the backend. Blank
+ * entries are dropped rather than sent, the same normalisation
+ * `sendChatMessage` applies to `pastedUrl`.
  */
 export async function createReport(
   cik: string,
   ticker: string,
   depth: AnalysisDepth,
   periods: number | null = null,
+  sourceUrls: readonly string[] = [],
 ): Promise<ApiResult<Report>> {
   return apiRequest<Report>("/reports", {
     method: "POST",
@@ -161,6 +168,9 @@ export async function createReport(
       ticker,
       depth,
       periods: depth === "custom" ? periods : null,
+      sourceUrls: sourceUrls
+        .map((url) => url.trim())
+        .filter((url) => url !== ""),
     }),
   });
 }

@@ -635,4 +635,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
     passed: true,
     verifiedAt: "2025-11-28T15:03:44Z",
   },
+  //: No link was attached to this run — the ordinary case, and the one the
+  //: report has to render without leaving an empty heading behind.
+  sourceNotes: [],
 };

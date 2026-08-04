@@ -35,6 +35,7 @@ import { createReport, resolveTicker, searchTickers } from "@/lib/api";
 import type { ApiResult } from "@/lib/api";
 import type {
   AnalysisDepth,
+  ApiError,
   Report,
   Resolution,
   TickerSuggestion,
@@ -62,6 +63,7 @@ export interface InputScreenProps {
     resolution: Resolution,
     depth: AnalysisDepth,
     periods: number | null,
+    sourceUrls: readonly string[],
   ) => void;
 }
 
@@ -87,11 +89,17 @@ export function InputScreen({
   // swallowed by an unchanged prop.
   const [isMonolithHovered, setIsMonolithHovered] = useState(false);
   const [readToken, setReadToken] = useState(0);
+  const [startError, setStartError] = useState<ApiError | null>(null);
 
   const start = useCallback(
-    (resolution: Resolution, depth: AnalysisDepth, periods: number | null) => {
+    (
+      resolution: Resolution,
+      depth: AnalysisDepth,
+      periods: number | null,
+      sourceUrls: readonly string[],
+    ) => {
       if (onStart !== undefined) {
-        onStart(resolution, depth, periods);
+        onStart(resolution, depth, periods, sourceUrls);
         return;
       }
 
@@ -100,13 +108,23 @@ export function InputScreen({
         return;
       }
 
-      void createReport(company.cik, company.ticker, depth, periods).then(
-        (result: ApiResult<Report>) => {
-          if (result.ok) {
-            router.push(`/r/${result.data.id}`);
-          }
-        },
-      );
+      void createReport(
+        company.cik,
+        company.ticker,
+        depth,
+        periods,
+        sourceUrls,
+      ).then((result: ApiResult<Report>) => {
+        if (result.ok) {
+          router.push(`/r/${result.data.id}`);
+          return;
+        }
+        // Previously discarded, which left a failed queue looking like a
+        // button that did nothing. The scene stops reading, and the message
+        // is the backend's own — already written in the interface's voice.
+        setReadToken(0);
+        setStartError(result.error);
+      });
     },
     [onStart, router],
   );
@@ -171,10 +189,30 @@ export function InputScreen({
                 resolve={resolve}
                 onResolved={start}
                 onSubmitStart={() => {
+                  setStartError(null);
                   setReadToken((token) => token + 1);
                 }}
               />
             </div>
+
+            {startError === null ? null : (
+              <section
+                aria-labelledby="start-error-heading"
+                className="mt-5 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3"
+              >
+                <h2
+                  id="start-error-heading"
+                  className="text-sm font-medium text-red-300"
+                >
+                  {startError.message}
+                </h2>
+                {startError.detail === null ? null : (
+                  <p className="ref mt-1 text-xs text-white/40">
+                    {startError.detail}
+                  </p>
+                )}
+              </section>
+            )}
 
             <p className="mt-8 flex items-center gap-2.5 text-[13px] text-white/30">
               <span aria-hidden="true" className="h-px w-6 bg-white/15" />

@@ -27,6 +27,7 @@ import { ProvenanceRail } from "@/components/report/provenance-rail";
 import { ReportHeader } from "@/components/report/report-header";
 import { ReportSection } from "@/components/report/report-section";
 import { SectionSidebar } from "@/components/report/section-sidebar";
+import { SourceNotes } from "@/components/report/source-notes";
 
 /** Mobile/tablet fallback: the sidebar takes over at `lg`, see SectionSidebar. */
 function SectionNav({ ids }: { ids: readonly string[] }) {
@@ -96,6 +97,11 @@ export function ReportView({ document }: { document: ReportDocument }) {
               />
             ))}
           </div>
+
+          {/* After every filed section, never among them. These are appended
+              to the record rather than part of it, and renders nothing when
+              no link was supplied. */}
+          <SourceNotes notes={document.sourceNotes} />
         </main>
 
         <ProvenanceRail index={index} />

@@ -37,6 +37,7 @@ export interface TickerFormProps {
     resolution: Resolution,
     depth: AnalysisDepth,
     periods: number | null,
+    sourceUrls: readonly string[],
   ) => void;
   /** Fired the moment a report is requested, so the hero can start reading. */
   onSubmitStart?: () => void;
@@ -59,6 +60,7 @@ export function TickerForm({
 }: TickerFormProps) {
   const inputId = useId();
   const depthName = useId();
+  const sourceId = useId();
 
   const [query, setQuery] = useState("");
   const [depth, setDepth] = useState<AnalysisDepth>(DEFAULT_DEPTH);
@@ -66,6 +68,10 @@ export function TickerForm({
   const [isResolving, setIsResolving] = useState(false);
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  // Closed by default. A report needs a ticker and nothing else; a URL field
+  // standing open beside it would suggest otherwise.
+  const [isSourceOpen, setIsSourceOpen] = useState(false);
+  const [sourceUrl, setSourceUrl] = useState("");
 
   const isCustomDepthInvalid =
     depth === "custom" && !isCustomPeriodsValid(customPeriods);
@@ -90,13 +96,30 @@ export function TickerForm({
       }
 
       if (result.data.outcome === "resolved") {
-        onResolved(result.data, depth, depth === "custom" ? customPeriods : null);
+        // Built here rather than in render: a fresh array on every render
+        // would change this callback's identity every time. A list because
+        // the API accepts several; the interface offers one field.
+        const trimmedSource = sourceUrl.trim();
+        onResolved(
+          result.data,
+          depth,
+          depth === "custom" ? customPeriods : null,
+          trimmedSource === "" ? [] : [trimmedSource],
+        );
         return;
       }
 
       setResolution(result.data);
     },
-    [customPeriods, depth, isCustomDepthInvalid, isResolving, onResolved, resolve],
+    [
+      customPeriods,
+      depth,
+      isCustomDepthInvalid,
+      isResolving,
+      onResolved,
+      resolve,
+      sourceUrl,
+    ],
   );
 
   const choose = useCallback(
@@ -181,6 +204,62 @@ export function TickerForm({
           US-listed companies, by ticker or name. Every figure traces back to
           an SEC filing.
         </p>
+
+        {/* Optional, and closed by default. The link is read and quoted in a
+            section of its own — it can never put a figure into the financial
+            statements, which is why the copy says "alongside" and not
+            "into". */}
+        {isSourceOpen ? (
+          <div className="mt-4">
+            <label
+              htmlFor={sourceId}
+              className="text-[13px] font-medium text-white/55"
+            >
+              Source link
+            </label>
+            <input
+              id={sourceId}
+              type="url"
+              inputMode="url"
+              value={sourceUrl}
+              onChange={(event) => {
+                setSourceUrl(event.target.value);
+              }}
+              disabled={isResolving}
+              placeholder="https://investors.example.com/press-release"
+              aria-describedby={`${sourceId}-hint`}
+              className={cn(
+                "ref mt-2 h-11 w-full rounded-xl border border-white/12 bg-white/[0.035] px-3.5 text-[15px] text-white",
+                "placeholder:font-sans placeholder:text-[15px] placeholder:text-white/25",
+                "outline-none transition-colors focus-visible:border-white/25 focus-visible:bg-white/[0.055]",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+                "motion-reduce:transition-none",
+              )}
+            />
+            <p
+              id={`${sourceId}-hint`}
+              className="mt-2 text-[13px] text-white/35"
+            >
+              An investor-relations page, a press release, any public page.
+              It is read and quoted alongside the filings, cited to this
+              link and marked as supplied by you rather than verified.
+            </p>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setIsSourceOpen(true);
+            }}
+            className={cn(
+              "mt-3 rounded-lg text-[13px] text-white/45 underline underline-offset-4",
+              "transition-colors hover:text-white/70 motion-reduce:transition-none",
+              "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40",
+            )}
+          >
+            Add a source link
+          </button>
+        )}
       </form>
 
       <p className="sr-only" aria-live="polite">

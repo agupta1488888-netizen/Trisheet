@@ -117,6 +117,20 @@ export interface Company {
   fiscalYearEnd: string | null;
   /** ISO 4217 code the filer reports in. Null when undetermined. */
   reportingCurrency: string | null;
+
+  /*
+   * Identity, as EDGAR's own submissions document reports it. Every one is
+   * nullable because a filer that does not state one renders "Not disclosed",
+   * the same rule that governs every other absent figure. None is ever
+   * inferred from narrative text.
+   */
+  /** Business address as filed — city and region, not the street. */
+  headquarters: string | null;
+  exchange: string | null;
+  /** Two-letter state or country code, as filed. */
+  stateOfIncorporation: string | null;
+  /** From dei:EntityNumberOfEmployees. Null when the filer does not tag it. */
+  employees: number | null;
 }
 
 /** One possible match for an ambiguous query. Never silently chosen. */
@@ -322,14 +336,40 @@ export interface DevelopmentEvent {
   /** EDGAR item numbers, as filed. */
   items: readonly string[];
   headline: string;
+  /**
+   * Sentences quoted from the filing's EX-99.1 earnings release, when it has
+   * one. Reported results — figures the filer has already booked.
+   */
+  resultSentences: readonly string[];
+  /**
+   * Forward-looking sentences from the same release. Held apart from
+   * `resultSentences` because guidance is a projection, and the interface
+   * must never let one read as the other.
+   */
+  guidanceSentences: readonly string[];
   factIds: readonly string[];
 }
+
+/**
+ * What kind of hazard a disclosed risk describes. A classification of the
+ * filer's own heading, never a judgement about its likelihood or severity —
+ * a probability the filing does not state is a number the filing does not
+ * contain.
+ */
+export type RiskCategory =
+  | "financial"
+  | "operational"
+  | "market"
+  | "regulatory"
+  | "legal";
 
 /** One risk, as the filer discloses it. Never paraphrased into a judgement. */
 export interface RiskItem {
   id: string;
   heading: string;
   summary: string;
+  /** Null when the heading matches no category. Shown untagged, never forced. */
+  category: RiskCategory | null;
   factIds: readonly string[];
 }
 
@@ -417,6 +457,35 @@ export interface ReportCharts {
    Compliance
    =========================================================================== */
 
+/** Whether a finding stops the report or is merely disclosed on it. */
+export type Severity = "blocking" | "advisory";
+
+/** One thing that is wrong, phrased for a reader rather than a log. */
+export interface Violation {
+  check: string;
+  severity: Severity;
+  section: string | null;
+  metric: string | null;
+  message: string;
+  detail: string | null;
+}
+
+/**
+ * The outcome of one reconciliation m11 ran. `description` already names what
+ * was checked and against what tolerance, so the interface states it rather
+ * than restating the arithmetic.
+ *
+ * `examined` of zero means the check had nothing to run on. That is reported
+ * as such — it is not a pass.
+ */
+export interface CheckResult {
+  check: string;
+  description: string;
+  passed: boolean;
+  examined: number;
+  violations: readonly Violation[];
+}
+
 /**
  * Counted by m11 at verification time, not by the browser. The strip renders
  * these counts; it does not derive them.
@@ -435,6 +504,9 @@ export interface ComplianceSummary {
   /** True when every figure in the report resolved to a Tier 1 or 2 source. */
   passed: boolean;
   verifiedAt: string;
+  /** Every reconciliation run, whether or not it found anything. */
+  checks: readonly CheckResult[];
+  violations: readonly Violation[];
 }
 
 /* ===========================================================================
@@ -507,6 +579,51 @@ export interface ChatSuggestions {
    =========================================================================== */
 
 /**
+ * One statement read off a link the reader supplied when requesting the
+ * report. Mirrors `SourceNote` in `backend/app/models.py`.
+ *
+ * Deliberately not a `Fact`, and it must never be rendered as one. A pasted
+ * page carries no accession number and no filed date, and nothing verifies
+ * it is the company's own site — `isUserSupplied` records exactly that, and
+ * the interface says "supplied by you, not verified" rather than implying a
+ * check that did not happen.
+ *
+ * `tier` is 2 or 4 only. These never appear in the financial highlights
+ * table; the backend cannot produce a fact from one.
+ */
+export interface SourceNote {
+  text: string;
+  sourceUrl: string;
+  sourceType: SourceType;
+  tier: 2 | 4;
+  /** A page is not immutable the way a filing is; a citation needs the moment. */
+  fetchedAt: string;
+  isUserSupplied: boolean;
+}
+
+export type ArtifactKind = "pdf" | "xlsx";
+
+/**
+ * A rendered output, wherever it ended up. Mirrors `ArtifactRef` in
+ * `backend/app/models.py`.
+ *
+ * `url` is null when the file was built but could not be published — Storage
+ * is a sink, not a dependency, so the report is still complete. When it could
+ * not be built at all, `unavailableReason` says why, in the interface's own
+ * voice. A download control renders that reason rather than a dead button.
+ */
+export interface ArtifactRef {
+  kind: ArtifactKind;
+  /** Bytes of the rendered file, so a reader can see it is real. */
+  sizeBytes: number;
+  contentType: string;
+  url: string | null;
+  storagePath: string | null;
+  createdAt: string;
+  unavailableReason: string | null;
+}
+
+/**
  * Everything the report view renders. Assembled by the backend; the browser
  * treats it as read-only.
  */
@@ -524,4 +641,8 @@ export interface ReportDocument {
   sections: readonly ReportSection[];
   charts: ReportCharts;
   compliance: ComplianceSummary;
+  /** Read off links the reader supplied. Rendered apart from `facts`. */
+  sourceNotes: readonly SourceNote[];
+  /** Rendered PDF and XLSX, when they were built. Offered as downloads. */
+  artifacts: readonly ArtifactRef[];
 }
