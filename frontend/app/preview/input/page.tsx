@@ -79,10 +79,19 @@ function resolve(query: string): Promise<ApiResult<Resolution>> {
         ticker: match.ticker,
         name: match.name,
         filerType: match.filerType ?? "domestic",
+        // Null throughout: the autocomplete index this harness resolves
+        // against carries an identity and nothing else. Inventing a
+        // headquarters or an employee count here would put a figure on the
+        // screen that no filing said, which is the one thing the preview
+        // must not rehearse.
         sicCode: null,
         sector: null,
         fiscalYearEnd: null,
         reportingCurrency: null,
+        headquarters: null,
+        exchange: null,
+        stateOfIncorporation: null,
+        employees: null,
       },
       candidates: [],
     },

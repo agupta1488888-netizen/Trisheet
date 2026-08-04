@@ -470,6 +470,14 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
     sector: "Electronic computers",
     fiscalYearEnd: "0927",
     reportingCurrency: "USD",
+    // Identity as EDGAR's submissions document reports it, which is why the
+    // state of incorporation is the two-letter code as filed rather than a
+    // spelled-out name. The employee count is the dei tag, not a figure read
+    // out of the narrative.
+    headquarters: "Cupertino, California",
+    exchange: "Nasdaq",
+    stateOfIncorporation: "CA",
+    employees: 164000,
   },
   depth: "standard",
   facts: FACTS,
@@ -783,6 +791,16 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
           items: ["2.02", "9.01"],
           headline:
             "Fourth quarter and full year results furnished, with the earnings release attached as Exhibit 99.1.",
+          // Quoted from the attached release. Results and guidance are held
+          // apart because one is booked and the other is a projection, and
+          // the interface must never let either read as the other.
+          resultSentences: [
+            "The company reported quarterly revenue of $94.9 billion, up 6 percent year over year.",
+            "Services reached an all-time revenue record for the quarter.",
+          ],
+          guidanceSentences: [
+            "The company expects revenue growth to accelerate in the December quarter.",
+          ],
           factIds: [factId("event.q4_results", "2025-10-30")],
         },
         {
@@ -792,6 +810,11 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
           items: ["2.02", "8.01"],
           headline:
             "Board authorised an increase to the share repurchase programme and raised the quarterly dividend.",
+          // An 8-K with no earnings release attached: both arrays empty,
+          // which is the ordinary case and the one the timeline has to
+          // render without leaving a gap where quotes would be.
+          resultSentences: [],
+          guidanceSentences: [],
           factIds: [factId("event.capital_return", "2025-05-01")],
         },
       ],
@@ -813,6 +836,7 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
       risks: [
         {
           id: "risk-1",
+          category: "market",
           heading: "Concentration in a single product line",
           summary:
             "A majority of revenue comes from one product category, and a decline in its unit sales or pricing would have a disproportionate effect on results.",
@@ -820,6 +844,7 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
         },
         {
           id: "risk-2",
+          category: "operational",
           heading: "Manufacturing and supply concentration",
           summary:
             "Substantially all manufacturing is performed by outsourcing partners concentrated in a small number of locations, exposing supply to regional disruption.",
@@ -827,6 +852,7 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
         },
         {
           id: "risk-3",
+          category: "regulatory",
           heading: "Regulatory action on digital marketplaces",
           summary:
             "Legislation and enforcement affecting app distribution and payment terms could require changes to commercial terms and reduce services revenue.",
@@ -834,6 +860,7 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
         },
         {
           id: "risk-4",
+          category: "financial",
           heading: "Foreign exchange",
           summary:
             "A majority of net sales are made outside the United States, and results are reported in dollars, so a strengthening dollar reduces reported revenue.",
@@ -951,7 +978,41 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
     coverageRatio: 1,
     passed: true,
     verifiedAt: "2025-11-28T14:33:20Z",
+    // A clean run: every reconciliation ran and found nothing, which is why
+    // `violations` is empty rather than absent. A check that examined zero
+    // rows still reports itself — "nothing to run on" and "ran and passed"
+    // are different statements and the strip makes both.
+    checks: [
+      {
+        check: "segment_sum",
+        description:
+          "Segment revenue sums to consolidated revenue within 0.5%.",
+        passed: true,
+        examined: 5,
+        violations: [],
+      },
+      {
+        check: "balance_sheet",
+        description: "Assets equal liabilities plus equity, to the dollar.",
+        passed: true,
+        examined: 5,
+        violations: [],
+      },
+      {
+        check: "figure_citation",
+        description:
+          "Every figure rendered in prose resolves to a stored fact.",
+        passed: true,
+        examined: 68,
+        violations: [],
+      },
+    ],
+    violations: [],
   },
+  // Empty rather than fabricated: an artifact carries a byte size and a
+  // storage URL, and inventing either would put a file on the screen that
+  // does not exist and cannot be downloaded.
+  artifacts: [],
   // A link the reader attached. Present in this fixture so the preview shows
   // the section populated; the foreign fixture leaves it empty so the other
   // case is covered too. Never a figure — a source note cannot carry one

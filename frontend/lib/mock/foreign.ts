@@ -312,6 +312,14 @@ export const FOREIGN_FIXTURE: ReportDocument = {
     sector: "Services — prepackaged software",
     fiscalYearEnd: "1231",
     reportingCurrency: "EUR",
+    // As a foreign private issuer would file them. `employees` is null on
+    // purpose: dei:EntityNumberOfEmployees is a domestic-form tag, and a
+    // 20-F filer that does not tag it renders "Not disclosed" rather than a
+    // number inferred from the narrative.
+    headquarters: "Walldorf, Baden-Württemberg",
+    exchange: "NYSE",
+    stateOfIncorporation: "2M",
+    employees: null,
   },
   depth: "standard",
   facts: FACTS,
@@ -527,6 +535,11 @@ export const FOREIGN_FIXTURE: ReportDocument = {
           items: [],
           headline:
             "Half year results furnished under cover of Form 6-K, with the interim statement attached.",
+          // A 6-K carries no EX-99.1 in the shape m09 looks for, so neither
+          // array is populated here. That is the point of covering it: the
+          // timeline must read correctly for a foreign filer too.
+          resultSentences: [],
+          guidanceSentences: [],
           factIds: [factId("event.h1_results", "2025-07-22")],
         },
       ],
@@ -548,6 +561,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
       risks: [
         {
           id: "risk-1",
+          category: "operational",
           heading: "Execution of the transition to cloud delivery",
           summary:
             "Migrating an installed base from licences to subscriptions changes the timing of revenue recognition and could reduce revenue in transition years.",
@@ -555,6 +569,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
         },
         {
           id: "risk-2",
+          category: "regulatory",
           heading: "Data protection and cross-border transfer",
           summary:
             "Operating cloud services across jurisdictions subjects the filer to divergent data protection regimes and to restrictions on cross-border transfer.",
@@ -562,6 +577,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
         },
         {
           id: "risk-3",
+          category: "financial",
           heading: "Currency translation",
           summary:
             "Results are reported in euro while a substantial share of revenue is earned in other currencies, so translation affects reported growth.",
@@ -634,8 +650,41 @@ export const FOREIGN_FIXTURE: ReportDocument = {
     coverageRatio: 1,
     passed: true,
     verifiedAt: "2025-11-28T15:03:44Z",
+    // The segment check examined nothing: this filer tags no segment axis in
+    // its IFRS instance. Reported as ran-with-nothing-to-examine rather than
+    // omitted, because "no segments disclosed" and "segments that reconcile"
+    // are different findings and the strip must not collapse them.
+    checks: [
+      {
+        check: "segment_sum",
+        description:
+          "Segment revenue sums to consolidated revenue within 0.5%.",
+        passed: true,
+        examined: 0,
+        violations: [],
+      },
+      {
+        check: "balance_sheet",
+        description: "Assets equal liabilities plus equity, to the euro.",
+        passed: true,
+        examined: 3,
+        violations: [],
+      },
+      {
+        check: "figure_citation",
+        description:
+          "Every figure rendered in prose resolves to a stored fact.",
+        passed: true,
+        examined: 41,
+        violations: [],
+      },
+    ],
+    violations: [],
   },
-  //: No link was attached to this run — the ordinary case, and the one the
-  //: report has to render without leaving an empty heading behind.
+  // Empty rather than fabricated, the same as the domestic fixture: an
+  // artifact names a byte size and a storage URL, and neither can be made up.
+  artifacts: [],
+  // No link was attached to this run — the ordinary case, and the one the
+  // report has to render without leaving an empty heading behind.
   sourceNotes: [],
 };
