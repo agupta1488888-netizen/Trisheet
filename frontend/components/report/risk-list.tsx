@@ -8,9 +8,25 @@
  */
 
 import { markersFor } from "@/lib/provenance";
-import type { RiskItem } from "@/lib/types";
+import type { RiskCategory, RiskItem } from "@/lib/types";
 import { SourceMarker } from "@/components/report/figure";
 import { useProvenance } from "@/components/report/provenance-context";
+
+/**
+ * How each category reads. Sentence case, like everything else.
+ *
+ * The tag says what a risk is about and deliberately nothing more. There is
+ * no severity here and no ordering by it: the filing states neither, and a
+ * rating this system invented would be indistinguishable, on the page, from
+ * one the filer disclosed.
+ */
+const CATEGORY_LABEL: Readonly<Record<RiskCategory, string>> = {
+  financial: "Financial",
+  operational: "Operational",
+  market: "Market",
+  regulatory: "Regulatory",
+  legal: "Legal",
+};
 
 export function RiskList({ risks }: { risks: readonly RiskItem[] }) {
   const { index } = useProvenance();
@@ -51,6 +67,14 @@ export function RiskList({ risks }: { risks: readonly RiskItem[] }) {
                 </span>
               </h4>
               <p className="mt-1 max-w-prose text-sm leading-relaxed text-muted-foreground">
+                {/* An uncategorised risk shows no tag rather than a
+                    catch-all one. "Other" would be a label the filer's own
+                    heading does not support. */}
+                {risk.category === null ? null : (
+                  <span className="ref mr-2 text-[0.68rem] tracking-wide text-certified">
+                    {CATEGORY_LABEL[risk.category]}
+                  </span>
+                )}
                 {risk.summary}
               </p>
             </div>

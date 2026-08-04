@@ -79,6 +79,54 @@ export function formatFilingDate(iso: string): string {
   }).format(parsed);
 }
 
+/**
+ * EDGAR's MMDD fiscal year end as a date a reader recognises: "0531" reads
+ * "31 May". No year is involved — the field says which day of the year the
+ * filer closes its books, not when it last closed them.
+ *
+ * Returns "Not disclosed" for a missing value and the input unchanged for one
+ * that is not four digits, rather than guessing at a malformed one.
+ */
+export function formatFiscalYearEnd(mmdd: string | null): string {
+  if (mmdd === null) {
+    return "Not disclosed";
+  }
+  if (!/^\d{4}$/.test(mmdd)) {
+    return mmdd;
+  }
+  const month = Number(mmdd.slice(0, 2));
+  const day = Number(mmdd.slice(2, 4));
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return mmdd;
+  }
+  // A leap year, so 29 February is a date this can express.
+  const parsed = new Date(Date.UTC(2024, month - 1, day));
+  return new Intl.DateTimeFormat(LOCALE, {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(parsed);
+}
+
+/**
+ * A file size a reader can judge before clicking: "1.4 MB".
+ *
+ * Binary units, because that is what an operating system will report for the
+ * same file — a download shown as 1.4 MB that lands as 1.3 MB looks like a
+ * different file.
+ */
+export function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB"] as const;
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const decimals = unit === 0 || value >= 100 ? 0 : 1;
+  return `${value.toFixed(decimals)} ${units[unit]}`;
+}
+
 /** Clock time for the progress feed, in the data face: "14:32:07". */
 export function formatFeedTime(iso: string): string {
   const parsed = new Date(iso);

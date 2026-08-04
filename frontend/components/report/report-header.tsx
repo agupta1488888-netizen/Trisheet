@@ -7,7 +7,11 @@
  * that fact is stated before any figure appears.
  */
 
-import { formatFilingDate } from "@/lib/format";
+import {
+  formatCount,
+  formatFilingDate,
+  formatFiscalYearEnd,
+} from "@/lib/format";
 import type { AnalysisDepth, Company } from "@/lib/types";
 import { DEPTH_OPTIONS } from "@/lib/constants";
 
@@ -59,6 +63,34 @@ export function ReportHeader({
           value={company.reportingCurrency ?? "Not disclosed"}
         />
         <Detail label="Sector" value={company.sector ?? "Not disclosed"} />
+
+        {/* Identity, off the filer's own submissions document. Every one of
+            these renders "Not disclosed" rather than vanishing when EDGAR
+            does not state it — a reader should be able to tell the
+            difference between a fact we do not have and a field we did not
+            look for. Employees is usually the absent one: most filers state
+            headcount in prose and never tag it. */}
+        <Detail label="Exchange" value={company.exchange ?? "Not disclosed"} />
+        <Detail
+          label="Headquarters"
+          value={company.headquarters ?? "Not disclosed"}
+        />
+        <Detail
+          label="Incorporated"
+          value={company.stateOfIncorporation ?? "Not disclosed"}
+        />
+        <Detail
+          label="Employees"
+          value={
+            company.employees === null
+              ? "Not disclosed"
+              : formatCount(company.employees)
+          }
+        />
+        <Detail
+          label="Fiscal year end"
+          value={formatFiscalYearEnd(company.fiscalYearEnd)}
+        />
       </dl>
 
       <p className="mt-4 text-xs text-muted-foreground">

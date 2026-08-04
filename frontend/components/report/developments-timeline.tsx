@@ -58,6 +58,41 @@ export function DevelopmentsTimeline({
                   {event.items.map((item) => `Item ${item}`).join(" · ")}
                 </span>
               ) : null}
+
+              {/* Quoted from the filing's own earnings release. "Item 2.02"
+                  tells a reader that results were reported; it does not tell
+                  them what the results were. These do. */}
+              {event.resultSentences.length > 0 ? (
+                <span className="mt-2 block border-l border-rule pl-3">
+                  {event.resultSentences.map((sentence) => (
+                    <span
+                      key={sentence}
+                      className="block text-[0.8rem] leading-relaxed text-ink"
+                    >
+                      {sentence}
+                    </span>
+                  ))}
+                </span>
+              ) : null}
+
+              {/* Held apart from the results above, and labelled, because a
+                  projection is not a reported figure. The backend separates
+                  them for this reason; blurring them here would undo it. */}
+              {event.guidanceSentences.length > 0 ? (
+                <span className="mt-2 block border-l border-market pl-3">
+                  <span className="block text-[0.68rem] text-market">
+                    Guidance — a projection by the filer, not a reported result
+                  </span>
+                  {event.guidanceSentences.map((sentence) => (
+                    <span
+                      key={sentence}
+                      className="mt-0.5 block text-[0.8rem] leading-relaxed text-muted-foreground"
+                    >
+                      {sentence}
+                    </span>
+                  ))}
+                </span>
+              ) : null}
             </span>
           </li>
         );

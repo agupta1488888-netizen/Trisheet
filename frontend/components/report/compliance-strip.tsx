@@ -14,9 +14,48 @@
 import { cn } from "@/lib/utils";
 import { TIER_NAME } from "@/lib/constants";
 import { formatCount } from "@/lib/format";
-import type { ComplianceSummary, SourceTier } from "@/lib/types";
+import type { CheckResult, ComplianceSummary, SourceTier } from "@/lib/types";
 
 const TIERS: readonly SourceTier[] = [1, 2, 3, 4];
+
+/**
+ * The hierarchy, stated rather than left to be inferred from which tiers
+ * happen to have a count above. A reader should be able to see the rule the
+ * report was built under without reading the codebase that enforces it.
+ */
+const HIERARCHY: readonly {
+  tier: SourceTier;
+  name: string;
+  scope: string;
+}[] = [
+  {
+    tier: 1,
+    name: "SEC filings",
+    scope: "10-K, 10-Q, 8-K, DEF 14A, 20-F, 40-F, 6-K and exhibits",
+  },
+  {
+    tier: 2,
+    name: "Company sources",
+    scope: "Website, investor presentations, press releases",
+  },
+  {
+    tier: 3,
+    name: "Market data",
+    scope: "Share price, market capitalisation and multiples only",
+  },
+  {
+    tier: 4,
+    name: "News and general web",
+    scope: "Never supports a reported figure",
+  },
+];
+
+const TIER_TEXT_CLASS: Readonly<Record<SourceTier, string>> = {
+  1: "text-certified",
+  2: "text-certified/70",
+  3: "text-market",
+  4: "text-flag",
+};
 
 const TIER_BAR_CLASS: Readonly<Record<SourceTier, string>> = {
   1: "bg-certified",
@@ -53,6 +92,55 @@ function Metric({
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+/**
+ * What m11 reconciled, and against what tolerance.
+ *
+ * The counts above say how much was checked; these say what was checked.
+ * Segments against the consolidated total, the balance sheet against itself,
+ * the cash flow statement against the change in cash — each with a stated
+ * tolerance, because "equal" on a filing that rounds its own figures means
+ * "equal within a bound someone chose and wrote down".
+ *
+ * A check with nothing to run on is reported as such. That is not a pass, and
+ * showing it as one would be the most flattering possible lie.
+ */
+function Reconciliations({ checks }: { checks: readonly CheckResult[] }) {
+  if (checks.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 border-t border-rule pt-3">
+      <span className="text-[0.68rem] text-muted-foreground">
+        Reconciliations
+      </span>
+      <ul className="mt-1.5 flex flex-col gap-1">
+        {checks.map((check) => (
+          <li key={check.check} className="text-[0.7rem]">
+            <span
+              className={cn(
+                "ref mr-2",
+                check.examined === 0
+                  ? "text-muted-foreground"
+                  : check.passed
+                    ? "text-certified"
+                    : "text-flag",
+              )}
+            >
+              {check.examined === 0
+                ? "Not applicable"
+                : check.passed
+                  ? "Reconciled"
+                  : "Discrepancy"}
+            </span>
+            <span className="text-muted-foreground">{check.description}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -144,9 +232,29 @@ export function ComplianceStrip({
         </div>
       </div>
 
+      <Reconciliations checks={compliance.checks} />
+
+      <div className="mt-4 border-t border-rule pt-3">
+        <span className="text-[0.68rem] text-muted-foreground">
+          Source hierarchy
+        </span>
+        <ul className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1">
+          {HIERARCHY.map((entry) => (
+            <li key={entry.tier} className="text-[0.7rem]">
+              <span className={cn("ref mr-1.5", TIER_TEXT_CLASS[entry.tier])}>
+                Tier {entry.tier}
+              </span>
+              <span className="text-ink">{entry.name}</span>
+              <span className="text-muted-foreground"> — {entry.scope}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
       <p className="mt-3 text-[0.7rem] text-muted-foreground">
         Financial highlights accept filings and company sources only. Market
-        data supports valuation figures and nothing else.
+        data supports valuation figures and nothing else. Tier 3 and tier 4 are
+        refused when a figure is written, not filtered when it is rendered.
       </p>
     </section>
   );

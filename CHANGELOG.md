@@ -17,6 +17,26 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the report surfaces what the backend already produced (2026-08-04)
+
+- `frontend/report`: a download control. The backend has rendered a PDF and an
+  XLSX for every completed report and served them from
+  `/reports/{id}/artifacts/{kind}` all along; nothing in the interface offered
+  them, so a reader who wanted the document on paper had no way to get it.
+  Built-but-unpublished and never-built each render their stated reason rather
+  than a dead button.
+- `frontend/report`: the timeline shows the result sentences m09 has been
+  parsing out of each EX-99.1 earnings release, with guidance held apart and
+  labelled as a projection. "Item 2.02" told a reader that results were
+  reported; it did not tell them what the results were.
+- `frontend/report`: the masthead carries exchange, headquarters, state of
+  incorporation, employees and fiscal year end, each rendering "Not disclosed"
+  when EDGAR does not state it.
+- `frontend/report`: each risk shows its category; the compliance strip shows
+  every reconciliation m11 ran with its tolerance, and states the source
+  hierarchy rather than leaving it to be inferred from the tier counts.
+- `frontend/format`: `formatBytes` and `formatFiscalYearEnd`.
+
 ### Security — report creation is rate limited (2026-08-04)
 
 - `main`: a per-caller rolling limit on `POST /reports`, which had none. The

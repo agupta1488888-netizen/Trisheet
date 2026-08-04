@@ -20,6 +20,7 @@ import Link from "next/link";
 import { SECTION_NAV_LABEL } from "@/lib/constants";
 import { buildSourceIndex } from "@/lib/provenance";
 import { SECTION_ORDER, type ReportDocument } from "@/lib/types";
+import { ArtifactDownloads } from "@/components/report/artifact-downloads";
 import { ChatPanel } from "@/components/report/chat-panel";
 import { ComplianceStrip } from "@/components/report/compliance-strip";
 import { ProvenanceProvider } from "@/components/report/provenance-context";
@@ -79,6 +80,10 @@ export function ReportView({ document }: { document: ReportDocument }) {
               depth={document.depth}
               completedAt={document.report.completedAt}
             />
+          </div>
+
+          <div className="mt-4">
+            <ArtifactDownloads artifacts={document.artifacts} />
           </div>
 
           <div className="mt-8">
