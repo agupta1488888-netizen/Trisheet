@@ -2295,6 +2295,10 @@ STORAGE_UPLOAD_TIMEOUT_SECONDS = 60.0
 
 # --- Document assembly (m12) -------------------------------------------------
 
+#: Periods shown across a figure table. Wider than this and the columns stop
+#: being readable on a printed page.
+MAX_TABLE_PERIODS = 5
+
 #: Segments plotted in the mix chart. Beyond this the bands are unreadable, and
 #: the remainder is not silently merged into an "other" the filer never named.
 MAX_CHART_SEGMENTS = 8
