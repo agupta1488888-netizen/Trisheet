@@ -139,6 +139,13 @@ _NON_FIGURE_PATTERNS = (
     # ordinal suffix ("June 30th") — prose writes dates that way, and the
     # digits are still not a figure either way.
     re.compile(r"\b\d{4}-\d{2}-\d{2}\b"),
+    # A bare month-day, the form m08's fiscal-year-end notes render
+    # ("06-30") and prose restates verbatim, often in parentheses. Without
+    # this the figure scanner splits it at the dash: "(06-30)" produces an
+    # unsourced "(06" fragment and a "30)" fragment that happens to agree
+    # with an unrelated day-count elsewhere in the same sentence — a false
+    # blocking violation on a sentence that cited its figures correctly.
+    re.compile(r"\b\d{2}-\d{2}\b"),
     re.compile(
         rf"\b(?:{_MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}\b",
         re.IGNORECASE,

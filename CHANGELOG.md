@@ -17,6 +17,20 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — a month-day fragment was flagged as an unsourced figure (2026-08-05)
+
+- `m11`: the figure scanner split a parenthesised month-day like "(06-30)" —
+  the form m08's fiscal-year-end notes render, which prose restates verbatim
+  when explaining a peer's fiscal calendar — into two fragments at the dash.
+  The first, "(06", matched no fact and failed as unsourced; the second,
+  "30)", happened to agree with an unrelated day-count elsewhere in the same
+  sentence and passed by coincidence. A sentence that had in fact cited its
+  real figure correctly was blocked on a date it was never making a claim
+  about. Found live in production, the first time the verification gate was
+  ever exercised against real generated prose (see the credential fix
+  below) — masked the same way the existing ISO-date pattern already masks
+  the longer YYYY-MM-DD form.
+
 ### Fixed — the actual cause of the unreachable model (2026-08-04)
 
 The `httpx.AsyncClient` change below was real and worth keeping, but it was

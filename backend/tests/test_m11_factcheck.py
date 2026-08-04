@@ -164,12 +164,28 @@ class TestFindFigures:
             "Accession 0000320193-24-000123 carries the figures.",
             "Nike will report results on Tuesday, June 30th at 2:00 p.m.",
             "That price sits near the bottom of a 52-week range.",
+            "Microsoft's fiscal year ends 06-30, unlike NIKE's 05-31.",
         ],
     )
     def test_ignores_text_that_carries_digits_but_states_no_figure(
         self, text: str
     ) -> None:
         assert m11.find_figures(text) == []
+
+    def test_a_parenthesised_month_day_does_not_split_into_two_figures(
+        self,
+    ) -> None:
+        # The shape m08's peer commentary actually produces: a real
+        # day-count figure ("30 days") followed by the bare month-day it is
+        # explaining, in parentheses. Before the month-day mask, this split
+        # into an unsourced "(06" fragment and a "30)" fragment that
+        # happened to agree with the day count — flagging a sentence that
+        # had, in fact, cited its real figure correctly.
+        text = "Microsoft's fiscal year differs by 30 days (06-30)."
+
+        figures = m11.find_figures(text)
+
+        assert [f.value for f in figures] == [30.0]
 
 
 # --- Every number in the prose exists in the fact store ---------------------
