@@ -445,3 +445,134 @@ async def test_undetermined_currency_is_none_not_usd(tmp_path: Path) -> None:
 
     assert resolution.company is not None
     assert resolution.company.reporting_currency is None
+
+
+# --- Company identity -------------------------------------------------------
+# Read off the submissions document EDGAR already served. Every field is
+# optional: a filer that does not state one renders "Not disclosed" rather
+# than being guessed at from prose elsewhere in the filing.
+
+
+async def test_identity_is_read_from_the_submissions_document(
+    tmp_path: Path,
+) -> None:
+    fake = _base_fake()
+    submissions = _submissions(
+        cik=320187,
+        name="NIKE, Inc.",
+        tickers=["NKE"],
+        forms=["10-K"],
+        dates=["2025-07-24"],
+    )
+    submissions["addresses"] = {
+        "business": {
+            "street1": "One Bowerman Drive",
+            "city": "Beaverton",
+            "stateOrCountry": "OR",
+            "zipCode": "97005",
+        }
+    }
+    submissions["exchanges"] = ["NYSE"]
+    submissions["stateOfIncorporation"] = "OR"
+    fake.json_route("CIK0000320187.json", submissions)
+    fake.json_route("us-gaap/Assets.json", {"units": {"USD": [{"val": 1}]}})
+    fake.json_route(
+        "dei/EntityNumberOfEmployees.json",
+        {
+            "units": {
+                "pure": [
+                    {"end": "2024-05-31", "val": 79400},
+                    {"end": "2025-05-31", "val": 78000},
+                ]
+            }
+        },
+    )
+
+    async with _client(fake, tmp_path) as client:
+        resolution = await resolve("NKE", client)
+
+    company = resolution.company
+    assert company is not None
+    assert company.headquarters == "Beaverton, OR"
+    assert company.exchange == "NYSE"
+    assert company.state_of_incorporation == "OR"
+    # The latest period wins, not whichever the payload happened to list last.
+    assert company.employees == 78000
+
+
+async def test_headquarters_omits_the_street(tmp_path: Path) -> None:
+    # A profile states where a company is run from. The postal detail belongs
+    # to the filing, which the reader can open from the provenance rail.
+    fake = _base_fake()
+    submissions = _submissions(
+        cik=320187,
+        name="NIKE, Inc.",
+        tickers=["NKE"],
+        forms=["10-K"],
+        dates=["2025-07-24"],
+    )
+    submissions["addresses"] = {
+        "business": {
+            "street1": "One Bowerman Drive",
+            "city": "Beaverton",
+            "stateOrCountry": "OR",
+        }
+    }
+    fake.json_route("CIK0000320187.json", submissions)
+
+    async with _client(fake, tmp_path) as client:
+        resolution = await resolve("NKE", client)
+
+    assert resolution.company is not None
+    assert "Bowerman" not in (resolution.company.headquarters or "")
+
+
+async def test_identity_is_none_when_the_filer_does_not_state_it(
+    tmp_path: Path,
+) -> None:
+    # No addresses, no exchanges, no state of incorporation, and the employee
+    # concept 404s — which is the ordinary case, since most filers state
+    # headcount in prose and never tag it. None of it is inferred.
+    fake = _base_fake()
+    fake.json_route(
+        "CIK0000320187.json",
+        _submissions(
+            cik=320187,
+            name="NIKE, Inc.",
+            tickers=["NKE"],
+            forms=["10-K"],
+            dates=["2025-07-24"],
+        ),
+    )
+
+    async with _client(fake, tmp_path) as client:
+        resolution = await resolve("NKE", client)
+
+    company = resolution.company
+    assert company is not None
+    assert company.headquarters is None
+    assert company.exchange is None
+    assert company.state_of_incorporation is None
+    assert company.employees is None
+
+
+async def test_a_dual_listed_filer_names_every_exchange(tmp_path: Path) -> None:
+    # Picking the first would say the filer lists in one place, which is a
+    # claim the submissions document does not make.
+    fake = _base_fake()
+    submissions = _submissions(
+        cik=1046179,
+        name="TAIWAN SEMICONDUCTOR",
+        tickers=["TSM"],
+        forms=["20-F"],
+        dates=["2025-04-16"],
+    )
+    submissions["exchanges"] = ["NYSE", "NYSE"]
+    fake.json_route("CIK0001046179.json", submissions)
+
+    async with _client(fake, tmp_path) as client:
+        resolution = await resolve("TSM", client)
+
+    assert resolution.company is not None
+    # Duplicates collapse; the filer lists once on one exchange.
+    assert resolution.company.exchange == "NYSE"

@@ -346,6 +346,12 @@ async def load_company(
         sector=_optional_str(submissions.get("sicDescription")),
         fiscal_year_end=str(fiscal_year_end) if fiscal_year_end else None,
         reporting_currency=currency,
+        headquarters=_headquarters(submissions),
+        exchange=_exchange(submissions),
+        state_of_incorporation=_optional_str(
+            submissions.get("stateOfIncorporation")
+        ),
+        employees=await _employee_count(client, padded),
     )
 
 
@@ -354,3 +360,91 @@ def _optional_str(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+# --- Identity ---------------------------------------------------------------
+# Read off the submissions document EDGAR already served to determine the
+# filer type, so none of this costs an extra request. Each one is optional:
+# a filer that does not state its address renders "Not disclosed", the same
+# rule that governs every other absent value. Nothing here is inferred from
+# narrative text — a headquarters guessed from prose would be a fabrication
+# wearing a Tier 1 citation.
+
+
+def _headquarters(submissions: dict[str, Any]) -> str | None:
+    """The business address as city and region, or None.
+
+    Deliberately not the street. A profile states where a company is run
+    from; the postal detail belongs to the filing, which the reader can open.
+    """
+    addresses = submissions.get("addresses")
+    if not isinstance(addresses, dict):
+        return None
+    business = addresses.get("business")
+    if not isinstance(business, dict):
+        return None
+
+    city = _optional_str(business.get("city"))
+    region = _optional_str(business.get("stateOrCountry"))
+    parts = [part for part in (city, region) if part is not None]
+    if not parts:
+        return None
+    return ", ".join(parts)
+
+
+def _exchange(submissions: dict[str, Any]) -> str | None:
+    """Where the security lists. Every exchange named, not just the first —
+    a dual-listed filer is dual-listed, and picking one would say otherwise.
+    """
+    exchanges = submissions.get("exchanges")
+    if not isinstance(exchanges, list):
+        return None
+    named = [
+        text
+        for text in (_optional_str(entry) for entry in exchanges)
+        if text is not None
+    ]
+    if not named:
+        return None
+    return ", ".join(dict.fromkeys(named))
+
+
+async def _employee_count(client: EdgarClient, cik: str) -> int | None:
+    """Headcount from the filer's own dei tagging, or None.
+
+    Most filers state their headcount in the text of Item 1 and never tag it,
+    so None is the ordinary outcome rather than an error. It renders as "Not
+    disclosed". Reading the number out of prose instead was considered and
+    rejected: a figure parsed from a sentence is not a reported figure, and
+    this system does not manufacture one.
+    """
+    url = company_concept_url(cik, "dei", "EntityNumberOfEmployees")
+    try:
+        payload = await client.get_json(url, ttl=XBRL_CONCEPT_TTL_SECONDS)
+    except EdgarNotFoundError:
+        return None
+    except EdgarError:
+        logger.warning("Employee count probe failed", extra={"cik": cik})
+        return None
+
+    units = payload.get("units")
+    if not isinstance(units, dict):
+        return None
+
+    latest: tuple[str, int] | None = None
+    for entries in units.values():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            value = entry.get("val")
+            end = entry.get("end")
+            if not isinstance(value, int) or not isinstance(end, str):
+                continue
+            if value < 0:
+                continue
+            if latest is None or end > latest[0]:
+                latest = (end, value)
+
+    return None if latest is None else latest[1]
