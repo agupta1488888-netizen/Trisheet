@@ -1388,6 +1388,28 @@ GUIDANCE_LABEL_PREFIX = "Guidance:"
 
 
 @dataclass(frozen=True, slots=True)
+class NarrativeFallback:
+    """Another place to look for an item when its own heading did not match.
+
+    Filers do not head their items identically. Most write "Item 1. Business";
+    some write "Item 1 — Our Business", and a few head the section only with
+    its subject. A single heading list turns that variation into a missing
+    section, which is how the business description and the risk factors came
+    to render as "could not be read" on filers whose figures extracted
+    perfectly well.
+
+    A fallback is not a looser match — it is a different, equally specific
+    heading, tried only after the preferred one missed. `reason` travels into
+    the log and names which rung answered, so a section sourced this way can
+    be told apart from one found at the first attempt.
+    """
+
+    headings: tuple[str, ...]
+    terminators: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class NarrativeSpec:
     """One item of an annual report, and how to find where it starts.
 
@@ -1395,6 +1417,11 @@ class NarrativeSpec:
     from its heading to the start of the next item in `terminators`, which is
     how a 10-K's own table of contents is turned into boundaries without
     guessing at character offsets.
+
+    `fallbacks` are tried in order when none of `headings` located a body long
+    enough to be the item. Each rung costs only itself: a fallback that misses
+    moves on to the next, and exhausting them all costs the section, never the
+    report.
     """
 
     metric: str
@@ -1405,6 +1432,8 @@ class NarrativeSpec:
     terminators: tuple[str, ...]
     #: Forms this item exists in. A 20-F numbers its items differently.
     forms: frozenset[str]
+    #: Tried in order, only after `headings` found nothing.
+    fallbacks: tuple[NarrativeFallback, ...] = ()
 
 
 #: A 10-K's items. "Item 1." and "Item 1A." both appear in the table of
@@ -1417,6 +1446,24 @@ NARRATIVE_SPECS: tuple[NarrativeSpec, ...] = (
         headings=("item 1. business", "item 1 - business", "item 1. general"),
         terminators=("item 1a.", "item 1a ", "item 1b.", "item 2."),
         forms=frozenset({"10-K"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=(
+                    "item 1 — business",
+                    "item 1–business",
+                    "item 1: business",
+                    "item 1. our business",
+                    "item 1 - our business",
+                ),
+                terminators=("item 1a.", "item 1a ", "item 1b.", "item 2."),
+                reason="item 1 under a punctuation variant",
+            ),
+            NarrativeFallback(
+                headings=("item 1.", "item 1 "),
+                terminators=("item 1a.", "item 1a ", "item 1b.", "item 2."),
+                reason="item 1 by number alone",
+            ),
+        ),
     ),
     NarrativeSpec(
         metric="risk.factors",
@@ -1424,6 +1471,33 @@ NARRATIVE_SPECS: tuple[NarrativeSpec, ...] = (
         headings=("item 1a. risk factors", "item 1a - risk factors", "item 1a."),
         terminators=("item 1b.", "item 1c.", "item 2.", "item 3."),
         forms=frozenset({"10-K"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=(
+                    "item 1a — risk factors",
+                    "item 1a–risk factors",
+                    "item 1a: risk factors",
+                    "item 1a risk factors",
+                ),
+                terminators=("item 1b.", "item 1c.", "item 2.", "item 3."),
+                reason="item 1a under a punctuation variant",
+            ),
+            # Last rung, and the loosest: the bare subject heading. A 10-K
+            # that reaches here headed its risks without the item number at
+            # all. The isolated-heading test in m04 is what stops this
+            # matching the cross-reference sentences that say "see Risk
+            # Factors" — without that test this rung would be unsafe.
+            NarrativeFallback(
+                headings=("risk factors",),
+                terminators=(
+                    "item 1b.",
+                    "item 1c.",
+                    "item 2.",
+                    "unresolved staff comments",
+                ),
+                reason="the risk factors heading without its item number",
+            ),
+        ),
     ),
     NarrativeSpec(
         metric="business.mdna",
@@ -1435,6 +1509,29 @@ NARRATIVE_SPECS: tuple[NarrativeSpec, ...] = (
         ),
         terminators=("item 7a.", "item 8."),
         forms=frozenset({"10-K"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=(
+                    "item 7 — management's discussion",
+                    "item 7: management's discussion",
+                    "item 7 management's discussion",
+                ),
+                terminators=("item 7a.", "item 8."),
+                reason="item 7 under a punctuation variant",
+            ),
+            NarrativeFallback(
+                headings=(
+                    "management's discussion and analysis",
+                    "managements discussion and analysis",
+                ),
+                terminators=(
+                    "item 7a.",
+                    "item 8.",
+                    "quantitative and qualitative disclosures",
+                ),
+                reason="the MD&A heading without its item number",
+            ),
+        ),
     ),
     # A foreign private issuer files a 20-F, whose items are numbered to its
     # own schedule. Item 4 is the business, Item 3.D the risk factors, Item 5
@@ -1449,6 +1546,22 @@ NARRATIVE_SPECS: tuple[NarrativeSpec, ...] = (
         ),
         terminators=("item 4a.", "item 5."),
         forms=frozenset({"20-F"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=(
+                    "item 4 — information on the company",
+                    "item 4: information on the company",
+                    "item 4 information on the company",
+                ),
+                terminators=("item 4a.", "item 5."),
+                reason="item 4 under a punctuation variant",
+            ),
+            NarrativeFallback(
+                headings=("business overview", "information on the company"),
+                terminators=("item 4a.", "item 5.", "operating and financial"),
+                reason="the business heading without its item number",
+            ),
+        ),
     ),
     NarrativeSpec(
         metric="risk.factors",
@@ -1456,6 +1569,18 @@ NARRATIVE_SPECS: tuple[NarrativeSpec, ...] = (
         headings=("item 3.d. risk factors", "item 3.d risk factors", "risk factors"),
         terminators=("item 4.", "item 4a."),
         forms=frozenset({"20-F"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=(
+                    "item 3.d — risk factors",
+                    "item 3d. risk factors",
+                    "item 3d risk factors",
+                    "d. risk factors",
+                ),
+                terminators=("item 4.", "item 4a."),
+                reason="item 3.D under a punctuation variant",
+            ),
+        ),
     ),
     NarrativeSpec(
         metric="business.mdna",
@@ -1467,16 +1592,52 @@ NARRATIVE_SPECS: tuple[NarrativeSpec, ...] = (
         ),
         terminators=("item 6.",),
         forms=frozenset({"20-F"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=(
+                    "item 5 — operating and financial review",
+                    "item 5: operating and financial review",
+                    "operating and financial review and prospects",
+                ),
+                terminators=("item 6.", "directors, senior management"),
+                reason="item 5 under a punctuation variant",
+            ),
+        ),
     ),
     # A 40-F filer discloses under Canadian rules and attaches its annual
-    # information form as an exhibit, so only the risk factors are reliably
-    # locatable in the primary document.
+    # information form as an exhibit. The primary document is a short cover
+    # wrapper, so both items below are as likely to be found in the exhibit —
+    # which is why m04 searches the exhibits when the primary document misses.
     NarrativeSpec(
         metric="risk.factors",
         label="Risk factors",
         headings=("risk factors",),
         terminators=("management's discussion", "signatures"),
         forms=frozenset({"40-F"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=("risks and uncertainties", "risk management"),
+                terminators=("management's discussion", "signatures"),
+                reason="the Canadian heading for the same disclosure",
+            ),
+        ),
+    ),
+    NarrativeSpec(
+        metric="business.description",
+        label="Description of the business",
+        headings=(
+            "description of the business",
+            "general development of the business",
+        ),
+        terminators=("risk factors", "management's discussion", "signatures"),
+        forms=frozenset({"40-F"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=("corporate structure", "our business", "overview"),
+                terminators=("risk factors", "management's discussion"),
+                reason="the annual information form's own business heading",
+            ),
+        ),
     ),
 )
 
@@ -1529,6 +1690,121 @@ RISK_HEADING_MARKERS = (
     "failure to",
     "adverse",
     "risks",
+)
+
+#: Exhibits searched for a narrative item when the primary document did not
+#: contain it. A 40-F wraps its annual information form as an exhibit, and
+#: some 10-K filers carry Item 1 the same way. Bounded because each exhibit
+#: costs a fetch and a parse, and the item is in the first one or two or it is
+#: not in the filing at all.
+NARRATIVE_MAX_EXHIBITS = 3
+
+#: Exhibit types worth opening. An EX-21 subsidiary list or an EX-23 auditor
+#: consent never contains a narrative item, and fetching them is pure cost.
+NARRATIVE_EXHIBIT_TYPES = ("EX-99", "EX-99.1", "EX-13", "EX-1")
+
+#: Characters parsed from a filing that exceeds `MAX_FILING_TEXT_BYTES`. The
+#: document is windowed rather than abandoned: an over-long annual report used
+#: to cost every narrative section, which is a worse answer than reading the
+#: portion that fits and saying the section was cut. Narrative items sit in
+#: the front matter of a 10-K, ahead of the financial statements and exhibits
+#: that make these documents large, so the leading window is where they are.
+NARRATIVE_OVERSIZE_WINDOW_BYTES = 12 * 1024 * 1024
+
+#: What each risk category's heading tends to open with or contain. Matched
+#: against the filer's own heading, lower-cased, in the order declared — the
+#: first category whose markers hit wins, and a heading matching none is left
+#: uncategorised rather than forced into the nearest one.
+#:
+#: This classifies; it does not rate. There is deliberately no probability, no
+#: impact score and no severity anywhere here: a filing that does not state a
+#: likelihood does not contain one, and inventing it would be exactly the
+#: fabrication rule 5 forbids.
+RISK_CATEGORY_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "legal",
+        (
+            "litigation",
+            "lawsuit",
+            "legal proceeding",
+            "intellectual property",
+            "patent",
+            "trademark",
+            "infringe",
+            "counterfeit",
+        ),
+    ),
+    (
+        "regulatory",
+        (
+            "regulat",
+            "compliance",
+            "legislation",
+            "tax",
+            "tariff",
+            "sanction",
+            "privacy",
+            "data protection",
+            "environmental",
+            "climate",
+            "government",
+        ),
+    ),
+    (
+        "financial",
+        (
+            "indebtedness",
+            "debt",
+            "liquidity",
+            "credit",
+            "interest rate",
+            "impairment",
+            "goodwill",
+            "capital",
+            "financing",
+            "cash flow",
+            "pension",
+        ),
+    ),
+    (
+        "market",
+        (
+            "competit",
+            "demand",
+            "consumer",
+            "customer",
+            "market share",
+            "pricing",
+            "currency",
+            "foreign exchange",
+            "economic",
+            "inflation",
+            "seasonal",
+            "share price",
+            "stock price",
+        ),
+    ),
+    (
+        "operational",
+        (
+            "supply chain",
+            "supplier",
+            "manufactur",
+            "inventory",
+            "distribution",
+            "information technology",
+            "cybersecurity",
+            "cyber",
+            "system",
+            "personnel",
+            "employee",
+            "talent",
+            "acquisition",
+            "reputation",
+            "brand",
+            "product",
+        ),
+    ),
 )
 
 # --- Market data (m05) ------------------------------------------------------
@@ -1659,8 +1935,14 @@ WRITER_SECTIONS: tuple[WriterSection, ...] = (
         title="Snapshot",
         metric_sections=(1, 5),
         brief=(
-            "State what the company is and how the market currently prices it. "
-            "Two or three sentences."
+            "Open the report the way an equity research note opens: what the "
+            "company is and what it sells, the scale and direction of revenue, "
+            "how well it converts that into cash, the shape of its balance "
+            "sheet, and how the market currently prices it. Close on the "
+            "near-term pressures the filer itself names. Four to six "
+            "sentences. Every figure you state has already been computed and "
+            "is in the facts below — restate it, never derive one, and never "
+            "reach for a figure that is not there."
         ),
     ),
     WriterSection(

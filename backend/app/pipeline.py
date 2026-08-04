@@ -412,8 +412,14 @@ async def _extract(
         outcome.done()
 
     async with tracker.step("m02") as outcome:
+        # Two modules read exhibits: m09 for the earnings release behind an
+        # 8-K, and m04 for the annual information form a 40-F attaches rather
+        # than states inline. Either one being on is reason enough to fetch
+        # the index.
         work.manifest = await m02_discovery.build_manifest(
-            company, client, include_exhibits=profile.developments
+            company,
+            client,
+            include_exhibits=profile.developments or profile.narrative,
         )
         outcome.done(len(work.manifest))
 
@@ -442,7 +448,11 @@ async def _extract(
         if not profile.narrative:
             outcome.skip("Not read at this analysis depth.")
             return
-        found = await m04_narrative.extract_narrative(company, filings)
+        # The manifest rather than the flattened filings: m04's last rung
+        # searches the annual report's exhibits, and only `FilingRef` carries
+        # them. A manifest built without exhibits still works — that rung
+        # simply finds nothing to open.
+        found = await m04_narrative.extract_narrative(company, work.manifest)
         work.facts.extend(found)
         if not found:
             outcome.skip(

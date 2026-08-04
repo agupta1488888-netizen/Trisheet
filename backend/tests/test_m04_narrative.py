@@ -16,8 +16,16 @@ minimum-length check.
 
 from __future__ import annotations
 
-from app.config import NARRATIVE_MIN_SECTION_CHARS, NarrativeSpec
-from app.modules.m04_narrative import _is_isolated_heading, _locate
+from app.config import (
+    NARRATIVE_MIN_SECTION_CHARS,
+    NarrativeFallback,
+    NarrativeSpec,
+)
+from app.modules.m04_narrative import (
+    _is_isolated_heading,
+    _locate,
+    _locate_down_ladder,
+)
 
 _RISK_SPEC = NarrativeSpec(
     metric="risk.factors",
@@ -119,3 +127,93 @@ def test_is_isolated_heading_false_for_a_longer_containing_heading() -> None:
     text = "\n\nFinancial Risk Factors and Risk Management\n\nBody text."
     start = text.index("Risk Factors")
     assert _is_isolated_heading(text, start, len("Risk Factors")) is False
+
+
+# --- The fallback ladder -----------------------------------------------------
+# A single heading list turned ordinary filer variation into a missing
+# section. These cover the ladder that replaced it: the preferred heading
+# still wins outright, each fallback is consulted only after the one above it
+# missed, and exhausting every rung is a clean miss rather than a wrong match.
+
+_LADDER_SPEC = NarrativeSpec(
+    metric="business.description",
+    label="Business",
+    headings=("item 1. business",),
+    terminators=("item 1a.",),
+    forms=frozenset({"10-K"}),
+    fallbacks=(
+        NarrativeFallback(
+            headings=("item 1 — business",),
+            terminators=("item 1a.",),
+            reason="item 1 under a punctuation variant",
+        ),
+        NarrativeFallback(
+            headings=("item 1.",),
+            terminators=("item 1a.",),
+            reason="item 1 by number alone",
+        ),
+    ),
+)
+
+
+def _item_body(heading: str) -> str:
+    return f"{heading}\n\n" + _pad(
+        "We design and sell athletic footwear and apparel.",
+        NARRATIVE_MIN_SECTION_CHARS + 200,
+    )
+
+
+def test_ladder_uses_the_preferred_heading_when_it_matches() -> None:
+    # A conventionally headed filing must cost exactly what it did before the
+    # ladder existed: the first rung answers and nothing below it is tried.
+    text = _item_body("ITEM 1. BUSINESS") + "\n\nITEM 1A. RISK FACTORS\n\n"
+
+    located = _locate_down_ladder(text, _LADDER_SPEC)
+
+    assert located is not None
+    body, rung = located
+    assert rung == "the item's own heading"
+    assert "athletic footwear" in body
+
+
+def test_ladder_falls_through_to_a_punctuation_variant() -> None:
+    # The em-dash filer. The preferred heading never appears, so the first
+    # fallback is what finds the item — and it names itself in the rung.
+    text = _item_body("ITEM 1 — BUSINESS") + "\n\nITEM 1A. RISK FACTORS\n\n"
+
+    located = _locate_down_ladder(text, _LADDER_SPEC)
+
+    assert located is not None
+    body, rung = located
+    assert rung == "item 1 under a punctuation variant"
+    assert "athletic footwear" in body
+
+
+def test_ladder_falls_through_to_the_bare_item_number() -> None:
+    # A filer that heads the item with its number and nothing else. Only the
+    # last rung can reach this, and it must not have been reached earlier.
+    text = _item_body("ITEM 1.") + "\n\nITEM 1A. RISK FACTORS\n\n"
+
+    located = _locate_down_ladder(text, _LADDER_SPEC)
+
+    assert located is not None
+    _, rung = located
+    assert rung == "item 1 by number alone"
+
+
+def test_ladder_returns_none_when_every_rung_misses() -> None:
+    # Exhausting the ladder is a miss, not a loose match on whatever is left.
+    # This is what sends the item to the exhibit rung above it in m04.
+    assert _locate_down_ladder("Nothing relevant here.", _LADDER_SPEC) is None
+
+
+def test_ladder_does_not_match_a_cross_reference_on_its_last_rung() -> None:
+    # The loosest rung is the one that could do damage: a bare "item 1."
+    # appears in cross-references and contents lines too. The body-length and
+    # isolated-heading tests are what keep it honest, and they still apply to
+    # a fallback because a fallback is located by the same code path.
+    text = (
+        "See Item 1. Business for a description of our segments, and refer "
+        "to the contents on page 3 for where each item begins.\n\n"
+    )
+    assert _locate_down_ladder(text, _LADDER_SPEC) is None

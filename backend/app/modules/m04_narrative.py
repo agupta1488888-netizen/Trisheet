@@ -31,18 +31,21 @@ from collections.abc import Sequence
 from pydantic import ValidationError
 
 from app.config import (
-    AMENDMENT_FORM_SUFFIX,
     ISOLATED_HEADING_SLACK_CHARS,
     MAX_FILING_TEXT_BYTES,
     MAX_RISK_ITEMS,
+    NARRATIVE_EXHIBIT_TYPES,
+    NARRATIVE_MAX_EXHIBITS,
     NARRATIVE_MAX_SECTION_CHARS,
     NARRATIVE_MIN_SECTION_CHARS,
+    NARRATIVE_OVERSIZE_WINDOW_BYTES,
     NARRATIVE_SPECS,
     NARRATIVE_SUMMARY_CHARS,
     NARRATIVE_TRUNCATION_NOTE,
     RISK_HEADING_MARKERS,
     RISK_HEADING_MAX_CHARS,
     RISK_HEADING_MIN_CHARS,
+    NarrativeFallback,
     NarrativeSpec,
 )
 from app.models import (
@@ -50,7 +53,7 @@ from app.models import (
     ExtractionMethod,
     Fact,
     FilerType,
-    Filing,
+    FilingRef,
     SourceTier,
     SourceType,
 )
@@ -76,20 +79,36 @@ _SPACES = re.compile(r"\s+")
 
 
 async def extract_narrative(
-    company: Company, manifest: list[Filing]
+    company: Company, manifest: Sequence[FilingRef]
 ) -> list[Fact]:
     """Extracts the annual report's narrative items as Tier 1 textual facts.
+
+    Each item is searched for down a ladder rather than at one address. The
+    item's own heading is tried first; then each fallback the spec declares,
+    which are punctuation and wording variants of the same heading; and
+    finally, for anything still missing, the filing's exhibits. A 40-F carries
+    its annual information form as an exhibit and a few 10-K filers carry
+    Item 1 the same way, so a primary document that does not contain the item
+    is not evidence that the filing does not.
+
+    The ladder exists because a single heading list turned ordinary filer
+    variation into a missing section: the business description and the risk
+    factors rendered as "could not be read" on filers whose XBRL extracted
+    perfectly. A rung costs only itself. Exhausting every rung costs the
+    section, and never the report.
 
     Args:
         company: The filer. Its type decides which form is the annual report
             and therefore which item numbering applies — a 20-F is not
             searched for an Item 1A that it does not have.
-        manifest: Filings from m02.
+        manifest: Filings from m02, with exhibits attached where m02 was asked
+            for them. A manifest built without exhibits still works; the last
+            rung simply has nothing to open.
 
     Returns:
         One fact per item located. Empty when there is no annual report in the
-        manifest, when it could not be fetched, or when none of its items could
-        be located — each of which is logged and none of which raises.
+        manifest, when it could not be fetched, or when no rung located any of
+        its items — each of which is logged and none of which raises.
     """
     annual = _latest_annual(manifest, company.filer_type)
     if annual is None:
@@ -99,31 +118,34 @@ async def extract_narrative(
         )
         return []
 
-    text = await _filing_text(annual)
-    if not text:
-        return []
+    specs = [spec for spec in NARRATIVE_SPECS if annual.base_form in spec.forms]
 
-    base_form = annual.form.split(AMENDMENT_FORM_SUFFIX, 1)[0]
-    specs = [spec for spec in NARRATIVE_SPECS if base_form in spec.forms]
-
+    text = await _filing_text(str(annual.primary_doc_url), annual.accession_no)
     facts: list[Fact] = []
+    unresolved: list[NarrativeSpec] = []
+
     for spec in specs:
-        body = _locate(text, spec)
-        if body is None:
+        located = _locate_down_ladder(text, spec) if text else None
+        if located is None:
+            unresolved.append(spec)
+            continue
+
+        body, rung = located
+        fact = _build_fact(spec, body, annual, str(annual.primary_doc_url))
+        if fact is not None:
+            facts.append(fact)
             logger.info(
-                "Narrative item not found in the filing",
+                "Narrative item located",
                 extra={
                     "cik": company.cik,
                     "metric": spec.metric,
-                    "form": annual.form,
+                    "rung": rung,
                     "accession_no": annual.accession_no,
                 },
             )
-            continue
 
-        fact = _build_fact(spec, body, annual)
-        if fact is not None:
-            facts.append(fact)
+    if unresolved:
+        facts.extend(await _from_exhibits(company, annual, unresolved))
 
     logger.info(
         "Narrative extraction complete",
@@ -135,6 +157,90 @@ async def extract_narrative(
             "items_searched": len(specs),
         },
     )
+    return facts
+
+
+async def _from_exhibits(
+    company: Company, annual: FilingRef, specs: Sequence[NarrativeSpec]
+) -> list[Fact]:
+    """The last rung: look for what the primary document did not contain.
+
+    Bounded by `NARRATIVE_MAX_EXHIBITS` and filtered to the exhibit types that
+    can plausibly carry narrative — an EX-21 subsidiary list never does, and
+    fetching one is pure cost against the SEC's rate limit.
+
+    Never raises. An exhibit that cannot be read costs that exhibit.
+    """
+    candidates = [
+        exhibit
+        for exhibit in annual.exhibits
+        if any(
+            exhibit.exhibit_type.upper().startswith(wanted)
+            for wanted in NARRATIVE_EXHIBIT_TYPES
+        )
+    ][:NARRATIVE_MAX_EXHIBITS]
+
+    if not candidates:
+        for spec in specs:
+            logger.info(
+                "Narrative item not found, and the filing has no exhibit to search",
+                extra={
+                    "cik": company.cik,
+                    "metric": spec.metric,
+                    "form": annual.form,
+                    "accession_no": annual.accession_no,
+                },
+            )
+        return []
+
+    outstanding = list(specs)
+    facts: list[Fact] = []
+
+    for exhibit in candidates:
+        if not outstanding:
+            break
+
+        text = await _filing_text(str(exhibit.url), annual.accession_no)
+        if not text:
+            continue
+
+        still_missing: list[NarrativeSpec] = []
+        for spec in outstanding:
+            located = _locate_down_ladder(text, spec)
+            if located is None:
+                still_missing.append(spec)
+                continue
+
+            body, rung = located
+            fact = _build_fact(spec, body, annual, str(exhibit.url))
+            if fact is None:
+                still_missing.append(spec)
+                continue
+
+            facts.append(fact)
+            logger.info(
+                "Narrative item located in an exhibit",
+                extra={
+                    "cik": company.cik,
+                    "metric": spec.metric,
+                    "rung": rung,
+                    "exhibit_type": exhibit.exhibit_type,
+                    "accession_no": annual.accession_no,
+                },
+            )
+        outstanding = still_missing
+
+    for spec in outstanding:
+        logger.info(
+            "Narrative item not found on any rung",
+            extra={
+                "cik": company.cik,
+                "metric": spec.metric,
+                "form": annual.form,
+                "accession_no": annual.accession_no,
+                "exhibits_searched": len(candidates),
+            },
+        )
     return facts
 
 
@@ -152,6 +258,45 @@ def risk_headings(facts: Sequence[Fact]) -> list[str]:
 
 
 # --- Locating an item --------------------------------------------------------
+
+
+def _locate_down_ladder(
+    text: str, spec: NarrativeSpec
+) -> tuple[str, str] | None:
+    """The item's text and the name of the rung that found it, or None.
+
+    Rungs are tried in the order the spec declares and stop at the first that
+    produces a body. Ordering matters: the preferred heading is the most
+    specific, and each fallback below it is a wording the filer might have
+    used instead — never a looser match that would admit a cross-reference.
+
+    Public behaviour worth stating: a rung is not consulted when an earlier
+    one answered, so a filing headed conventionally costs exactly what it did
+    before this ladder existed.
+    """
+    body = _locate(text, spec)
+    if body is not None:
+        return body, "the item's own heading"
+
+    for fallback in spec.fallbacks:
+        body = _locate(text, _as_spec(spec, fallback))
+        if body is not None:
+            return body, fallback.reason
+    return None
+
+
+def _as_spec(spec: NarrativeSpec, fallback: NarrativeFallback) -> NarrativeSpec:
+    """A fallback expressed as a spec, so `_locate` needs no second code path.
+
+    The metric, label and forms are the item's; only where to look changes.
+    """
+    return NarrativeSpec(
+        metric=spec.metric,
+        label=spec.label,
+        headings=fallback.headings,
+        terminators=fallback.terminators,
+        forms=spec.forms,
+    )
 
 
 def _locate(text: str, spec: NarrativeSpec) -> str | None:
@@ -333,7 +478,7 @@ def _is_heading(candidate: str) -> bool:
 
 
 def _build_fact(
-    spec: NarrativeSpec, body: str, filing: Filing
+    spec: NarrativeSpec, body: str, filing: FilingRef, source_url: str
 ) -> Fact | None:
     """One textual fact for a located item, or None if it cannot be sound.
 
@@ -341,6 +486,11 @@ def _build_fact(
     restates them, and m11 checks any figure in that prose against the fact
     store like any other. A fact that will not validate is dropped rather than
     patched — an unsourced quotation is worse than a missing section.
+
+    `source_url` is passed rather than read off the filing because an item
+    found on the exhibit rung came from the exhibit, and a citation must point
+    at the document the words are actually in. The accession number stays the
+    filing's, which is what ties the exhibit back to what it was filed under.
     """
     try:
         return Fact(
@@ -353,7 +503,7 @@ def _build_fact(
             fiscal_year=(filing.period_of_report or filing.filed_date).year,
             tier=SourceTier.FILING,
             source_type=SourceType.SEC_FILING,
-            source_url=str(filing.primary_doc_url),
+            source_url=source_url,
             accession_no=filing.accession_no,
             filed_date=filing.filed_date,
             extraction_method=ExtractionMethod.NARRATIVE,
@@ -391,15 +541,11 @@ def summary_of(fact: Fact) -> str:
 
 
 def _latest_annual(
-    manifest: Sequence[Filing], filer_type: FilerType
-) -> Filing | None:
+    manifest: Sequence[FilingRef], filer_type: FilerType
+) -> FilingRef | None:
     """The most recently filed annual report for this filer type."""
     forms = _annual_forms_for(filer_type)
-    candidates = [
-        filing
-        for filing in manifest
-        if filing.form.split(AMENDMENT_FORM_SUFFIX, 1)[0] in forms
-    ]
+    candidates = [filing for filing in manifest if filing.base_form in forms]
     if not candidates:
         return None
     return max(candidates, key=lambda f: (f.filed_date, f.accession_no))
@@ -419,20 +565,27 @@ def _annual_forms_for(filer_type: FilerType) -> frozenset[str]:
     return frozenset({"20-F", "40-F"})
 
 
-async def _filing_text(filing: Filing) -> str:
-    """The readable text of the annual report, or an empty string.
+async def _filing_text(url: str, accession_no: str) -> str:
+    """The readable text of one document, or an empty string.
 
     A document that cannot be fetched or parsed costs the narrative sections.
     It never costs the report, which is why nothing here raises.
+
+    A document over the parse ceiling is windowed rather than abandoned. It
+    used to return nothing at all, which cost every narrative item on filers
+    whose annual report happened to be large — a strictly worse answer than
+    reading the part that fits. The narrative items sit in a 10-K's front
+    matter, ahead of the financial statements and exhibits that make these
+    documents large, so the leading window is where they are. The cut is
+    reported, never silent.
     """
-    url = str(filing.primary_doc_url)
     try:
         body = await edgar.get_client().get_bytes(url)
     except EdgarError as cause:
         logger.warning(
-            "Could not read the annual report for narrative extraction",
+            "Could not read a document for narrative extraction",
             extra={
-                "accession_no": filing.accession_no,
+                "accession_no": accession_no,
                 "url": url,
                 "error": str(cause),
             },
@@ -441,9 +594,14 @@ async def _filing_text(filing: Filing) -> str:
 
     if len(body) > MAX_FILING_TEXT_BYTES:
         logger.warning(
-            "Annual report is larger than the parse ceiling; narrative skipped",
-            extra={"accession_no": filing.accession_no, "bytes": len(body)},
+            "Document is larger than the parse ceiling; reading the leading window",
+            extra={
+                "accession_no": accession_no,
+                "url": url,
+                "bytes": len(body),
+                "window_bytes": NARRATIVE_OVERSIZE_WINDOW_BYTES,
+            },
         )
-        return ""
+        body = body[:NARRATIVE_OVERSIZE_WINDOW_BYTES]
 
     return document.html_to_text(body.decode("utf-8", errors="replace"))

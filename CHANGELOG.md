@@ -17,6 +17,38 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — narrative items are searched down a ladder (2026-08-04)
+
+- `m04`: each narrative item is now located down an ordered ladder rather than
+  at one address. The item's own heading is tried first, then the punctuation
+  and wording variants the spec declares, then — for anything still missing —
+  the filing's exhibits. A 40-F carries its annual information form as an
+  exhibit and some 10-K filers carry Item 1 the same way, so a primary
+  document that lacks the item is not evidence the filing does. A rung costs
+  only itself; exhausting them all costs the section, never the report.
+- `m04`: a document over the parse ceiling is windowed rather than abandoned.
+  It previously returned nothing at all, which cost every narrative item on
+  filers whose annual report happened to be large. Narrative items sit in the
+  front matter, ahead of the financial statements that make these documents
+  large, so the leading window is where they are. The cut is logged.
+- `m04`/`pipeline`: m04 now receives the `FilingRef` manifest rather than the
+  flattened filings, because only `FilingRef` carries exhibits. m02 is asked
+  for exhibits whenever narrative or developments is on.
+- `config`: `NarrativeFallback`, and fallback rungs on all eight specs —
+  including a business description spec for 40-F filers, which previously had
+  none at all.
+- `config`: `allow_model_peers` is on at standard depth. The rung proposes
+  names only; each is still resolved to a CIK and read from its own filings,
+  so provenance is unchanged. Off, it left filers whose proxy names no
+  compensation peer group with no comparables at all.
+- `config`: the snapshot brief asks for an investment snapshot rather than two
+  or three sentences. Prompt text only — m11 still gates every figure.
+- `models`/`types`: `Company` carries headquarters, exchange, state of
+  incorporation and employees; `RiskCategory` and `RiskItem.category` classify
+  a filer's own heading without rating it; the browser's types now declare
+  `CheckResult`, `Violation` and `ArtifactRef`, all of which the backend was
+  already serialising and the frontend was discarding.
+
 ### Added — the pipeline, m03 through m12 (2026-07-30)
 
 The full run: a ticker in, a verified report out, over real EDGAR data.
