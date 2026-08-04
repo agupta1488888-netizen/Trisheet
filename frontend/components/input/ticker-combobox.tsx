@@ -177,7 +177,7 @@ export function TickerCombobox({
       <Search
         aria-hidden="true"
         strokeWidth={2}
-        className="pointer-events-none absolute top-1/2 left-6 size-6 -translate-y-1/2 text-slate-400"
+        className="pointer-events-none absolute top-1/2 left-4 size-5 -translate-y-1/2 text-slate-400"
       />
       <input
         id={inputId}
@@ -205,8 +205,8 @@ export function TickerCombobox({
         }}
         onKeyDown={onKeyDown}
         className={cn(
-          "ref h-20 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 py-0 pr-6 pl-16 text-2xl text-ink",
-          "placeholder:font-sans placeholder:text-xl placeholder:text-muted-foreground",
+          "ref h-14 w-full rounded-xl border-2 border-slate-200 bg-slate-50 py-0 pr-4 pl-11 text-lg text-ink",
+          "placeholder:font-sans placeholder:text-base placeholder:text-muted-foreground",
           "outline-none transition-colors focus-visible:border-emerald-500 focus-visible:bg-white focus-visible:ring-4 focus-visible:ring-emerald-500/15",
           "disabled:cursor-not-allowed disabled:opacity-50",
           "motion-reduce:transition-none",
