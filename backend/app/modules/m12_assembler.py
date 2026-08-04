@@ -1374,7 +1374,20 @@ def _cash_flow_series(index: _Index) -> CashFlowSeries | None:
 _PDF_STYLESHEET = """
 @page {
   size: A4;
-  margin: 18mm 16mm 20mm 16mm;
+  margin: 20mm 16mm 20mm 16mm;
+  @top-left {
+    content: string(company-name);
+    font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+    font-size: 7pt;
+    color: #6c7671;
+  }
+  @top-right {
+    content: "Trisheet";
+    font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+    font-size: 7pt;
+    letter-spacing: 0.08em;
+    color: #6c7671;
+  }
   @bottom-left {
     content: "Trisheet — sourced from SEC filings";
     font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
@@ -1387,6 +1400,16 @@ _PDF_STYLESHEET = """
     font-size: 7pt;
     color: #6c7671;
   }
+}
+
+/* The cover carries the mark and the title, so it must not also carry the
+   running header that names them again three lines below. */
+@page cover {
+  margin: 0;
+  @top-left { content: none; }
+  @top-right { content: none; }
+  @bottom-left { content: none; }
+  @bottom-right { content: none; }
 }
 
 :root {
@@ -1418,7 +1441,113 @@ h1 { font-size: 22pt; letter-spacing: -0.01em; }
 h2 { font-size: 12pt; margin-top: 16pt; }
 h3 { font-size: 9pt; margin-top: 10pt; }
 
+/* --- Cover ---------------------------------------------------------------
+   One page, and the only place in the document set in ink rather than on
+   paper. It is a title page, not a dashboard: mark, company, what this is,
+   when it was made, and the one sentence that says what the document is
+   for. Nothing else earns a place on it. */
+
+.cover {
+  page: cover;
+  break-after: page;
+  background: #14201C;
+  color: #FBFAF7;
+  height: 297mm;
+  padding: 24mm 20mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.cover .brand {
+  display: flex;
+  align-items: center;
+  gap: 7pt;
+}
+.cover .brand svg { display: block; }
+.cover .brand .wordmark {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 12pt;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #FBFAF7;
+}
+
+.cover .kind {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 8pt;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(251, 250, 247, 0.5);
+}
+.cover .subject { margin-top: 10pt; }
+.cover .subject .ticker {
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 11pt;
+  letter-spacing: 0.1em;
+  color: rgba(251, 250, 247, 0.65);
+}
+.cover h1 {
+  font-size: 34pt;
+  line-height: 1.1;
+  margin-top: 6pt;
+  color: #FBFAF7;
+}
+.cover .listing {
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8pt;
+  color: rgba(251, 250, 247, 0.55);
+  margin-top: 10pt;
+}
+
+.cover .statement {
+  font-size: 9pt;
+  line-height: 1.65;
+  max-width: 108mm;
+  color: rgba(251, 250, 247, 0.8);
+  border-top: 0.5px solid rgba(251, 250, 247, 0.25);
+  padding-top: 10pt;
+}
+.cover .issued {
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 7.5pt;
+  color: rgba(251, 250, 247, 0.45);
+  margin-top: 8pt;
+}
+
+/* --- Contents ------------------------------------------------------------ */
+
+.contents { break-after: page; }
+.contents ol {
+  list-style: none;
+  margin: 10pt 0 0 0;
+  padding: 0;
+  counter-reset: section-number;
+}
+.contents li {
+  counter-increment: section-number;
+  border-bottom: 0.5px solid #E2DED4;
+  padding: 5pt 0;
+  font-size: 9pt;
+}
+.contents li::before {
+  content: counter(section-number) ".";
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 7.5pt;
+  color: #6c7671;
+  margin-right: 8pt;
+}
+.contents li .absent {
+  color: #6c7671;
+  font-style: italic;
+  font-size: 7.5pt;
+}
+
 .masthead { border-bottom: 1.5px solid #14201C; padding-bottom: 8pt; }
+/* Sets the running header's left slot. Scoped to the heading rather than the
+   masthead so the header carries the company name alone, not the ticker and
+   the CIK line with it. */
+.masthead h1 { string-set: company-name content(); }
 .masthead .ticker {
   font-family: "IBM Plex Mono", "Consolas", monospace;
   font-size: 10pt;
@@ -1449,9 +1578,13 @@ section { break-inside: auto; margin-top: 4pt; }
 section > h2 {
   border-bottom: 1px solid #14201C;
   padding-bottom: 3pt;
+  /* A heading stranded at the foot of a page reads as a section with no
+     content, which on a document whose whole claim is completeness is the
+     wrong impression to leave. */
+  break-after: avoid;
 }
 
-p { margin: 6pt 0; }
+p { margin: 6pt 0; orphans: 3; widows: 3; }
 p.prose { text-align: justify; }
 
 .unavailable {
@@ -1526,11 +1659,33 @@ ul.events .when {
   color: #6c7671;
 }
 
-table.sources { font-size: 7pt; }
+table.sources { font-size: 7pt; break-inside: auto; }
 table.sources td, table.sources th { padding: 2pt 3pt; }
+table.sources tr { break-inside: avoid; }
 table.sources .mono {
   font-family: "IBM Plex Mono", "Consolas", monospace;
   word-break: break-all;
+}
+
+/* The hierarchy, stated on the page rather than left to be inferred from
+   which tiers happen to appear in the table above it. */
+.hierarchy { margin-top: 10pt; font-size: 7.5pt; }
+.hierarchy ol { list-style: none; margin: 4pt 0 0 0; padding: 0; }
+.hierarchy li {
+  border-bottom: 0.5px solid #E2DED4;
+  padding: 3pt 0;
+  break-inside: avoid;
+}
+.hierarchy .tier {
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 7pt;
+  margin-right: 6pt;
+}
+.hierarchy .scope { color: #6c7671; }
+.hierarchy .rule {
+  margin-top: 6pt;
+  color: #6c7671;
+  font-style: italic;
 }
 .tier-1 { color: #1F4D3D; }
 .tier-2 { color: #1F4D3D; }
@@ -1620,6 +1775,8 @@ def render_html(document: ReportDocument) -> str:
 
     parts: list[str] = [
         f"<style>{_PDF_STYLESHEET}</style>",
+        _render_cover(document),
+        _render_contents(document),
         _render_masthead(document),
         _render_compliance(document),
     ]
@@ -1636,6 +1793,99 @@ def render_html(document: ReportDocument) -> str:
         + "".join(parts)
         + "</body></html>"
     )
+
+
+#: The brand mark, drawn rather than fetched.
+#:
+#: Inline SVG and not an image file, for a reason worth stating: WeasyPrint
+#: renders with no network access, so an external asset would fail silently
+#: and leave a cover with a hole in it. There is no logo file in the
+#: repository either — the mark on the site is a styled element, so this is
+#: the same mark expressed in the one form a PDF renderer can be relied on to
+#: draw. Currency of the brand is not at stake; a missing logo on the
+#: submitted artifact would be.
+_BRAND_MARK_SVG = (
+    "<svg width='22' height='22' viewBox='0 0 22 22' "
+    "xmlns='http://www.w3.org/2000/svg'>"
+    "<rect x='0.5' y='0.5' width='21' height='21' rx='5' "
+    "fill='none' stroke='rgba(251,250,247,0.35)'/>"
+    "<text x='11' y='15.5' text-anchor='middle' "
+    "font-family='IBM Plex Sans, Segoe UI, sans-serif' font-size='11' "
+    "font-weight='600' fill='#FBFAF7'>T</text>"
+    "</svg>"
+)
+
+
+def _render_cover(document: ReportDocument) -> str:
+    """The title page.
+
+    A research document is handed over, forwarded and printed, and it is read
+    by people who did not watch it being made. The cover is what tells one of
+    them what they are holding: whose profile it is, what kind of document it
+    is, when it was made, and on what basis. The last of those is the claim
+    the whole product rests on, so it is stated on the cover rather than left
+    to be discovered in an appendix.
+    """
+    company = document.company
+    completed = document.report.completed_at or document.report.created_at
+
+    listing = " · ".join(
+        part
+        for part in (
+            company.exchange,
+            f"CIK {company.cik}",
+            _filer_form(company),
+        )
+        if part
+    )
+
+    return (
+        "<section class='cover'>"
+        "<div class='brand'>"
+        f"{_BRAND_MARK_SVG}"
+        "<span class='wordmark'>Trisheet</span>"
+        "</div>"
+        "<div class='subject'>"
+        "<div class='kind'>Company profile</div>"
+        f"<div class='ticker'>{_escape(company.ticker)}</div>"
+        f"<h1>{_escape(company.name)}</h1>"
+        f"<div class='listing'>{_escape(listing)}</div>"
+        "</div>"
+        "<div>"
+        "<p class='statement'>Every figure in this document traces to a "
+        "filing this company made with the SEC. Each one carries the form it "
+        "came from, its accession number and the date it was filed, listed in "
+        "the sources appendix. Figures that were calculated carry the formula "
+        "that produced them. Nothing here is estimated.</p>"
+        f"<div class='issued'>Issued {completed.date().isoformat()}</div>"
+        "</div>"
+        "</section>"
+    )
+
+
+def _render_contents(document: ReportDocument) -> str:
+    """The table of contents.
+
+    Sections that could not be built are listed with the reason rather than
+    omitted. A contents page that silently skips a section implies the
+    document was never meant to have one, which on a profile whose sections
+    are fixed would be untrue — and the reason is the honest answer to the
+    question the gap would otherwise raise.
+    """
+    if not document.sections:
+        return ""
+
+    items = "".join(
+        f"<li>{_escape(section.title)}"
+        + (
+            f" <span class='absent'>— {_escape(section.unavailable_reason)}</span>"
+            if section.unavailable_reason
+            else ""
+        )
+        + "</li>"
+        for section in document.sections
+    )
+    return f"<section class='contents'><h2>Contents</h2><ol>{items}</ol></section>"
 
 
 def _render_masthead(document: ReportDocument) -> str:
@@ -1837,7 +2087,55 @@ def _render_sources(cards: Sequence[_SourceCard]) -> str:
         "<th>Filed</th><th>Document</th>"
         "</tr></thead>"
         f"<tbody>{rows}</tbody></table>"
+        f"{_render_hierarchy()}"
         "</section>"
+    )
+
+
+#: The hierarchy, and what each tier is allowed to support. Stated on the
+#: printed page because the tier column above is only meaningful next to it.
+_HIERARCHY: tuple[tuple[int, str, str], ...] = (
+    (
+        1,
+        "SEC filings",
+        "10-K, 10-Q, 8-K, DEF 14A, 20-F, 40-F, 6-K and their exhibits.",
+    ),
+    (
+        2,
+        "Company sources",
+        "Company website, investor presentations, press releases.",
+    ),
+    (
+        3,
+        "Market data",
+        "Share price, market capitalisation and trading multiples only.",
+    ),
+    (4, "News and general web", "Never used to support a reported figure."),
+)
+
+
+def _render_hierarchy() -> str:
+    """The source hierarchy, and the rule that is enforced in code.
+
+    The reader of a printed profile cannot inspect the codebase, so the
+    constraint is written down beside the sources it governs: the financial
+    highlights accept tiers 1 and 2 and nothing else, and that is a check at
+    write time rather than an intention.
+    """
+    items = "".join(
+        f"<li><span class='tier tier-{tier}'>Tier {tier}</span>"
+        f"<strong>{_escape(name)}</strong> "
+        f"<span class='scope'>{_escape(scope)}</span></li>"
+        for tier, name, scope in _HIERARCHY
+    )
+    return (
+        "<div class='hierarchy'>"
+        "<strong>Source hierarchy</strong>"
+        f"<ol>{items}</ol>"
+        "<p class='rule'>The financial highlights accept tier 1 and tier 2 "
+        "only. Tier 3 and tier 4 are refused when a figure is written, not "
+        "filtered when it is rendered.</p>"
+        "</div>"
     )
 
 

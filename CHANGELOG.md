@@ -17,6 +17,24 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the printed profile has a cover (2026-08-04)
+
+- `m12`: the PDF opens on a title page — brand mark, company, ticker, listing
+  and the one sentence stating what every figure in the document rests on.
+  The mark is inline SVG rather than an image: WeasyPrint renders with no
+  network access, so an external asset would have failed silently and left a
+  hole in the artifact that actually gets handed over.
+- `m12`: a running header on every page after the cover, carrying the company
+  name via `string-set` off the masthead heading, with the cover suppressing
+  it so the name is not repeated three lines below itself.
+- `m12`: a contents page. Sections that could not be built are listed with
+  their reason rather than omitted — a contents page that silently skips one
+  implies the profile was never meant to have it.
+- `m12`: the sources appendix states the tier hierarchy and the rule it
+  enforces, since a printed profile cannot be read alongside the codebase.
+- `m12`: widow and orphan control, headings that do not strand at a page foot,
+  and source rows that do not split across a break.
+
 ### Added — the valuation set, risk categories, and the written record (2026-08-04)
 
 - `m08`: enterprise value, EV to sales and dividend yield join price to
