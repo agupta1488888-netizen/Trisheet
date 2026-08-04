@@ -45,7 +45,6 @@ from app.config import (
     DISPLAY_SCALE_DIVISOR,
     DISPLAY_SCALE_NOTE,
     MAX_CHART_SEGMENTS,
-    MAX_TABLE_PERIODS,
     NOT_DISCLOSED_TEXT,
     RISK_CATEGORY_MARKERS,
     SEGMENT_METRIC,
@@ -455,7 +454,10 @@ def _periods(index: _Index) -> tuple[int, ...]:
 
     Chosen from the years revenue and total assets were reported for, because
     a year in which only one obscure metric resolved is not a period the
-    reader can compare anything across.
+    reader can compare anything across. Every year that clears that bar is
+    shown — how many years there are to choose from was already decided by
+    the run's depth, in how far m03 extracted, so this must not re-impose a
+    second, independent limit on top of that.
     """
     anchors = ("income.revenue", "balance.total_assets", "income.net_income")
     years = {
@@ -465,8 +467,7 @@ def _periods(index: _Index) -> tuple[int, ...]:
     }
     if not years:
         years = {year for (_, year) in index.by_metric_year}
-    ordered = sorted(years, reverse=True)[:MAX_TABLE_PERIODS]
-    return tuple(sorted(ordered))
+    return tuple(sorted(years))
 
 
 def _currency(facts: Sequence[Fact]) -> str | None:

@@ -33,6 +33,7 @@ from app.models import (
     DocumentFact,
     DocumentSection,
     ExtractionMethod,
+    Fact,
     FilerType,
     Report,
     ReportDocument,
@@ -42,7 +43,7 @@ from app.models import (
     SourceTier,
     SourceType,
 )
-from app.modules.m12_assembler import _risk_category, render_html
+from app.modules.m12_assembler import _build_index, _risk_category, render_html
 
 _NOW = dt.datetime(2026, 8, 4, tzinfo=dt.UTC)
 
@@ -251,3 +252,68 @@ def test_a_document_with_no_sources_omits_the_appendix() -> None:
     markup = render_html(_document())
 
     assert "Source hierarchy" not in markup
+
+
+# --- Years shown in a figure table --------------------------------------------
+
+
+def _annual_fact(metric: str, year: int) -> Fact:
+    """One anchor-metric figure for a fiscal year, for period-selection tests."""
+    return Fact(
+        metric=metric,
+        label=metric.rsplit(".", 1)[-1].replace("_", " ").capitalize(),
+        value=float(year),
+        display_value=f"{year}",
+        unit="USD",
+        period_start=dt.date(year - 1, 1, 1),
+        period_end=dt.date(year, 12, 31),
+        fiscal_year=year,
+        tier=SourceTier.FILING,
+        source_type=SourceType.SEC_XBRL,
+        source_url="https://www.sec.gov/Archives/nke-x.htm",
+        accession_no=f"0000320187-{year % 100:02d}-000039",
+        filed_date=dt.date(year + 1, 2, 1),
+        extraction_method=ExtractionMethod.XBRL_COMPANY_FACTS,
+        confidence=1.0,
+    )
+
+
+def test_a_full_depth_run_shows_all_ten_extracted_years() -> None:
+    # Regression: a fixed MAX_TABLE_PERIODS constant in m12 once re-truncated
+    # a "full" (10y) or custom-range run back down to 5 years, after m03 had
+    # already correctly extracted the years the run's depth asked for. The
+    # table must show every year that survives, not re-impose a second cap.
+    years = range(2016, 2026)
+    facts = tuple(
+        _annual_fact(metric, year)
+        for year in years
+        for metric in (
+            "income.revenue",
+            "balance.total_assets",
+            "income.net_income",
+        )
+    )
+
+    index = _build_index(facts)
+
+    assert index.years == tuple(years)
+
+
+def test_a_standard_depth_run_still_shows_only_its_five_extracted_years() -> None:
+    # The fix must defer entirely to what was extracted, not simply show
+    # everything unbounded — a standard run's five years should still be
+    # five, because m03 never extracted a sixth.
+    years = range(2021, 2026)
+    facts = tuple(
+        _annual_fact(metric, year)
+        for year in years
+        for metric in (
+            "income.revenue",
+            "balance.total_assets",
+            "income.net_income",
+        )
+    )
+
+    index = _build_index(facts)
+
+    assert index.years == tuple(years)
