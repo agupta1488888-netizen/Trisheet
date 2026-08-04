@@ -35,12 +35,12 @@ Degradation
     dependency, and a report whose supplied link was unreachable is still a
     report.
 
-    These are different failures, and the pipeline step has to be able to
-    tell them apart. "Could not be read" (blocked, timed out, refused) and
-    "read fine but had nothing to say" are different findings — the first is
-    worth a reader's attention, the second usually is not — so `read_sources`
-    returns which links were never reached alongside the notes, rather than
-    collapsing both into an empty list and forcing the caller to guess.
+    These are three different failures, and the pipeline step has to be able
+    to tell them apart: a page that could not be fetched, a page the model
+    call itself failed on, and a page that was read and answered but had
+    nothing worth recording. `read_sources` returns which links hit which of
+    the first two alongside the notes, rather than collapsing all three into
+    an empty list and forcing the caller to guess. See `_LinkStatus`.
 
 Public interface
     read_sources(urls, ticker) -> SourceReadResult
@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import enum
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -68,21 +69,44 @@ from app.services import llm, webfetch
 logger = logging.getLogger(__name__)
 
 
+class _LinkStatus(enum.Enum):
+    """What happened to one supplied link — three outcomes, not two.
+
+    `MODEL_FAILED` and `OK`-with-no-notes both leave `notes` empty for that
+    link, but they are not the same finding: one is Anthropic's API refusing
+    or erroring on a perfectly good page, the other is the model genuinely
+    reporting the page has nothing to say. Collapsing them cost real time to
+    diagnose once already — a production run kept reporting "nothing to add"
+    for a page that, read locally seconds later with the same code, produced
+    six accurate notes. The distinction exists so that never has to be
+    re-diagnosed by hand again.
+    """
+
+    #: The page was read and the model answered, with or without notes.
+    OK = "ok"
+    #: `webfetch.fetch_page` itself failed — refused, timed out, blocked.
+    UNREACHABLE = "unreachable"
+    #: The page was read fine; the model call raised.
+    MODEL_FAILED = "model_failed"
+
+
 @dataclass(frozen=True, slots=True)
 class SourceReadResult:
     """What reading the supplied links produced.
 
-    `notes` empty has two different causes a reader needs told apart: a link
-    that could not be reached at all, and a link that was read but had
-    nothing worth recording — a cookie banner, a login wall, a page that says
-    nothing about the company. `unreachable_urls` names which links hit the
-    first case, so the pipeline step can report the one that actually
-    happened rather than a message honest about both possibilities and useful
-    for neither.
+    `notes` empty has three different causes a reader needs told apart: a
+    link that could not be reached at all, a link the model call itself
+    failed on, and a link that was read and answered but had nothing worth
+    recording — a cookie banner, a login wall, a page that says nothing about
+    the company. `unreachable_urls` and `model_failed_urls` name which links
+    hit the first two cases, so the pipeline step can report what actually
+    happened rather than a message honest about all three and useful for
+    none of them.
     """
 
     notes: list[SourceNote] = field(default_factory=list)
     unreachable_urls: list[str] = field(default_factory=list)
+    model_failed_urls: list[str] = field(default_factory=list)
 
 #: The rules. Adapted from `chat_agent._COMPANY_SITE_SYSTEM_PROMPT`, which
 #: solves the same problem for one chat turn: a page is not a filing, and the
@@ -159,14 +183,10 @@ def _note_texts(answer: dict[str, Any]) -> list[str]:
     ][:SOURCE_NOTES_MAX_PER_URL]
 
 
-async def _read_one(url: str, ticker: str) -> tuple[list[SourceNote], bool]:
-    """Reads one page. Returns `(notes, reached)` rather than raising.
-
-    `reached` is False only when the page itself could not be fetched —
-    refused, timed out, blocked. It is True whenever the page was actually
-    read, even if that read produced no notes, because a model failure or an
-    empty answer is not the same finding as a page nothing could open.
-    """
+async def _read_one(
+    url: str, ticker: str
+) -> tuple[list[SourceNote], _LinkStatus]:
+    """Reads one page. Returns `(notes, status)` rather than raising."""
     try:
         page = await webfetch.fetch_page(url)
     except webfetch.WebfetchError as cause:
@@ -175,7 +195,7 @@ async def _read_one(url: str, ticker: str) -> tuple[list[SourceNote], bool]:
             extra={"url": url},
             exc_info=cause,
         )
-        return [], False
+        return [], _LinkStatus.UNREACHABLE
 
     try:
         answer = await llm.complete_json(
@@ -185,12 +205,15 @@ async def _read_one(url: str, ticker: str) -> tuple[list[SourceNote], bool]:
             purpose="sources:read",
         )
     except llm.LlmError as cause:
+        # Logged at warning with the real cause, since the pipeline feed can
+        # only ever say "the model call failed" — this is where "failed with
+        # what" actually lives.
         logger.warning(
             "Supplied link could not be summarised",
             extra={"url": page.url},
             exc_info=cause,
         )
-        return [], True
+        return [], _LinkStatus.MODEL_FAILED
 
     fetched_at = dt.datetime.now(dt.UTC)
     notes: list[SourceNote] = []
@@ -220,7 +243,7 @@ async def _read_one(url: str, ticker: str) -> tuple[list[SourceNote], bool]:
     logger.info(
         "Supplied link read", extra={"url": page.url, "notes": len(notes)}
     )
-    return notes, True
+    return notes, _LinkStatus.OK
 
 
 async def read_sources(
@@ -252,16 +275,21 @@ async def read_sources(
 
     notes: list[SourceNote] = []
     unreachable: list[str] = []
+    model_failed: list[str] = []
     for url, result in zip(accepted, results, strict=True):
         if isinstance(result, BaseException):
             logger.warning("Supplied link raised unexpectedly", exc_info=result)
             unreachable.append(url)
             continue
-        url_notes, reached = result
+        url_notes, status = result
         notes.extend(url_notes)
-        if not reached:
+        if status is _LinkStatus.UNREACHABLE:
             unreachable.append(url)
-    return SourceReadResult(notes=notes, unreachable_urls=unreachable)
+        elif status is _LinkStatus.MODEL_FAILED:
+            model_failed.append(url)
+    return SourceReadResult(
+        notes=notes, unreachable_urls=unreachable, model_failed_urls=model_failed
+    )
 
 
 __all__ = ["SourceReadResult", "read_sources"]

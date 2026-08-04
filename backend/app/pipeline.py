@@ -487,18 +487,29 @@ async def _extract(
         # highlights table — see `m13_sources` for why that matters.
         work.source_notes.extend(result.notes)
         if not result.notes:
-            # Two different findings, previously collapsed into one message
-            # that could not say which had happened. `unreachable_urls` says
-            # so directly. A reader supplies at most a couple of links, so
-            # "was this batch reachable at all" is precise enough without
-            # naming each URL's own outcome.
-            detail = (
-                "The supplied link could not be reached. The report is "
-                "generated without it."
-                if result.unreachable_urls
-                else "The supplied link had nothing to add beyond what the "
-                "filings already show. The report is generated without it."
-            )
+            # Three different findings, previously collapsed into one message
+            # that could not say which had happened. Checked in order of what
+            # a reader should act on: an unreachable link is worth retrying
+            # with a different URL; a model failure is worth retrying the
+            # report itself; a page that genuinely had nothing is not an
+            # error at all. A reader supplies at most a couple of links, so
+            # naming which bucket the batch fell into is precise enough
+            # without naming each URL's own outcome.
+            if result.unreachable_urls:
+                detail = (
+                    "The supplied link could not be reached. The report is "
+                    "generated without it."
+                )
+            elif result.model_failed_urls:
+                detail = (
+                    "The supplied link could not be summarised just now. "
+                    "The report is generated without it."
+                )
+            else:
+                detail = (
+                    "The supplied link had nothing to add beyond what the "
+                    "filings already show. The report is generated without it."
+                )
             outcome.skip(detail, 0)
             return
         outcome.done(len(result.notes))

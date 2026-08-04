@@ -60,6 +60,7 @@ async def test_reads_a_page_into_cited_notes(
     result = await m13_sources.read_sources([PAGE_URL], TICKER)
 
     assert result.unreachable_urls == []
+    assert result.model_failed_urls == []
     assert len(result.notes) == 1
     note = result.notes[0]
     assert note.text == "The company opened a plant in Ohio."
@@ -105,6 +106,7 @@ async def test_an_unreachable_page_yields_no_notes_and_does_not_raise(
     # The whole point of this change: a page that could not be fetched is
     # distinguishable from one that was read and had nothing to say.
     assert result.unreachable_urls == [PAGE_URL]
+    assert result.model_failed_urls == []
 
 
 async def test_a_blocked_url_yields_no_notes(
@@ -120,13 +122,18 @@ async def test_a_blocked_url_yields_no_notes(
 
     assert result.notes == []
     assert result.unreachable_urls == ["http://169.254.169.254/"]
+    assert result.model_failed_urls == []
 
 
-async def test_a_model_failure_yields_no_notes_but_the_page_was_reached(
+async def test_a_model_failure_is_told_apart_from_an_unreachable_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A model failure is not the same finding as a dead link — the page was
-    read fine, so this must not be reported as unreachable."""
+    """The distinction this whole change exists for. A model failure and a
+    dead link produce the same empty notes list but are different findings —
+    the page was read fine here, so this must land in `model_failed_urls`,
+    never `unreachable_urls`. Diagnosing a real production incident without
+    this distinction meant no way to tell "the fetch failed" from "the model
+    call failed" from the pipeline feed alone."""
     _stub_fetch(monkeypatch, "Some text.")
 
     async def _fail(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -138,14 +145,16 @@ async def test_a_model_failure_yields_no_notes_but_the_page_was_reached(
 
     assert result.notes == []
     assert result.unreachable_urls == []
+    assert result.model_failed_urls == [PAGE_URL]
 
 
-async def test_a_page_with_nothing_on_it_yields_no_notes_and_is_not_unreachable(
+async def test_a_page_with_nothing_on_it_yields_no_notes_and_no_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An empty answer is the correct answer for a cookie banner. The module
-    must not manufacture a note to avoid returning nothing, and this is not
-    the same finding as the page having been unreachable."""
+    must not manufacture a note to avoid returning nothing, and this is a
+    third, distinct finding from both an unreachable page and a model
+    failure — the model was reached and it genuinely had nothing to say."""
     _stub_fetch(monkeypatch, "Accept cookies to continue.")
     _stub_llm(monkeypatch, {"notes": [], "not_found": True})
 
@@ -153,6 +162,7 @@ async def test_a_page_with_nothing_on_it_yields_no_notes_and_is_not_unreachable(
 
     assert result.notes == []
     assert result.unreachable_urls == []
+    assert result.model_failed_urls == []
 
 
 async def test_no_links_never_calls_out(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -169,6 +179,7 @@ async def test_no_links_never_calls_out(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert result.notes == []
     assert result.unreachable_urls == []
+    assert result.model_failed_urls == []
 
 
 async def test_notes_per_page_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,6 +235,7 @@ async def test_one_bad_link_does_not_stop_the_others(
     assert len(result.notes) == 1
     assert str(result.notes[0].source_url) == "https://example.com/good"
     assert result.unreachable_urls == ["https://example.com/bad"]
+    assert result.model_failed_urls == []
 
 
 # --- The separation ------------------------------------------------------
