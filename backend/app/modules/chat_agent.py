@@ -921,6 +921,29 @@ def _pct(value: float) -> str:
     return f"{value * 100:.1f}%"
 
 
+#: Appended to every valuation answer. A reader asking "is this worth
+#: investing in" is asking for a verdict; the estimate above is the closest
+#: this system gets, and repeating the same DCF figures for a rephrased
+#: question ("is it worth it?" right after "is this worth investing in?")
+#: reads as broken unless the reply is explicit about why there is no
+#: sharper answer coming.
+_NO_RECOMMENDATION_TEXT = (
+    "This is an estimate, not a recommendation — the report does not judge "
+    "whether the company is worth investing in."
+)
+
+
+def _no_recommendation_claim() -> ChatClaim:
+    return ChatClaim(
+        text=_NO_RECOMMENDATION_TEXT,
+        is_assumption=True,
+        assumption_note=(
+            "Not a sourced figure — states what this report does and does "
+            "not do."
+        ),
+    )
+
+
 async def _answer_valuation_question(
     report_id: str, all_facts: Sequence[Fact], user_turn: ChatTurn
 ) -> ChatTurn:
@@ -952,8 +975,10 @@ async def _answer_valuation_question(
         if result.base_fcf_fact_id is not None
         else None
     )
-    claims = _dcf_input_claims(result, facts_by_id) + _dcf_assumption_claims(
-        result, base_fact
+    claims = (
+        _dcf_input_claims(result, facts_by_id)
+        + _dcf_assumption_claims(result, base_fact)
+        + [_no_recommendation_claim()]
     )
 
     assistant_turn = _new_turn(

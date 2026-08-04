@@ -265,11 +265,13 @@ async def test_valuation_question_never_calls_the_model(
     assert len(certified) == 1
     assert certified[0].fact_id == fcf.fact_id
     assert certified[0].tier == fcf.tier
-    # The rates, and the resulting estimate, both come back as assumptions —
-    # neither is ever presented as a filed figure.
-    assert len(assumptions) == 2
+    # The rates, the resulting estimate, and the no-recommendation caveat
+    # all come back as assumptions — none is ever presented as a filed
+    # figure.
+    assert len(assumptions) == 3
     assert all(claim.assumption_note for claim in assumptions)
     assert all(claim.tier is None and claim.fact_id is None for claim in assumptions)
+    assert any("does not" in claim.text.lower() for claim in assumptions)
 
 
 async def test_valuation_question_with_no_free_cash_flow_is_not_found(
