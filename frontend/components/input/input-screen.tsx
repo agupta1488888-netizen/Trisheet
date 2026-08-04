@@ -9,15 +9,15 @@
  * right. Nothing else renders inside that first viewport. See CLAUDE.md's
  * design system section for the rules this follows.
  *
- * As of 2026-08-04, that background is a three.js scene (`HeroCanvas`)
- * rather than the static photo it replaced — filing pages suspended at
- * varying depths, with threads of light carrying a figure back to the page
- * it came from. It is in the same cinematic register as the assistant
- * showcase below the fold, and on the same two-colour palette, so the two no
- * longer read as different design languages stacked on one page. Loaded
- * through `next/dynamic` with `ssr: false` so three.js and the
- * post-processing chain never enter the server-rendered payload or block
- * first paint.
+ * As of 2026-08-04, that background is a three.js scene (`MonolithCanvas`)
+ * rather than the static photo it replaced — a filing as a physical object,
+ * six translucent slabs stacked into one monolith that part on hover and
+ * lift in sequence while a report is being requested. It is in the same
+ * cinematic register as the assistant showcase below the fold, and
+ * monochrome throughout, so the two no longer read as different design
+ * languages stacked on one page. Loaded through `next/dynamic` with
+ * `ssr: false` so three.js and the post-processing chain never enter the
+ * server-rendered payload or block first paint.
  *
  * Below the fold, as of 2026-08-03: the assistant showcase, in the same
  * exception zone as the hero above it.
@@ -26,7 +26,7 @@
  * and against fixtures without a branch inside it.
  */
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
@@ -43,8 +43,11 @@ import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { AiFinancialAgentSection } from "@/components/input/ai-financial-agent-section";
 import { TickerForm } from "@/components/input/ticker-form";
 
-const HeroCanvas = dynamic(
-  () => import("@/components/input/hero-canvas").then((mod) => mod.HeroCanvas),
+const MonolithCanvas = dynamic(
+  () =>
+    import("@/components/input/monolith-canvas").then(
+      (mod) => mod.MonolithCanvas,
+    ),
   { ssr: false },
 );
 
@@ -78,6 +81,13 @@ export function InputScreen({
   const router = useRouter();
   const prefersReducedMotion = useReducedMotion();
 
+  // Hover parts the layers; the token runs the reading sequence exactly once
+  // per request. A counter rather than a boolean, so a second request while
+  // the first is still settling restarts the animation instead of being
+  // swallowed by an unchanged prop.
+  const [isMonolithHovered, setIsMonolithHovered] = useState(false);
+  const [readToken, setReadToken] = useState(0);
+
   const start = useCallback(
     (resolution: Resolution, depth: AnalysisDepth, periods: number | null) => {
       if (onStart !== undefined) {
@@ -103,86 +113,94 @@ export function InputScreen({
 
   return (
     <main id="main">
-      <div className="relative min-h-screen overflow-hidden bg-slate-950">
-        <div
-          className="absolute inset-0 animate-in fade-in duration-1000"
-          aria-hidden="true"
-        >
-          <HeroCanvas reducedMotion={prefersReducedMotion} />
-        </div>
-        {/* A light overall wash for depth. The heavy lifting is done by the
-            content-sized scrim below, not here — a viewport-percentage
-            gradient cannot track the content column, whose right edge moves
-            between roughly 59% and 73% of the window depending on width. */}
+      <div className="relative min-h-screen overflow-hidden bg-[#08080a]">
+        {/* Two extremely low-contrast washes, and nothing else behind the
+            content. A single flat black reads as unfinished at this scale;
+            a visible gradient reads as a template. These sit at 4% and 3%. */}
         <div
           aria-hidden="true"
-          className="absolute inset-0 bg-gradient-to-r from-slate-950/70 from-30% to-slate-950/10 to-85%"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_75%_15%,rgba(255,255,255,0.04),transparent_60%)]"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/[0.09] to-transparent"
         />
 
-        {/* Left-aligned rather than centred in a max-w-6xl container. Centring
-            put the form card and headline across the middle of the screen and
-            squeezed the canvas into a sliver down the right edge; anchoring
-            the pair to the left hands the whole right third back to the
-            scene, which is the only place it is visible at all. */}
-        <div className="relative flex min-h-screen w-full items-center px-5 py-16 sm:px-8 sm:py-24 lg:pl-16 xl:pl-24">
-          <div className="relative grid w-full grid-cols-1 items-center gap-12 lg:max-w-5xl lg:grid-cols-2 lg:gap-14">
-            {/* Opaque backing for the text, sized to this column rather than
-                to a percentage of the viewport, so it ends exactly where the
-                content ends at every width. The scene drifts filing pages
-                across the whole frame; without this they read straight
-                through the headline. Two elements: a solid panel running off
-                the left of the screen, then a fixed-width fade so the scene
-                emerges rather than starting at a hard vertical seam. The
-                vertical inset overshoots and is clipped by the hero's
-                `overflow-hidden`, since this grid is only as tall as its
-                content but the scene fills the whole hero. */}
-            <div
+        <header className="relative z-20 mx-auto flex max-w-[1400px] items-center px-6 pt-8 sm:px-10">
+          <span className="flex items-center gap-2.5">
+            <span
               aria-hidden="true"
-              className="pointer-events-none absolute inset-y-[-100vh] -left-[100vw] right-0 hidden bg-slate-950 lg:block"
-            />
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-y-[-100vh] left-full hidden w-32 bg-gradient-to-r from-slate-950 to-transparent lg:block"
-            />
+              className="flex size-8 items-center justify-center rounded-lg border border-white/12 bg-white/[0.06] text-[13px] font-semibold text-white"
+            >
+              T
+            </span>
+            <span className="text-[15px] font-medium tracking-[-0.01em] text-white">
+              Trisheet
+            </span>
+          </span>
+        </header>
 
-            <div className="relative lg:order-1">
-              {/* Padding is load-bearing, not decoration: the depth selector
-                  inside switches to two columns at an `@sm` (384px)
-                  *container* width. In this 484px column, p-14 left the
-                  fieldset at 372px — just under the threshold — which
-                  collapsed the options into one tall stack and pushed the
-                  card past the bottom of the viewport. Do not raise this
-                  past p-12 without re-measuring the fieldset. */}
-              <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-2xl shadow-slate-950/40 sm:p-7">
-                <TickerForm search={search} resolve={resolve} onResolved={start} />
-              </div>
+        <div className="relative mx-auto grid max-w-[1400px] grid-cols-1 items-center gap-14 px-6 pt-14 pb-24 sm:px-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.02fr)] lg:gap-8 lg:pt-8 lg:pb-16">
+          <div className="relative z-10 max-w-xl">
+            <p className="text-[11px] font-medium tracking-[0.18em] text-white/40 uppercase">
+              Equity research • Sourced from filings
+            </p>
+
+            {/* font-sans overrides the global rule that sets every h1 in
+                Fraunces. The serif is right for the report view, which reads
+                as a document; this page has to read as a product, and the
+                whole enterprise register the brief asks for is carried by a
+                tightly-tracked grotesque. */}
+            <h1 className="mt-6 font-sans text-[2.75rem] leading-[1.04] font-semibold tracking-[-0.035em] text-white sm:text-6xl lg:text-[4.15rem]">
+              Every filing.
+              <br />
+              Every number.
+              <br />
+              <span className="text-white/50">Completely traceable.</span>
+            </h1>
+
+            <p className="mt-7 max-w-[30rem] text-[15px] leading-[1.7] text-white/45 sm:text-base">
+              Trisheet turns any stock ticker into an institutional-grade
+              equity research report. Every metric links back to the exact SEC
+              filing, page, accession number and XBRL tag.
+            </p>
+
+            <div className="mt-9">
+              <TickerForm
+                search={search}
+                resolve={resolve}
+                onResolved={start}
+                onSubmitStart={() => {
+                  setReadToken((token) => token + 1);
+                }}
+              />
             </div>
 
-            <div className="relative lg:order-2">
-              <header className="flex items-center gap-3.5">
-                <span
-                  aria-hidden="true"
-                  className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-white/25 bg-white/15 text-xl font-bold text-white shadow-lg backdrop-blur"
-                >
-                  T
-                </span>
-                <span className="font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-                  Trisheet
-                </span>
-              </header>
+            <p className="mt-8 flex items-center gap-2.5 text-[13px] text-white/30">
+              <span aria-hidden="true" className="h-px w-6 bg-white/15" />
+              Trusted by analysts, investors and financial teams.
+            </p>
+          </div>
 
-              <p className="mt-8 text-xs font-semibold tracking-wide text-emerald-200 uppercase">
-                Equity research · sourced from filings
-              </p>
-              <h1 className="mt-4 text-5xl leading-tight font-semibold text-white sm:text-6xl">
-                The company profile that shows its work.
-              </h1>
-              <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-100/90">
-                Every figure traces back to the SEC filing it came from — the
-                accession number, the page, the exact tag. Nothing estimated.
-                Nothing recalled from memory.
-              </p>
-            </div>
+          {/* The object is decorative, so it is hidden from assistive tech —
+              but it stays interactive for pointer parallax and the hover
+              separation, which is why this is aria-hidden rather than
+              pointer-events-none. */}
+          <div
+            aria-hidden="true"
+            className="relative h-[26rem] animate-in fade-in duration-1000 sm:h-[32rem] lg:h-[42rem]"
+            onPointerEnter={() => {
+              setIsMonolithHovered(true);
+            }}
+            onPointerLeave={() => {
+              setIsMonolithHovered(false);
+            }}
+          >
+            <MonolithCanvas
+              reducedMotion={prefersReducedMotion}
+              hovered={isMonolithHovered && !prefersReducedMotion}
+              readToken={readToken}
+            />
           </div>
         </div>
       </div>

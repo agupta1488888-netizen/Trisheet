@@ -21,7 +21,8 @@ import type {
   Resolution,
   TickerSuggestion,
 } from "@/lib/types";
-import { DepthSelector } from "@/components/input/depth-selector";
+import { cn } from "@/lib/utils";
+import { DepthMenu } from "@/components/input/depth-menu";
 import { Disambiguation } from "@/components/input/disambiguation";
 import { TickerCombobox } from "@/components/input/ticker-combobox";
 
@@ -37,6 +38,8 @@ export interface TickerFormProps {
     depth: AnalysisDepth,
     periods: number | null,
   ) => void;
+  /** Fired the moment a report is requested, so the hero can start reading. */
+  onSubmitStart?: () => void;
 }
 
 function isCustomPeriodsValid(periods: number | null): boolean {
@@ -48,7 +51,12 @@ function isCustomPeriodsValid(periods: number | null): boolean {
   );
 }
 
-export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
+export function TickerForm({
+  search,
+  resolve,
+  onResolved,
+  onSubmitStart,
+}: TickerFormProps) {
   const inputId = useId();
   const depthName = useId();
 
@@ -102,44 +110,49 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
 
   return (
     <>
+      {/* One bar: field, depth, action. The label is visually hidden rather
+          than deleted — the control still has to announce what it is, but a
+          "COMPANY" caption above a search field that already says so in its
+          placeholder is redundant at this size. */}
       <form
         onSubmit={(event) => {
           event.preventDefault();
+          onSubmitStart?.();
           void submit(query);
         }}
         noValidate
       >
-        <label
-          htmlFor={inputId}
-          className="text-sm font-semibold tracking-wide text-muted-foreground uppercase"
-        >
-          Company
+        <label htmlFor={inputId} className="sr-only">
+          Company ticker or name
         </label>
 
-        <div className="mt-3">
-          <TickerCombobox
-            inputId={inputId}
-            value={query}
-            onValueChange={(next) => {
-              setQuery(next);
-              setResolution(null);
-              setError(null);
-            }}
-            onSelect={(suggestion: TickerSuggestion) => {
-              setQuery(suggestion.ticker);
-            }}
-            search={search}
-            disabled={isResolving}
-          />
-        </div>
+        <div
+          className={cn(
+            "flex items-center gap-1 rounded-2xl border border-white/12 bg-white/[0.035] p-1.5 backdrop-blur-xl",
+            "shadow-[0_1px_0_0_rgba(255,255,255,0.05)_inset,0_20px_50px_-20px_rgba(0,0,0,0.9)]",
+            "transition-colors focus-within:border-white/25 focus-within:bg-white/[0.055] motion-reduce:transition-none",
+          )}
+        >
+          <div className="min-w-0 flex-1">
+            <TickerCombobox
+              inputId={inputId}
+              value={query}
+              onValueChange={(next) => {
+                setQuery(next);
+                setResolution(null);
+                setError(null);
+              }}
+              onSelect={(suggestion: TickerSuggestion) => {
+                setQuery(suggestion.ticker);
+              }}
+              search={search}
+              disabled={isResolving}
+            />
+          </div>
 
-        <p id={`${inputId}-hint`} className="mt-2 text-sm text-muted-foreground">
-          US-listed companies, by ticker or name. Every figure in the profile
-          traces back to an SEC filing.
-        </p>
+          <span aria-hidden="true" className="h-6 w-px shrink-0 bg-white/10" />
 
-        <div className="mt-5">
-          <DepthSelector
+          <DepthMenu
             name={depthName}
             value={depth}
             onChange={setDepth}
@@ -147,19 +160,27 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
             onCustomPeriodsChange={setCustomPeriods}
             disabled={isResolving}
           />
-        </div>
 
-        <div className="mt-5">
           <button
             type="submit"
             disabled={
               isResolving || query.trim() === "" || isCustomDepthInvalid
             }
-            className="w-full rounded-xl bg-emerald-600 px-8 py-3 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none motion-reduce:transition-none sm:w-auto"
+            className={cn(
+              "shrink-0 rounded-xl bg-white px-4 py-2.5 text-sm font-medium whitespace-nowrap text-[#08080a]",
+              "transition-[background-color,opacity] hover:bg-white/90 motion-reduce:transition-none",
+              "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50",
+              "disabled:cursor-not-allowed disabled:bg-white/15 disabled:text-white/35",
+            )}
           >
-            {isResolving ? "Resolving…" : "Build profile"}
+            {isResolving ? "Reading filing…" : "Generate report"}
           </button>
         </div>
+
+        <p id={`${inputId}-hint`} className="mt-3 text-[13px] text-white/35">
+          US-listed companies, by ticker or name. Every figure traces back to
+          an SEC filing.
+        </p>
       </form>
 
       <p className="sr-only" aria-live="polite">
@@ -169,16 +190,16 @@ export function TickerForm({ search, resolve, onResolved }: TickerFormProps) {
       {error === null ? null : (
         <section
           aria-labelledby="resolve-error-heading"
-          className="mt-8 border-t-2 border-t-flag pt-4"
+          className="mt-5 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3"
         >
           <h2
             id="resolve-error-heading"
-            className="text-sm font-medium text-flag"
+            className="text-sm font-medium text-red-300"
           >
             {error.message}
           </h2>
           {error.detail === null ? null : (
-            <p className="ref mt-1 text-xs text-muted-foreground">
+            <p className="ref mt-1 text-xs text-white/40">
               {error.detail}
             </p>
           )}

@@ -45,13 +45,13 @@ export function AiFinancialAgentSection() {
   const prefersReducedMotion = useReducedMotion();
 
   return (
-    <section className="relative isolate overflow-hidden bg-slate-950 py-24 sm:py-32">
+    <section className="relative isolate overflow-hidden bg-[#08080a] py-24 sm:py-32">
       <div className="absolute inset-0" aria-hidden="true">
         <AgentCanvas reducedMotion={prefersReducedMotion} />
       </div>
       <div
         aria-hidden="true"
-        className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/75 to-slate-950/25"
+        className="absolute inset-0 bg-gradient-to-t from-[#08080a] via-[#08080a]/75 to-[#08080a]/25"
       />
 
       <div className="relative mx-auto max-w-3xl px-5 text-center sm:px-8">

@@ -177,7 +177,7 @@ export function TickerCombobox({
       <Search
         aria-hidden="true"
         strokeWidth={2}
-        className="pointer-events-none absolute top-1/2 left-4 size-5 -translate-y-1/2 text-slate-400"
+        className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-white/30"
       />
       <input
         id={inputId}
@@ -205,9 +205,9 @@ export function TickerCombobox({
         }}
         onKeyDown={onKeyDown}
         className={cn(
-          "ref h-14 w-full rounded-xl border-2 border-slate-200 bg-slate-50 py-0 pr-4 pl-11 text-lg text-ink",
-          "placeholder:font-sans placeholder:text-base placeholder:text-muted-foreground",
-          "outline-none transition-colors focus-visible:border-emerald-500 focus-visible:bg-white focus-visible:ring-4 focus-visible:ring-emerald-500/15",
+          "ref h-11 w-full rounded-xl border-0 bg-transparent py-0 pr-3 pl-10 text-[15px] text-white",
+          "placeholder:font-sans placeholder:text-[15px] placeholder:text-white/30",
+          "outline-none focus-visible:outline-none",
           "disabled:cursor-not-allowed disabled:opacity-50",
           "motion-reduce:transition-none",
         )}
@@ -225,7 +225,7 @@ export function TickerCombobox({
         role="listbox"
         aria-label="Matching companies"
         hidden={!showList}
-        className="absolute inset-x-0 top-full z-20 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-100 bg-white p-1.5 shadow-xl shadow-slate-300/40"
+        className="absolute inset-x-0 top-full z-30 mt-3 max-h-72 overflow-y-auto rounded-xl border border-white/10 bg-[#0f0f12]/95 p-1.5 shadow-2xl shadow-black/60 backdrop-blur-xl"
       >
         {suggestions.map((suggestion, position) => {
           const hint = suggestion.filerType
@@ -248,17 +248,17 @@ export function TickerCombobox({
               }}
               className={cn(
                 "flex cursor-pointer items-baseline gap-3 rounded-xl px-3.5 py-2.5",
-                position === activeIndex && "bg-emerald-50",
+                position === activeIndex && "bg-white/[0.07]",
               )}
             >
-              <span className="ref w-16 shrink-0 text-sm text-certified">
+              <span className="ref w-16 shrink-0 text-sm text-white">
                 {suggestion.ticker}
               </span>
-              <span className="min-w-0 flex-1 truncate text-sm text-ink">
+              <span className="min-w-0 flex-1 truncate text-sm text-white/80">
                 {suggestion.name}
               </span>
               {hint === null ? null : (
-                <span className="ref shrink-0 text-[0.68rem] text-muted-foreground">
+                <span className="ref shrink-0 text-[0.68rem] text-white/35">
                   {hint}
                 </span>
               )}
