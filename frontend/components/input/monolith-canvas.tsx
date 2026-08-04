@@ -1,55 +1,32 @@
 "use client";
 
 /**
- * The hero's centrepiece: a filing rendered as a physical object.
+ * The hero's centrepiece: a filing rendered as an object made of light.
  *
- * Six translucent slabs stacked into a single monolith on a machined base —
- * financial statements, notes, MD&A, risk factors, exhibits, XBRL. At rest it
- * reads as one solid block. Hovered, the layers part slightly. When a report
- * is requested they lift in sequence, bottom of the document to top, with
- * fine data lines drawn between them: the filing being read, one section at a
- * time.
+ * Six thin panes held apart in a column — financial statements, notes, MD&A,
+ * risk factors, exhibits, XBRL — each outlined in a bright hairline, with the
+ * data itself visible inside and between them. Hovered, the stack opens a
+ * little further. When a report is requested the panes lift in sequence,
+ * bottom of the document to top, with data threads brightening between them.
  *
- * Deliberately not a chart, not a hologram, not a glowing anything. The
- * reference points are product photography and industrial design — Braun,
- * Rams, a Vision Pro press shot — which is why the camera runs a long lens
- * (fov 30) rather than a wide one. Long lenses flatten perspective and read
- * as "photographed"; wide lenses read as "video game".
+ * This is deliberately NOT physically-correct glass, and the distinction is
+ * the whole reason the file looks the way it does. An earlier version used
+ * `MeshTransmissionMaterial` with real refraction, ior 1.5, thickness 2 and a
+ * studio HDRI. That is the recipe for thick optical glass, and thick optical
+ * glass under studio lighting renders as a polished metal paperweight —
+ * correctly, but nothing like the intent. The intent is closer to an
+ * architectural drawing lit from within: near-invisible surfaces, emissive
+ * edges, and content you can read through every layer.
  *
- * Monochrome by construction. There is no colour anywhere in this file except
- * neutral greys and white; the material's `chromaticAberration` supplies the
- * only tint, and it is barely perceptible. Any hue introduced here would
- * break the register the rest of the page is holding.
+ * So the construction is inverted. Surfaces are almost transparent and barely
+ * lit; the edges are drawn, not shaded; the environment is nearly absent. If
+ * this ever starts looking like chrome again, the cause will be someone
+ * raising surface opacity or adding a bright environment map.
  *
- * On the glass, since it is the whole object: a transmissive material is
- * almost entirely a picture of its surroundings. An earlier version of this
- * file rendered as a black slab, and the cause was not the shader — it was
- * that `background` had been set to near-black and the environment held four
- * dim lights. Transmission of 1 against a black backdrop is, correctly, black.
- * If this ever looks wrong again, check what the material can *see* before
- * touching its coefficients.
- *
- * Performance notes, in the order they matter:
- *   - Each slab renders its own transmission buffer every frame. That is the
- *     price of letting the layers refract each other, which is the point of
- *     the object; `transmissionSampler` would collapse them onto the
- *     renderer's single shared pass, but that pass excludes transmissive
- *     meshes, so the stack would read as six flat cards.
- *   - Six passes is the ceiling this scene can afford. `backside` was tried
- *     and removed: it adds a second pass per slab, and twelve passes plus a
- *     512 environment froze the renderer outright. `thickness` carries the
- *     sense of volume on its own. Do not re-enable it without measuring.
- *   - `ContactShadows` uses `frames={1}`, baking once instead of re-rendering
- *     the scene from below every frame. The object turns slowly enough that a
- *     static shadow is indistinguishable, and it was a full extra pass.
- *   - Resolution (128) and samples (2) are held deliberately low. If frames
- *     drop further, lower those before removing refraction entirely.
- *   - The environment is built from `Lightformer` geometry rather than an HDR
- *     preset, so there is no texture to download and nothing to fail offline
- *     or behind a strict CSP.
- *   - `PerformanceMonitor` drops DPR before it drops frames.
- *   - Labels are baked canvas textures, not `troika` text: no font fetch, no
- *     async layout, deterministic across machines.
+ * It is also far cheaper than what it replaced. Transmission cost one full
+ * scene render per pane per frame — six passes, which froze the renderer
+ * outright when a backside pass doubled it. Nothing here renders the scene
+ * more than once.
  *
  * Loaded through `next/dynamic` with `ssr: false`, so three.js never enters
  * the server payload or blocks first paint.
@@ -57,14 +34,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import {
-  ContactShadows,
-  Environment,
-  Lightformer,
-  PerformanceMonitor,
-  MeshTransmissionMaterial,
-  RoundedBox,
-} from "@react-three/drei";
+import { Line, PerformanceMonitor, RoundedBox } from "@react-three/drei";
 import * as THREE from "three";
 
 // --- Structure -----------------------------------------------------------
@@ -84,21 +54,32 @@ const LAYERS: readonly LayerSpec[] = [
   { id: "xbrl", label: "XBRL Data" },
 ];
 
-const SLAB_WIDTH = 3.1;
-const SLAB_DEPTH = 2.15;
-const SLAB_HEIGHT = 0.26;
-const SLAB_RADIUS = 0.035;
-const SLAB_SMOOTHNESS = 3;
+const PANE_WIDTH = 3.98;
+const PANE_DEPTH = 2.2;
+/**
+ * Thin. The ratio of thickness to width is what separates "pane of glass"
+ * from "block of acrylic" — at the previous 0.26 against 3.1 these read as
+ * bricks no matter how they were shaded.
+ */
+const PANE_THICKNESS = 0.075;
+/** Plan-view corner radius. Free of the thickness now that panes are extruded. */
+const PANE_CORNER_RADIUS = 0.22;
 
-/** Near-zero at rest so the stack reads as one machined block, not a pile. */
-const GAP_REST = 0.012;
-const GAP_HOVER = 0.13;
-/** How far a slab rises out of the stack while it is being read. */
-const GAP_READING = 0.4;
+/**
+ * The panes are held apart permanently rather than closed into a monolith.
+ * You have to be able to see through the gaps for the layering to read at
+ * all; hover only widens what is already open.
+ */
+const PANE_PITCH_REST = 0.4;
+const PANE_PITCH_HOVER = 0.52;
+/** Extra lift for the pane currently being read. */
+const READ_LIFT = 0.26;
 
-const BASE_WIDTH = 3.42;
-const BASE_DEPTH = 2.44;
-const BASE_HEIGHT = 0.44;
+const BASE_WIDTH = 4.34;
+const BASE_DEPTH = 2.52;
+const BASE_HEIGHT = 0.56;
+
+const STACK_HEIGHT = (LAYERS.length - 1) * PANE_PITCH_REST;
 
 // --- Reading sequence ----------------------------------------------------
 
@@ -111,43 +92,30 @@ const READ_TOTAL =
 
 // --- Motion --------------------------------------------------------------
 
-const FLOAT_AMPLITUDE = 0.055;
-const FLOAT_SPEED = 0.34;
-const SPIN_SPEED = 0.035;
-const TILT_X = 0.16;
-const PARALLAX_X = 0.16;
-const PARALLAX_Y = 0.1;
+const FLOAT_AMPLITUDE = 0.05;
+const FLOAT_SPEED = 0.32;
+const SPIN_SPEED = 0.11;
+const TILT_X = 0.14;
+const PARALLAX_X = 0.14;
+const PARALLAX_Y = 0.09;
 const DAMP_SLOW = 2.4;
 const DAMP_FAST = 6;
 
 // --- Palette -------------------------------------------------------------
+// Monochrome by construction. Everything is white at some opacity; there is
+// no hue anywhere in this file.
 
+const SURFACE_COLOR = "#ffffff";
+/** Barely there. This is the number that decides glass vs. chrome. */
+const SURFACE_OPACITY = 0.15;
+const EDGE_COLOR = "#ffffff";
+const EDGE_OPACITY = 0.6;
+const EDGE_SOFT_OPACITY = 0.12;
+const DATA_COLOR = "#ffffff";
+const BASE_COLOR = "#141417";
+const LABEL_COLOR = "rgba(255,255,255,0.78)";
 
-const GLASS_COLOR = "#dadde1";
-/**
- * What the transmission pass samples where the scene is empty.
- *
- * This was previously near-black (#0a0a0d), which is why the object rendered
- * as a black slab: transmission is 1, so the material is almost entirely
- * "what is behind it", and what was behind it was black. Nothing behind the
- * monolith is lit, so this stands in for a lit studio backdrop. It is the
- * single most load-bearing value in the file.
- */
-const GLASS_BACKGROUND = new THREE.Color("#3f434a");
-/**
- * Beer-Lambert absorption. At 1.1 the diagonal path through six stacked
- * slabs was several attenuation lengths, so the glass absorbed almost
- * everything before it reached the eye. Four units is roughly the depth of
- * the whole stack, which leaves it smoked rather than opaque.
- */
-const GLASS_ATTENUATION = "#70757d";
-const GLASS_ATTENUATION_DISTANCE = 2.4;
-const BASE_COLOR = "#16161a";
-const LABEL_COLOR = "rgba(255,255,255,0.72)";
-const PARTICLE_COLOR = "#ffffff";
-const DATALINE_COLOR = "#ffffff";
-
-/** Deterministic, so the particle field is art-directed rather than random. */
+/** Deterministic, so the data field is art-directed rather than random. */
 function createRandom(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -160,12 +128,10 @@ function createRandom(seed: number): () => number {
 }
 
 // --- Labels --------------------------------------------------------------
-// Baked once into a canvas texture each. Small caps, wide tracking, the
-// typographic register of a spec sheet rather than a UI.
 
 const LABEL_TEXTURE_W = 1024;
 const LABEL_TEXTURE_H = 128;
-const LABEL_PLANE_W = 1.5;
+const LABEL_PLANE_W = 1.62;
 const LABEL_PLANE_H = LABEL_PLANE_W * (LABEL_TEXTURE_H / LABEL_TEXTURE_W);
 
 function createLabelTexture(text: string): THREE.CanvasTexture {
@@ -176,17 +142,17 @@ function createLabelTexture(text: string): THREE.CanvasTexture {
   if (ctx !== null) {
     ctx.clearRect(0, 0, LABEL_TEXTURE_W, LABEL_TEXTURE_H);
     ctx.font =
-      "500 54px ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
+      "500 50px ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     ctx.fillStyle = LABEL_COLOR;
-    // Manual tracking: canvas 2D has no letter-spacing in every engine we
-    // ship to, and the wide tracking is most of what makes this read as a
-    // machined label rather than body text.
+    // Manual tracking: canvas 2D letter-spacing is not reliable across the
+    // engines we ship to, and the wide tracking is most of what makes this
+    // read as an engraved label rather than body text.
     let x = 8;
     for (const character of text) {
       ctx.fillText(character, x, LABEL_TEXTURE_H / 2);
-      x += ctx.measureText(character).width + 3.5;
+      x += ctx.measureText(character).width + 3;
     }
   }
   const texture = new THREE.CanvasTexture(canvas);
@@ -196,40 +162,236 @@ function createLabelTexture(text: string): THREE.CanvasTexture {
   return texture;
 }
 
-interface Resources {
-  readonly labels: readonly THREE.CanvasTexture[];
-  readonly particles: THREE.BufferGeometry;
+/**
+ * The pane's own surface: a soft gradient rather than a flat wash, brightest
+ * along one edge. A pane filled with a single opacity reads as a wireframe
+ * with a tint; the gradient is what makes it read as a sheet catching light.
+ * Baked once and shared by all six.
+ */
+function createSurfaceTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 4;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx !== null) {
+    const gradient = ctx.createLinearGradient(0, 0, 0, 256);
+    gradient.addColorStop(0, "rgba(255,255,255,0.16)");
+    gradient.addColorStop(0.5, "rgba(255,255,255,0.06)");
+    gradient.addColorStop(0.86, "rgba(255,255,255,0.3)");
+    gradient.addColorStop(1, "rgba(255,255,255,0.72)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 4, 256);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
 }
 
-const PARTICLE_COUNT = 420;
+const ETCH_TEXTURE_W = 1024;
+const ETCH_TEXTURE_H = 256;
+
+/** The wordmark machined into the plinth's top face, plus the mark opposite it. */
+function createEtchTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = ETCH_TEXTURE_W;
+  canvas.height = ETCH_TEXTURE_H;
+  const ctx = canvas.getContext("2d");
+  if (ctx !== null) {
+    ctx.clearRect(0, 0, ETCH_TEXTURE_W, ETCH_TEXTURE_H);
+    ctx.textBaseline = "middle";
+    // Dimmer than the pane labels. An etch catches a little light; it is not
+    // printed on.
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.font =
+      "500 72px ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
+    ctx.textAlign = "left";
+    let x = 60;
+    for (const character of "Trisheet") {
+      ctx.fillText(character, x, ETCH_TEXTURE_H / 2);
+      x += ctx.measureText(character).width + 5;
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.24)";
+    ctx.font =
+      "600 64px ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText("T", ETCH_TEXTURE_W - 60, ETCH_TEXTURE_H / 2);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+// --- Data geometry -------------------------------------------------------
+// All of it built once, and drawn as three objects total: one point cloud for
+// the height field, one line set for the falling threads, one point cloud for
+// the scattered motes. Individually meshing these would be hundreds of draw
+// calls for something that is meant to read as texture.
+
+const FIELD_COLUMNS = 34;
+const FIELD_ROWS = 24;
+const FIELD_INSET = 0.66;
+
+/** The dot-matrix wave sitting on the top pane. */
+function createFieldGeometry(): THREE.BufferGeometry {
+  const positions = new Float32Array(FIELD_COLUMNS * FIELD_ROWS * 3);
+  let i = 0;
+  for (let column = 0; column < FIELD_COLUMNS; column += 1) {
+    for (let row = 0; row < FIELD_ROWS; row += 1) {
+      const u = column / (FIELD_COLUMNS - 1) - 0.5;
+      const v = row / (FIELD_ROWS - 1) - 0.5;
+      positions[i] = u * PANE_WIDTH * FIELD_INSET;
+      // Two crossed sines: a readable surface rather than noise, and it holds
+      // its shape as the object turns.
+      positions[i + 1] =
+        Math.sin(u * 5.2) * 0.17 + Math.cos(v * 4.1 + u * 2.2) * 0.115 + 0.14;
+      positions[i + 2] = v * PANE_DEPTH * FIELD_INSET;
+      i += 3;
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  return geometry;
+}
+
+const THREAD_COUNT = 220;
+
+/** Fine vertical strands falling through the whole stack. */
+function createThreadGeometry(): THREE.BufferGeometry {
+  const random = createRandom(0x51ce);
+  const positions = new Float32Array(THREAD_COUNT * 2 * 3);
+  const top = STACK_HEIGHT / 2;
+  let i = 0;
+  for (let thread = 0; thread < THREAD_COUNT; thread += 1) {
+    // Two samples averaged pulls the distribution toward the middle, so the
+    // threads fall from under the wave rather than across the whole pane.
+    const x = ((random() + random()) / 2 - 0.5) * PANE_WIDTH * 0.92;
+    const z = ((random() + random()) / 2 - 0.5) * PANE_DEPTH * 0.92;
+    const start = top - random() * STACK_HEIGHT * 0.35;
+    const length = 0.3 + random() * (STACK_HEIGHT * 0.8);
+    positions[i] = x;
+    positions[i + 1] = start;
+    positions[i + 2] = z;
+    positions[i + 3] = x;
+    positions[i + 4] = start - length;
+    positions[i + 5] = z;
+    i += 6;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  return geometry;
+}
+
+const MOTE_COUNT = 260;
+
+/** Scattered points suspended between the panes. */
+function createMoteGeometry(): THREE.BufferGeometry {
+  const random = createRandom(0x0d75);
+  const positions = new Float32Array(MOTE_COUNT * 3);
+  for (let i = 0; i < MOTE_COUNT; i += 1) {
+    positions[i * 3] = (random() - 0.5) * PANE_WIDTH * 0.9;
+    positions[i * 3 + 1] = (random() - 0.5) * STACK_HEIGHT * 1.05;
+    positions[i * 3 + 2] = (random() - 0.5) * PANE_DEPTH * 0.9;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  return geometry;
+}
+
+/**
+ * The rounded-rectangle outline of a pane, in the XZ plane.
+ *
+ * Both the pane solid and its edge hairline are generated from this one
+ * shape, so the outline can never drift out of register with the geometry it
+ * traces.
+ */
+function paneShape(inset: number): THREE.Shape {
+  const w = (PANE_WIDTH / 2) * inset;
+  const d = (PANE_DEPTH / 2) * inset;
+  const r = Math.min(PANE_CORNER_RADIUS * inset, w, d);
+  const shape = new THREE.Shape();
+  shape.moveTo(-w + r, -d);
+  shape.lineTo(w - r, -d);
+  shape.quadraticCurveTo(w, -d, w, -d + r);
+  shape.lineTo(w, d - r);
+  shape.quadraticCurveTo(w, d, w - r, d);
+  shape.lineTo(-w + r, d);
+  shape.quadraticCurveTo(-w, d, -w, d - r);
+  shape.lineTo(-w, -d + r);
+  shape.quadraticCurveTo(-w, -d, -w + r, -d);
+  return shape;
+}
+
+function paneOutline(inset: number): [number, number, number][] {
+  return paneShape(inset)
+    .getPoints(24)
+    .map((point): [number, number, number] => [point.x, 0, point.y]);
+}
+
+/**
+ * The pane solid: a rounded rectangle extruded to its thickness.
+ *
+ * Deliberately not `RoundedBox`. That primitive rounds every edge by a single
+ * radius bounded by the *smallest* dimension — here the 0.075 thickness — so
+ * asking for the reference's large plan-view corners produced degenerate
+ * geometry and hung the renderer outright. Extruding a shape decouples the
+ * two: corners as round as the design wants, thickness as thin as it wants.
+ *
+ * Built once and shared by all six panes.
+ */
+function createPaneGeometry(): THREE.ExtrudeGeometry {
+  const geometry = new THREE.ExtrudeGeometry(paneShape(1), {
+    depth: PANE_THICKNESS,
+    bevelEnabled: true,
+    bevelThickness: 0.005,
+    bevelSize: 0.005,
+    bevelSegments: 2,
+    curveSegments: 8,
+  });
+  // Extrude builds in XY along +Z; lay it flat and centre it on its own
+  // thickness so `position.y` still addresses the middle of the pane.
+  geometry.rotateX(-Math.PI / 2);
+  geometry.translate(0, PANE_THICKNESS / 2, 0);
+  return geometry;
+}
+
+interface Resources {
+  readonly labels: readonly THREE.CanvasTexture[];
+  readonly surface: THREE.CanvasTexture;
+  readonly pane: THREE.ExtrudeGeometry;
+  readonly etch: THREE.CanvasTexture;
+  readonly field: THREE.BufferGeometry;
+  readonly threads: THREE.BufferGeometry;
+  readonly motes: THREE.BufferGeometry;
+}
 
 function useResources(): Resources {
-  const resources = useMemo<Resources>(() => {
-    const random = createRandom(0x7a1e);
-    const stackHeight = LAYERS.length * (SLAB_HEIGHT + GAP_REST);
-    const positions = new Float32Array(PARTICLE_COUNT * 3);
-    for (let i = 0; i < PARTICLE_COUNT; i += 1) {
-      positions[i * 3] = (random() - 0.5) * SLAB_WIDTH * 0.92;
-      positions[i * 3 + 1] = (random() - 0.5) * stackHeight;
-      positions[i * 3 + 2] = (random() - 0.5) * SLAB_DEPTH * 0.92;
-    }
-    const particles = new THREE.BufferGeometry();
-    particles.setAttribute(
-      "position",
-      new THREE.BufferAttribute(positions, 3),
-    );
-    return {
+  const resources = useMemo<Resources>(
+    () => ({
       labels: LAYERS.map((layer) => createLabelTexture(layer.label)),
-      particles,
-    };
-  }, []);
+      surface: createSurfaceTexture(),
+      pane: createPaneGeometry(),
+      etch: createEtchTexture(),
+      field: createFieldGeometry(),
+      threads: createThreadGeometry(),
+      motes: createMoteGeometry(),
+    }),
+    [],
+  );
 
   useEffect(() => {
     return () => {
       for (const label of resources.labels) {
         label.dispose();
       }
-      resources.particles.dispose();
+      resources.surface.dispose();
+      resources.pane.dispose();
+      resources.etch.dispose();
+      resources.field.dispose();
+      resources.threads.dispose();
+      resources.motes.dispose();
     };
   }, [resources]);
 
@@ -237,7 +399,7 @@ function useResources(): Resources {
 }
 
 // --- Shared animation state ---------------------------------------------
-// Held in refs and mutated in `useFrame`. Driving six slabs through React
+// Held in refs and mutated in `useFrame`. Driving six panes through React
 // state would re-render the tree every frame; this way the scene graph is
 // built once and only matrices change.
 
@@ -256,7 +418,7 @@ function ease(t: number): number {
     : 1 - Math.pow(-2 * clamped + 2, 3) / 2;
 }
 
-/** How far layer `index` has lifted, 0..1, given seconds into the sequence. */
+/** How far pane `index` has lifted, 0..1, given seconds into the sequence. */
 function readProgress(index: number, readTime: number): number {
   if (readTime < 0) {
     return 0;
@@ -270,21 +432,35 @@ function readProgress(index: number, readTime: number): number {
   return ease((readTime - order * READ_STAGGER) / READ_RISE);
 }
 
-function Slab({
+/**
+ * One pane: a nearly-invisible slab, a bright hairline tracing its top edge,
+ * a dimmer one under it, and an engraved label.
+ *
+ * The outline is what you actually see. It is drawn geometry rather than a
+ * specular highlight, so it holds at every viewing angle instead of appearing
+ * only where a light happens to reflect — which is exactly why the previous
+ * shaded version disappeared into the background.
+ */
+function Pane({
   index,
   label,
+  surface,
+  geometry,
   drive,
 }: {
   index: number;
   label: THREE.CanvasTexture | undefined;
+  surface: THREE.CanvasTexture;
+  geometry: THREE.ExtrudeGeometry;
   drive: React.RefObject<Drive>;
 }) {
   const groupRef = useRef<THREE.Group>(null);
-  const labelRef = useRef<THREE.Mesh>(null);
-
-  // Measured from the middle of the stack so the monolith stays centred as
-  // the gap opens, rather than growing downward off its own base.
   const offsetFromCentre = index - (LAYERS.length - 1) / 2;
+  const outline = useMemo(() => paneOutline(1), []);
+  const outlineSoft = useMemo(() => paneOutline(0.985), []);
+  // Anchor points for the annotation cards' leader lines. Only some panes
+  // carry one, the way the reference only annotates a few.
+  const anchor = index === 0 || index === 2 || index === 4;
 
   useFrame(() => {
     const group = groupRef.current;
@@ -292,86 +468,78 @@ function Slab({
     if (group === null || state === null) {
       return;
     }
-    const gap = THREE.MathUtils.lerp(GAP_REST, GAP_HOVER, state.separation);
-    const lift = readProgress(index, state.readTime) * GAP_READING;
-    group.position.y =
-      -offsetFromCentre * (SLAB_HEIGHT + gap) + lift * offsetFromCentre * 0.18 +
-      lift;
-
-    const labelMesh = labelRef.current;
-    if (labelMesh !== null) {
-      const material = labelMesh.material;
-      if (material instanceof THREE.MeshBasicMaterial) {
-        // Labels are for inspection, not decoration: they fade up only once
-        // the stack has opened enough for them to sit in clear space.
-        material.opacity =
-          0.28 + 0.62 * Math.max(state.separation, Math.min(lift / GAP_READING, 1));
-      }
-    }
+    const pitch = THREE.MathUtils.lerp(
+      PANE_PITCH_REST,
+      PANE_PITCH_HOVER,
+      state.separation,
+    );
+    const lift = readProgress(index, state.readTime) * READ_LIFT;
+    group.position.y = -offsetFromCentre * pitch + lift;
   });
 
   return (
     <group ref={groupRef}>
-      <RoundedBox
-        args={[SLAB_WIDTH, SLAB_HEIGHT, SLAB_DEPTH]}
-        radius={SLAB_RADIUS}
-        smoothness={SLAB_SMOOTHNESS}
-        creaseAngle={0.4}
-      >
-        {/* The `transmissionSampler` flag is deliberately absent. With it,
-            drei skips its own framebuffer pass and falls back to the built-in
-            transmission target, which excludes transmissive meshes by design —
-            so the slabs could not refract each other, and the stack read as
-            six flat cards. Without it each slab renders its own buffer and you
-            can see layers through layers, which is the whole point of the
-            object. The cost is one extra scene pass per slab, paid for by
-            dropping resolution and samples. */}
-        <MeshTransmissionMaterial
-          samples={2}
-          resolution={128}
-          transmission={1}
-          thickness={2}
-          roughness={0.1}
-          ior={1.5}
-          chromaticAberration={0.03}
-          anisotropicBlur={0.25}
-          distortion={0.04}
-          distortionScale={0.14}
-          temporalDistortion={0}
-          color={GLASS_COLOR}
-          background={GLASS_BACKGROUND}
-          attenuationDistance={GLASS_ATTENUATION_DISTANCE}
-          attenuationColor={GLASS_ATTENUATION}
-        />
-      </RoundedBox>
-
-      {/* A hairline along the top face. Real glass catches light on its
-          edges, and this is what stops the slabs reading as flat quads. */}
-      <mesh position={[0, SLAB_HEIGHT / 2 + 0.001, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[SLAB_WIDTH * 0.995, SLAB_DEPTH * 0.995]} />
+      <mesh geometry={geometry} dispose={null}>
         <meshBasicMaterial
-          color="#ffffff"
+          color={SURFACE_COLOR}
+          map={surface}
           transparent
-          opacity={0.03}
+          opacity={SURFACE_OPACITY}
           depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
         />
       </mesh>
 
+      {anchor ? (
+        <mesh position={[PANE_WIDTH / 2 - 0.02, PANE_THICKNESS / 2, -PANE_DEPTH / 2 + 0.02]}>
+          <sphereGeometry args={[0.024, 10, 10]} />
+          <meshBasicMaterial color={EDGE_COLOR} toneMapped={false} />
+        </mesh>
+      ) : null}
+
+      <Line
+        points={outline}
+        position={[0, PANE_THICKNESS / 2, 0]}
+        color={EDGE_COLOR}
+        transparent
+        opacity={EDGE_OPACITY}
+        lineWidth={1.1}
+        depthWrite={false}
+        toneMapped={false}
+      />
+      <Line
+        points={outlineSoft}
+        position={[0, -PANE_THICKNESS / 2, 0]}
+        color={EDGE_COLOR}
+        transparent
+        opacity={EDGE_SOFT_OPACITY}
+        lineWidth={1}
+        depthWrite={false}
+        toneMapped={false}
+      />
+
       {label === undefined ? null : (
+        // Lifted clear of the pane's top face. This previously sat at y=0.005
+        // while the box's top face is at PANE_THICKNESS/2 (0.0375), so the
+        // label plane was *inside* the geometry and never drew. `renderOrder`
+        // keeps it above the pane body, which writes no depth.
         <mesh
-          ref={labelRef}
           position={[
-            -SLAB_WIDTH / 2 + LABEL_PLANE_W / 2 + 0.14,
-            0,
-            SLAB_DEPTH / 2 + 0.012,
+            -PANE_WIDTH / 2 + LABEL_PLANE_W / 2 + 0.16,
+            PANE_THICKNESS / 2 + 0.004,
+            PANE_DEPTH / 2 - 0.2,
           ]}
+          rotation={[-Math.PI / 2, 0, 0]}
+          renderOrder={2}
         >
           <planeGeometry args={[LABEL_PLANE_W, LABEL_PLANE_H]} />
           <meshBasicMaterial
             map={label}
             transparent
-            opacity={0.28}
+            opacity={0.92}
             depthWrite={false}
+            depthTest={false}
             toneMapped={false}
           />
         </mesh>
@@ -381,127 +549,137 @@ function Slab({
 }
 
 /**
- * The fine vertical rules drawn in the space a lifted slab leaves behind.
- * They only exist while the sequence is running, which is the whole point:
- * they are the visual claim that something is being read.
+ * The contents: the height field on the top pane, threads falling through the
+ * stack, motes between them. Threads brighten while a report is being read —
+ * the one moment the object is doing something rather than being something.
  */
-function DataLines({ drive }: { drive: React.RefObject<Drive> }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const columns = useMemo(() => {
-    const random = createRandom(0x2f19);
-    return LAYERS.slice(0, -1).flatMap((layer, index) =>
-      Array.from({ length: 5 }, (_, line) => ({
-        key: `${layer.id}-${line}`,
-        index,
-        x: (random() - 0.5) * SLAB_WIDTH * 0.86,
-        z: (random() - 0.5) * SLAB_DEPTH * 0.72,
-      })),
-    );
-  }, []);
+function DataField({ resources, drive }: { resources: Resources; drive: React.RefObject<Drive> }) {
+  const threadRef = useRef<THREE.LineSegments>(null);
 
   useFrame(() => {
-    const group = groupRef.current;
+    const threads = threadRef.current;
     const state = drive.current;
-    if (group === null || state === null) {
+    if (threads === null || state === null) {
       return;
     }
-    const active = state.readTime >= 0;
-    group.visible = active;
-    if (!active) {
-      return;
-    }
-    for (const child of group.children) {
-      const index = child.userData.layerIndex;
-      if (typeof index !== "number") {
-        continue;
-      }
-      const progress = readProgress(index, state.readTime);
-      child.scale.y = Math.max(progress, 0.001);
-      if (child instanceof THREE.Mesh) {
-        const material = child.material;
-        if (material instanceof THREE.MeshBasicMaterial) {
-          material.opacity = 0.34 * Math.sin(progress * Math.PI);
-        }
-      }
+    const material = threads.material;
+    if (material instanceof THREE.LineBasicMaterial) {
+      const reading =
+        state.readTime < 0
+          ? 0
+          : Math.sin(
+              THREE.MathUtils.clamp(state.readTime / READ_TOTAL, 0, 1) *
+                Math.PI,
+            );
+      material.opacity = 0.1 + 0.34 * reading + 0.06 * state.separation;
     }
   });
 
-  const stackHeight = LAYERS.length * (SLAB_HEIGHT + GAP_REST);
-
   return (
-    <group ref={groupRef} visible={false}>
-      {columns.map((column) => (
-        <mesh
-          key={column.key}
-          position={[
-            column.x,
-            stackHeight / 2 -
-              (column.index + 0.5) * (SLAB_HEIGHT + GAP_REST) -
-              SLAB_HEIGHT / 2,
-            column.z,
-          ]}
-          userData={{ layerIndex: column.index }}
-        >
-          <boxGeometry args={[0.004, GAP_READING, 0.004]} />
-          <meshBasicMaterial
-            color={DATALINE_COLOR}
-            transparent
-            opacity={0}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-      ))}
+    <group>
+      <points
+        geometry={resources.field}
+        position={[0, STACK_HEIGHT / 2 + PANE_THICKNESS, 0]}
+        dispose={null}
+      >
+        <pointsMaterial
+          color={DATA_COLOR}
+          size={0.017}
+          sizeAttenuation
+          transparent
+          opacity={0.72}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </points>
+
+      <lineSegments ref={threadRef} geometry={resources.threads} dispose={null}>
+        <lineBasicMaterial
+          color={DATA_COLOR}
+          transparent
+          opacity={0.1}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </lineSegments>
+
+      <points geometry={resources.motes} dispose={null}>
+        <pointsMaterial
+          color={DATA_COLOR}
+          size={0.012}
+          sizeAttenuation
+          transparent
+          opacity={0.4}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </points>
     </group>
   );
 }
 
-function Particles({ geometry }: { geometry: THREE.BufferGeometry }) {
+function Base({ etch }: { etch: THREE.CanvasTexture }) {
+  const outline = useMemo(
+    () =>
+      [
+        [-BASE_WIDTH / 2, 0, -BASE_DEPTH / 2],
+        [BASE_WIDTH / 2, 0, -BASE_DEPTH / 2],
+        [BASE_WIDTH / 2, 0, BASE_DEPTH / 2],
+        [-BASE_WIDTH / 2, 0, BASE_DEPTH / 2],
+        [-BASE_WIDTH / 2, 0, -BASE_DEPTH / 2],
+      ] as [number, number, number][],
+    [],
+  );
+
   return (
-    <points geometry={geometry} dispose={null}>
-      <pointsMaterial
-        color={PARTICLE_COLOR}
-        size={0.012}
-        sizeAttenuation
+    <group position={[0, -STACK_HEIGHT / 2 - BASE_HEIGHT / 2 - 0.3, 0]}>
+      <RoundedBox
+        args={[BASE_WIDTH, BASE_HEIGHT, BASE_DEPTH]}
+        radius={0.02}
+        smoothness={2}
+        creaseAngle={0.4}
+      >
+        {/* Matte, unlit and nearly black. The pedestal is a shadow the object
+            stands on, not a feature competing with it. */}
+        <meshBasicMaterial color={BASE_COLOR} toneMapped={false} />
+      </RoundedBox>
+      <Line
+        points={outline}
+        position={[0, BASE_HEIGHT / 2, 0]}
+        color={EDGE_COLOR}
         transparent
-        opacity={0.28}
+        opacity={0.4}
+        lineWidth={1}
         depthWrite={false}
         toneMapped={false}
       />
-    </points>
-  );
-}
+      <Line
+        points={outline}
+        position={[0, -BASE_HEIGHT / 2, 0]}
+        color={EDGE_COLOR}
+        transparent
+        opacity={0.12}
+        lineWidth={1}
+        depthWrite={false}
+        toneMapped={false}
+      />
 
-function Base() {
-  return (
-    <group position={[0, -(LAYERS.length * (SLAB_HEIGHT + GAP_REST)) / 2 - BASE_HEIGHT / 2 - 0.02, 0]}>
-      <RoundedBox
-        args={[BASE_WIDTH, BASE_HEIGHT, BASE_DEPTH]}
-        radius={0.03}
-        smoothness={3}
-        creaseAngle={0.4}
+      {/* "Trisheet" machined into the top face, with the mark at the far end. */}
+      <mesh
+        position={[0, BASE_HEIGHT / 2 + 0.003, BASE_DEPTH / 2 - 0.34]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        renderOrder={2}
       >
-        {/* Matte, not metal. At metalness 0.85 this was ~100% environment
-            reflection, and the environment is nearly black, so it rendered as
-            a black void. A machined anodised pedestal is a dielectric. */}
-        <meshStandardMaterial
-          color={BASE_COLOR}
-          roughness={0.62}
-          metalness={0}
-          envMapIntensity={0.3}
-        />
-      </RoundedBox>
-      {/* Top chamfer catch-light. */}
-      <mesh position={[0, BASE_HEIGHT / 2 + 0.001, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[BASE_WIDTH * 0.99, BASE_DEPTH * 0.99]} />
+        <planeGeometry args={[BASE_WIDTH * 0.92, (BASE_WIDTH * 0.92 * ETCH_TEXTURE_H) / ETCH_TEXTURE_W]} />
         <meshBasicMaterial
-          color="#ffffff"
+          map={etch}
           transparent
-          opacity={0.045}
+          opacity={0.95}
           depthWrite={false}
+          depthTest={false}
+          toneMapped={false}
         />
       </mesh>
-
     </group>
   );
 }
@@ -526,8 +704,8 @@ function Monolith({
     if (group === null) {
       return;
     }
-    // delta is clamped because a backgrounded tab returns one enormous frame,
-    // which would otherwise snap the whole rig to its target in one step.
+    // Clamped because a backgrounded tab returns one enormous frame, which
+    // would otherwise snap the whole rig to its target in a single step.
     const dt = Math.min(delta, 1 / 30);
 
     if (tokenRef.current !== readToken) {
@@ -555,8 +733,6 @@ function Monolith({
     const t = state.clock.elapsedTime;
     group.position.y = Math.sin(t * FLOAT_SPEED) * FLOAT_AMPLITUDE;
 
-    // Parallax leads the spin rather than replacing it, so the object never
-    // stops moving but always leans toward the reader.
     const targetY = t * SPIN_SPEED + state.pointer.x * PARALLAX_X;
     const targetX = TILT_X - state.pointer.y * PARALLAX_Y;
     group.rotation.y = THREE.MathUtils.damp(
@@ -574,92 +750,20 @@ function Monolith({
   });
 
   return (
-    <group ref={groupRef} rotation={[TILT_X, 0.42, 0]}>
+    <group ref={groupRef} rotation={[TILT_X, 0.5, 0]}>
       {LAYERS.map((layer, index) => (
-        <Slab
+        <Pane
           key={layer.id}
           index={index}
           label={resources.labels[index]}
+          surface={resources.surface}
+          geometry={resources.pane}
           drive={driveRef}
         />
       ))}
-      <Particles geometry={resources.particles} />
-      <DataLines drive={driveRef} />
-      <Base />
+      <DataField resources={resources} drive={driveRef} />
+      <Base etch={resources.etch} />
     </group>
-  );
-}
-
-/**
- * The studio, built from geometry rather than an HDR file so nothing has to
- * download and nothing fails offline or behind a strict CSP.
- *
- * A glass object is almost entirely a picture of its surroundings, so this
- * rig *is* the material — no amount of tuning the shader compensates for an
- * environment that is mostly black, which is what the previous four dim
- * lightformers amounted to.
- *
- * Five sources, in the order a product photographer would place them: a broad
- * overhead softbox for the top faces, two narrow high-intensity strips raking
- * the left and right edges (these are what draw the bright white chamfer
- * lines), a back light for silhouette separation, and a dim floor bounce so
- * the underside is not dead. Resolution stays at 256, and is not a knob to
- * turn: 512 was measured, and together with the transmission passes it froze
- * the renderer outright — see the performance notes at the top of this file.
- * The rim strips hold at 256 at the widths above, which is what that budget
- * buys.
- */
-function Studio() {
-  return (
-    <Environment resolution={256}>
-      {/* Key: broad, soft, overhead. */}
-      <Lightformer
-        form="rect"
-        intensity={3.2}
-        color="#ffffff"
-        position={[0, 6, 1]}
-        scale={[12, 7, 1]}
-        rotation={[Math.PI / 2, 0, 0]}
-      />
-      {/* Rim left and right: narrow and bright. Width is deliberately small —
-          a wide source washes the face, a narrow one draws an edge. */}
-      <Lightformer
-        form="rect"
-        intensity={10}
-        color="#ffffff"
-        position={[-4.6, 1.2, 1.4]}
-        scale={[0.7, 9, 1]}
-        rotation={[0, Math.PI / 2, 0]}
-      />
-      <Lightformer
-        form="rect"
-        intensity={7.5}
-        color="#ffffff"
-        position={[4.6, 0.4, 1.8]}
-        scale={[0.7, 9, 1]}
-        rotation={[0, -Math.PI / 2, 0]}
-      />
-      {/* Back light, for separation from a near-black page. */}
-      <Lightformer
-        form="rect"
-        intensity={2.6}
-        color="#ffffff"
-        position={[0, 1.5, -6]}
-        scale={[7, 5, 1]}
-        rotation={[0, 0, 0]}
-      />
-      {/* Floor bounce. Dim on purpose: enough to keep the underside of the
-          stack and the pedestal's chamfer alive, not enough to flatten the
-          contact shadow underneath. */}
-      <Lightformer
-        form="circle"
-        intensity={0.7}
-        color="#ffffff"
-        position={[0, -4.5, 1]}
-        scale={[8, 8, 1]}
-        rotation={[-Math.PI / 2, 0, 0]}
-      />
-    </Environment>
   );
 }
 
@@ -680,10 +784,10 @@ function DprGovernor() {
 }
 
 /**
- * Under `frameloop="demand"` nothing schedules a frame after the environment
- * and transmission buffers finish sizing, so the first composed image can be
- * missed entirely — a black canvas for exactly the readers who asked for less
- * motion. Nudge it on mount and on resize.
+ * Under `frameloop="demand"` nothing schedules a frame once the scene settles,
+ * so the first composed image can be missed entirely — a blank canvas for
+ * exactly the readers who asked for less motion, which is easy to ship
+ * unnoticed. Nudge it on mount and on resize.
  */
 function StillFrameNudge({ active }: { active: boolean }) {
   const invalidate = useThree((state) => state.invalidate);
@@ -719,48 +823,24 @@ export function MonolithCanvas({
   const animate = !reducedMotion;
 
   return (
-    // Transparent, with no `<color attach="background">`: the hero owns the
-    // page colour and the object floats on it, so there is no seam where the
-    // canvas ends. Pointer events stay enabled — R3F derives `state.pointer`
-    // from events on the canvas element, and disabling them would silently
-    // kill the parallax while leaving everything else working.
+    // Transparent, with no scene background: the hero owns the page colour and
+    // the object floats on it, so there is no seam where the canvas ends.
+    // Pointer events stay enabled — R3F derives `state.pointer` from events on
+    // the canvas element, and disabling them would silently kill the parallax.
+    //
+    // No tone mapping. Every material here is unlit and already authored in
+    // display values; a filmic curve would only crush the hairlines that carry
+    // the whole object.
     <Canvas
       dpr={[1, 1.75]}
-      // AgX rather than R3F's ACESFilmic default. ACES has an aggressive toe
-      // that crushes shadows, which on an object this dark removed most of
-      // the tonal separation in the glass before it ever reached the screen.
-      // AgX holds the low end and rolls off highlights without desaturating,
-      // which is why it has become the default for product renders.
-      gl={{
-        antialias: true,
-        alpha: true,
-        toneMapping: THREE.AgXToneMapping,
-        toneMappingExposure: 1.0,
-      }}
-      camera={{ position: [0, 0.6, 8.4], fov: 30, near: 0.1, far: 40 }}
+      flat
+      gl={{ antialias: true, alpha: true }}
+      camera={{ position: [0, 0.35, 14.2], fov: 30, near: 0.1, far: 40 }}
       frameloop={reducedMotion ? "demand" : "always"}
     >
       <StillFrameNudge active={reducedMotion} />
       {animate ? <DprGovernor /> : null}
-      <ambientLight intensity={0.18} />
-      <Studio />
       <Monolith hovered={hovered} readToken={readToken} animate={animate} />
-
-      {/* A real contact shadow, replacing the additive white disc that used to
-          sit here. That disc was a *glow* — it lightened exactly where contact
-          darkening belongs, which is why the pedestal never looked like it was
-          standing on anything. Positioned in world space, outside the rotating
-          group, so the shadow stays on the floor while the object turns. */}
-      <ContactShadows
-        position={[0, -1.32, 0]}
-        scale={11}
-        blur={2.8}
-        opacity={0.75}
-        far={4}
-        resolution={512}
-        color="#000000"
-        frames={1}
-      />
     </Canvas>
   );
 }

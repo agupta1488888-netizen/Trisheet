@@ -42,6 +42,7 @@ import type {
 } from "@/lib/types";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { AiFinancialAgentSection } from "@/components/input/ai-financial-agent-section";
+import { MonolithAnnotations } from "@/components/input/monolith-annotations";
 import { TickerForm } from "@/components/input/ticker-form";
 
 const MonolithCanvas = dynamic(
@@ -239,6 +240,7 @@ export function InputScreen({
               hovered={isMonolithHovered && !prefersReducedMotion}
               readToken={readToken}
             />
+            <MonolithAnnotations />
           </div>
         </div>
       </div>
