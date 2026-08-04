@@ -39,6 +39,8 @@ Public interface
     fact_id(fact) -> str
     project_dcf(facts, discount_rate=..., fcf_growth_rate=...,
         terminal_growth_rate=..., projection_years=...) -> DcfResult
+    project_dcf_sensitivity(facts, ..., steps=...) -> DcfSensitivityResult
+    project_dcf_scenarios(facts, ..., deltas=...) -> DcfScenarioResult
 """
 
 from __future__ import annotations
@@ -67,6 +69,8 @@ from app.config import (
     DCF_DEFAULT_FCF_GROWTH_RATE,
     DCF_DEFAULT_PROJECTION_YEARS,
     DCF_DEFAULT_TERMINAL_GROWTH_RATE,
+    DCF_SCENARIO_FCF_GROWTH_DELTAS,
+    DCF_SENSITIVITY_DISCOUNT_RATE_STEPS,
     DISPLAY_SCALE_DIVISOR,
     GEOGRAPHIC_SEGMENT_AXES,
     GROWTH_METRICS,
@@ -583,6 +587,201 @@ def project_dcf(
         fcf_growth_rate=growth,
         terminal_growth_rate=terminal,
         projection_years=projection_years,
+        unavailable_reason=None,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DcfSensitivityPoint:
+    """One discount-rate point in a sensitivity table, and the DCF result at it."""
+
+    discount_rate: DcfAssumption
+    result: DcfResult
+
+
+@dataclass(frozen=True, slots=True)
+class DcfSensitivityResult:
+    """A discounted-cash-flow estimate re-run across a range of discount rates.
+
+    Every point shares the same real inputs (`base_fcf_fact_id`,
+    `net_debt_fact_id`, `shares_fact_id`) — only the discount-rate assumption
+    varies between points. `unavailable_reason` set means the base point
+    could not be computed, and no other point was attempted — a reader is
+    never shown a partial table sitting next to a point that could not be
+    built.
+    """
+
+    points: tuple[DcfSensitivityPoint, ...]
+    base_fcf_fact_id: str | None
+    net_debt_fact_id: str | None
+    shares_fact_id: str | None
+    unavailable_reason: str | None = None
+
+
+def project_dcf_sensitivity(
+    facts: Sequence[Fact],
+    *,
+    discount_rate: float | None = None,
+    fcf_growth_rate: float | None = None,
+    terminal_growth_rate: float | None = None,
+    projection_years: int = DCF_DEFAULT_PROJECTION_YEARS,
+    steps: Sequence[float] = DCF_SENSITIVITY_DISCOUNT_RATE_STEPS,
+) -> DcfSensitivityResult:
+    """A discounted-cash-flow estimate re-run at several discount rates.
+
+    The base rate is `discount_rate` when supplied, else
+    `DCF_DEFAULT_DISCOUNT_RATE` — the same resolution `project_dcf` itself
+    applies. Each offset in `steps` is added to that base rate and run
+    through `project_dcf` unchanged; no DCF maths is duplicated here.
+
+    The base point (offset 0.0) is computed first and reused rather than
+    recomputed. If it comes back unavailable, the other points are never
+    run, since a discount rate that fails to yield a value at the base case
+    would fail identically or worse at every other offset.
+    """
+    base_rate = (
+        discount_rate if discount_rate is not None else DCF_DEFAULT_DISCOUNT_RATE
+    )
+
+    base_result = project_dcf(
+        facts,
+        discount_rate=base_rate,
+        fcf_growth_rate=fcf_growth_rate,
+        terminal_growth_rate=terminal_growth_rate,
+        projection_years=projection_years,
+    )
+    if base_result.unavailable_reason is not None:
+        return DcfSensitivityResult(
+            points=(),
+            base_fcf_fact_id=None,
+            net_debt_fact_id=None,
+            shares_fact_id=None,
+            unavailable_reason=base_result.unavailable_reason,
+        )
+
+    points: list[DcfSensitivityPoint] = []
+    for step in steps:
+        result = (
+            base_result
+            if step == 0.0
+            else project_dcf(
+                facts,
+                discount_rate=base_rate + step,
+                fcf_growth_rate=fcf_growth_rate,
+                terminal_growth_rate=terminal_growth_rate,
+                projection_years=projection_years,
+            )
+        )
+        points.append(
+            DcfSensitivityPoint(discount_rate=result.discount_rate, result=result)
+        )
+
+    return DcfSensitivityResult(
+        points=tuple(points),
+        base_fcf_fact_id=base_result.base_fcf_fact_id,
+        net_debt_fact_id=base_result.net_debt_fact_id,
+        shares_fact_id=base_result.shares_fact_id,
+        unavailable_reason=None,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DcfScenarioCase:
+    """One named case (e.g. "bear", "base", "bull") in a scenario table."""
+
+    name: str
+    fcf_growth_rate: DcfAssumption
+    result: DcfResult
+
+
+@dataclass(frozen=True, slots=True)
+class DcfScenarioResult:
+    """A discounted-cash-flow estimate re-run under named growth scenarios.
+
+    Every case shares the same real inputs (`base_fcf_fact_id`,
+    `net_debt_fact_id`, `shares_fact_id`) — only the free-cash-flow growth
+    assumption varies between cases. `unavailable_reason` set means the base
+    case could not be computed, and no other case was attempted.
+    """
+
+    cases: tuple[DcfScenarioCase, ...]
+    base_fcf_fact_id: str | None
+    net_debt_fact_id: str | None
+    shares_fact_id: str | None
+    unavailable_reason: str | None = None
+
+
+def project_dcf_scenarios(
+    facts: Sequence[Fact],
+    *,
+    discount_rate: float | None = None,
+    fcf_growth_rate: float | None = None,
+    terminal_growth_rate: float | None = None,
+    projection_years: int = DCF_DEFAULT_PROJECTION_YEARS,
+    deltas: Mapping[str, float] | None = None,
+) -> DcfScenarioResult:
+    """A discounted-cash-flow estimate re-run under named free-cash-flow
+    growth scenarios (bear / base / bull, by default).
+
+    The base growth rate is `fcf_growth_rate` when supplied, else
+    `DCF_DEFAULT_FCF_GROWTH_RATE` — the same resolution `project_dcf` itself
+    applies. Each named delta in `deltas` (default
+    `DCF_SCENARIO_FCF_GROWTH_DELTAS`) is added to that base rate and run
+    through `project_dcf` unchanged; no DCF maths is duplicated here.
+
+    `deltas` defaults to `None` rather than the config dict directly, so a
+    mutable default is never shared as a function default across calls.
+
+    The base case (delta 0.0) is computed first and reused rather than
+    recomputed. If it comes back unavailable, the other cases are never run.
+    """
+    resolved_deltas = (
+        deltas if deltas is not None else DCF_SCENARIO_FCF_GROWTH_DELTAS
+    )
+    base_growth = (
+        fcf_growth_rate if fcf_growth_rate is not None else DCF_DEFAULT_FCF_GROWTH_RATE
+    )
+
+    base_result = project_dcf(
+        facts,
+        discount_rate=discount_rate,
+        fcf_growth_rate=base_growth,
+        terminal_growth_rate=terminal_growth_rate,
+        projection_years=projection_years,
+    )
+    if base_result.unavailable_reason is not None:
+        return DcfScenarioResult(
+            cases=(),
+            base_fcf_fact_id=None,
+            net_debt_fact_id=None,
+            shares_fact_id=None,
+            unavailable_reason=base_result.unavailable_reason,
+        )
+
+    cases: list[DcfScenarioCase] = []
+    for name, delta in resolved_deltas.items():
+        result = (
+            base_result
+            if delta == 0.0
+            else project_dcf(
+                facts,
+                discount_rate=discount_rate,
+                fcf_growth_rate=base_growth + delta,
+                terminal_growth_rate=terminal_growth_rate,
+                projection_years=projection_years,
+            )
+        )
+        cases.append(
+            DcfScenarioCase(
+                name=name, fcf_growth_rate=result.fcf_growth_rate, result=result
+            )
+        )
+
+    return DcfScenarioResult(
+        cases=tuple(cases),
+        base_fcf_fact_id=base_result.base_fcf_fact_id,
+        net_debt_fact_id=base_result.net_debt_fact_id,
+        shares_fact_id=base_result.shares_fact_id,
         unavailable_reason=None,
     )
 

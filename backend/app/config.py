@@ -12,10 +12,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Anchored to this file rather than left as a bare ".env", so it resolves to
+#: backend/.env regardless of the process's working directory. A relative path
+#: only found it when the server happened to be started from inside backend/;
+#: otherwise Settings loaded silently unconfigured.
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 # --- SEC EDGAR endpoints ----------------------------------------------------
 # Filings are immutable, so responses from these endpoints are cached forever.
@@ -2288,10 +2295,6 @@ STORAGE_UPLOAD_TIMEOUT_SECONDS = 60.0
 
 # --- Document assembly (m12) -------------------------------------------------
 
-#: Periods shown across a figure table. Wider than this and the columns stop
-#: being readable on a printed page.
-MAX_TABLE_PERIODS = 5
-
 #: Segments plotted in the mix chart. Beyond this the bands are unreadable, and
 #: the remainder is not silently merged into an "other" the filer never named.
 MAX_CHART_SEGMENTS = 8
@@ -2389,6 +2392,19 @@ DCF_DEFAULT_TERMINAL_GROWTH_RATE = 0.02
 #: Years of free cash flow explicitly projected before the terminal value
 #: takes over, when the caller supplies none.
 DCF_DEFAULT_PROJECTION_YEARS = 5
+
+#: Discount-rate offsets (percentage points, as fractions) around the base
+#: rate for a sensitivity table. Fixed and illustrative, same reasoning as
+#: the DCF defaults above — never derived from this filer's data.
+DCF_SENSITIVITY_DISCOUNT_RATE_STEPS: tuple[float, ...] = (-0.02, -0.01, 0.0, 0.01, 0.02)
+
+#: Named free-cash-flow growth scenarios, as deltas from the base growth
+#: assumption. Fixed illustrative deltas, not fitted to this filer.
+DCF_SCENARIO_FCF_GROWTH_DELTAS: dict[str, float] = {
+    "bear": -0.02,
+    "base": 0.0,
+    "bull": 0.02,
+}
 
 # --- Company-website fetch (webfetch) -----------------------------------------
 # The one place besides edgar.py (sec.gov), m05_market.py (the configured
@@ -2499,6 +2515,14 @@ SECONDS_PER_MINUTE = 60.0
 #: system's own data.
 CHAT_WEB_SEARCH_ENABLED = False
 
+#: Off by default, same reasoning as `CHAT_WEB_SEARCH_ENABLED` above, one
+#: step further: this tier isn't grounded in any of this system's own data
+#: at all, not even a fetched page. It's the absolute last resort in the
+#: chat cascade, tried only after web search and everything before it have
+#: come up empty. A deployment turns it on deliberately, the same one-line
+#: step web search already requires.
+CHAT_GENERAL_CHAT_ENABLED = False
+
 #: Server-side searches Anthropic's hosted tool may run for one chat turn.
 LLM_WEB_SEARCH_MAX_USES = 3
 
@@ -2507,7 +2531,7 @@ class Settings(BaseSettings):
     """Environment-backed settings. Instantiated once via `get_settings`."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
