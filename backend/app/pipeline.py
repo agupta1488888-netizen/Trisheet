@@ -481,19 +481,27 @@ async def _extract(
         if not source_urls:
             outcome.skip("No link was supplied.", 0)
             return
-        notes = await m13_sources.read_sources(source_urls, ticker)
+        result = await m13_sources.read_sources(source_urls, ticker)
         # Into `source_notes`, never `facts`. m06's gate runs over `facts`
         # alone, so this is what keeps a supplied page out of the financial
         # highlights table — see `m13_sources` for why that matters.
-        work.source_notes.extend(notes)
-        if not notes:
-            outcome.skip(
-                "The supplied link could not be read, or had nothing to "
-                "record. The report is generated without it.",
-                0,
+        work.source_notes.extend(result.notes)
+        if not result.notes:
+            # Two different findings, previously collapsed into one message
+            # that could not say which had happened. `unreachable_urls` says
+            # so directly. A reader supplies at most a couple of links, so
+            # "was this batch reachable at all" is precise enough without
+            # naming each URL's own outcome.
+            detail = (
+                "The supplied link could not be reached. The report is "
+                "generated without it."
+                if result.unreachable_urls
+                else "The supplied link had nothing to add beyond what the "
+                "filings already show. The report is generated without it."
             )
+            outcome.skip(detail, 0)
             return
-        outcome.done(len(notes))
+        outcome.done(len(result.notes))
 
     await _optional(tracker, "m13", work, sources)
 

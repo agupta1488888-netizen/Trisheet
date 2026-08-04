@@ -35,8 +35,15 @@ Degradation
     dependency, and a report whose supplied link was unreachable is still a
     report.
 
+    These are different failures, and the pipeline step has to be able to
+    tell them apart. "Could not be read" (blocked, timed out, refused) and
+    "read fine but had nothing to say" are different findings — the first is
+    worth a reader's attention, the second usually is not — so `read_sources`
+    returns which links were never reached alongside the notes, rather than
+    collapsing both into an empty list and forcing the caller to guess.
+
 Public interface
-    read_sources(urls, ticker) -> list[SourceNote]
+    read_sources(urls, ticker) -> SourceReadResult
 """
 
 from __future__ import annotations
@@ -45,6 +52,7 @@ import asyncio
 import datetime as dt
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
@@ -58,6 +66,23 @@ from app.models import SourceNote, SourceTier, SourceType
 from app.services import llm, webfetch
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceReadResult:
+    """What reading the supplied links produced.
+
+    `notes` empty has two different causes a reader needs told apart: a link
+    that could not be reached at all, and a link that was read but had
+    nothing worth recording — a cookie banner, a login wall, a page that says
+    nothing about the company. `unreachable_urls` names which links hit the
+    first case, so the pipeline step can report the one that actually
+    happened rather than a message honest about both possibilities and useful
+    for neither.
+    """
+
+    notes: list[SourceNote] = field(default_factory=list)
+    unreachable_urls: list[str] = field(default_factory=list)
 
 #: The rules. Adapted from `chat_agent._COMPANY_SITE_SYSTEM_PROMPT`, which
 #: solves the same problem for one chat turn: a page is not a filing, and the
@@ -134,8 +159,14 @@ def _note_texts(answer: dict[str, Any]) -> list[str]:
     ][:SOURCE_NOTES_MAX_PER_URL]
 
 
-async def _read_one(url: str, ticker: str) -> list[SourceNote]:
-    """Reads one page. Returns no notes rather than raising, for any reason."""
+async def _read_one(url: str, ticker: str) -> tuple[list[SourceNote], bool]:
+    """Reads one page. Returns `(notes, reached)` rather than raising.
+
+    `reached` is False only when the page itself could not be fetched —
+    refused, timed out, blocked. It is True whenever the page was actually
+    read, even if that read produced no notes, because a model failure or an
+    empty answer is not the same finding as a page nothing could open.
+    """
     try:
         page = await webfetch.fetch_page(url)
     except webfetch.WebfetchError as cause:
@@ -144,7 +175,7 @@ async def _read_one(url: str, ticker: str) -> list[SourceNote]:
             extra={"url": url},
             exc_info=cause,
         )
-        return []
+        return [], False
 
     try:
         answer = await llm.complete_json(
@@ -159,7 +190,7 @@ async def _read_one(url: str, ticker: str) -> list[SourceNote]:
             extra={"url": page.url},
             exc_info=cause,
         )
-        return []
+        return [], True
 
     fetched_at = dt.datetime.now(dt.UTC)
     notes: list[SourceNote] = []
@@ -189,12 +220,12 @@ async def _read_one(url: str, ticker: str) -> list[SourceNote]:
     logger.info(
         "Supplied link read", extra={"url": page.url, "notes": len(notes)}
     )
-    return notes
+    return notes, True
 
 
 async def read_sources(
     urls: Sequence[str], ticker: str
-) -> list[SourceNote]:
+) -> SourceReadResult:
     """Reads every supplied link and returns what they say.
 
     Args:
@@ -209,7 +240,7 @@ async def read_sources(
     """
     accepted = list(urls)[:SOURCE_LINKS_MAX]
     if not accepted:
-        return []
+        return SourceReadResult()
 
     # Concurrent because each is a separate host and they are independent;
     # `return_exceptions` so one failure cannot cancel the others, though
@@ -220,12 +251,17 @@ async def read_sources(
     )
 
     notes: list[SourceNote] = []
-    for result in results:
+    unreachable: list[str] = []
+    for url, result in zip(accepted, results, strict=True):
         if isinstance(result, BaseException):
             logger.warning("Supplied link raised unexpectedly", exc_info=result)
+            unreachable.append(url)
             continue
-        notes.extend(result)
-    return notes
+        url_notes, reached = result
+        notes.extend(url_notes)
+        if not reached:
+            unreachable.append(url)
+    return SourceReadResult(notes=notes, unreachable_urls=unreachable)
 
 
-__all__ = ["read_sources"]
+__all__ = ["SourceReadResult", "read_sources"]

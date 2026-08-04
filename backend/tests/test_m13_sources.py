@@ -57,10 +57,11 @@ async def test_reads_a_page_into_cited_notes(
         },
     )
 
-    notes = await m13_sources.read_sources([PAGE_URL], TICKER)
+    result = await m13_sources.read_sources([PAGE_URL], TICKER)
 
-    assert len(notes) == 1
-    note = notes[0]
+    assert result.unreachable_urls == []
+    assert len(result.notes) == 1
+    note = result.notes[0]
     assert note.text == "The company opened a plant in Ohio."
     assert str(note.source_url) == PAGE_URL
     assert note.tier == SourceTier.COMPANY
@@ -81,9 +82,9 @@ async def test_cites_the_url_actually_reached_not_the_one_supplied(
     monkeypatch.setattr(m13_sources.webfetch, "fetch_page", _fetch)
     _stub_llm(monkeypatch, {"notes": [{"text": "A statement."}], "not_found": False})
 
-    notes = await m13_sources.read_sources(["https://example.com/start"], TICKER)
+    result = await m13_sources.read_sources(["https://example.com/start"], TICKER)
 
-    assert str(notes[0].source_url) == "https://example.com/final"
+    assert str(result.notes[0].source_url) == "https://example.com/final"
 
 
 async def test_an_unreachable_page_yields_no_notes_and_does_not_raise(
@@ -98,7 +99,12 @@ async def test_an_unreachable_page_yields_no_notes_and_does_not_raise(
     monkeypatch.setattr(m13_sources.webfetch, "fetch_page", _fail)
     _refuse_llm(monkeypatch)
 
-    assert await m13_sources.read_sources([PAGE_URL], TICKER) == []
+    result = await m13_sources.read_sources([PAGE_URL], TICKER)
+
+    assert result.notes == []
+    # The whole point of this change: a page that could not be fetched is
+    # distinguishable from one that was read and had nothing to say.
+    assert result.unreachable_urls == [PAGE_URL]
 
 
 async def test_a_blocked_url_yields_no_notes(
@@ -110,12 +116,17 @@ async def test_a_blocked_url_yields_no_notes(
     monkeypatch.setattr(m13_sources.webfetch, "fetch_page", _blocked)
     _refuse_llm(monkeypatch)
 
-    assert await m13_sources.read_sources(["http://169.254.169.254/"], TICKER) == []
+    result = await m13_sources.read_sources(["http://169.254.169.254/"], TICKER)
+
+    assert result.notes == []
+    assert result.unreachable_urls == ["http://169.254.169.254/"]
 
 
-async def test_a_model_failure_yields_no_notes(
+async def test_a_model_failure_yields_no_notes_but_the_page_was_reached(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A model failure is not the same finding as a dead link — the page was
+    read fine, so this must not be reported as unreachable."""
     _stub_fetch(monkeypatch, "Some text.")
 
     async def _fail(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -123,18 +134,25 @@ async def test_a_model_failure_yields_no_notes(
 
     monkeypatch.setattr(llm, "complete_json", _fail)
 
-    assert await m13_sources.read_sources([PAGE_URL], TICKER) == []
+    result = await m13_sources.read_sources([PAGE_URL], TICKER)
+
+    assert result.notes == []
+    assert result.unreachable_urls == []
 
 
-async def test_a_page_with_nothing_on_it_yields_no_notes(
+async def test_a_page_with_nothing_on_it_yields_no_notes_and_is_not_unreachable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An empty answer is the correct answer for a cookie banner. The module
-    must not manufacture a note to avoid returning nothing."""
+    must not manufacture a note to avoid returning nothing, and this is not
+    the same finding as the page having been unreachable."""
     _stub_fetch(monkeypatch, "Accept cookies to continue.")
     _stub_llm(monkeypatch, {"notes": [], "not_found": True})
 
-    assert await m13_sources.read_sources([PAGE_URL], TICKER) == []
+    result = await m13_sources.read_sources([PAGE_URL], TICKER)
+
+    assert result.notes == []
+    assert result.unreachable_urls == []
 
 
 async def test_no_links_never_calls_out(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,7 +165,10 @@ async def test_no_links_never_calls_out(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(m13_sources.webfetch, "fetch_page", _fail_fetch)
     _refuse_llm(monkeypatch)
 
-    assert await m13_sources.read_sources([], TICKER) == []
+    result = await m13_sources.read_sources([], TICKER)
+
+    assert result.notes == []
+    assert result.unreachable_urls == []
 
 
 async def test_notes_per_page_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -160,9 +181,9 @@ async def test_notes_per_page_are_capped(monkeypatch: pytest.MonkeyPatch) -> Non
         },
     )
 
-    notes = await m13_sources.read_sources([PAGE_URL], TICKER)
+    result = await m13_sources.read_sources([PAGE_URL], TICKER)
 
-    assert len(notes) == m13_sources.SOURCE_NOTES_MAX_PER_URL
+    assert len(result.notes) == m13_sources.SOURCE_NOTES_MAX_PER_URL
 
 
 async def test_more_links_than_the_cap_are_ignored(
@@ -196,12 +217,13 @@ async def test_one_bad_link_does_not_stop_the_others(
     monkeypatch.setattr(m13_sources.webfetch, "fetch_page", _fetch)
     _stub_llm(monkeypatch, {"notes": [{"text": "A statement."}], "not_found": False})
 
-    notes = await m13_sources.read_sources(
+    result = await m13_sources.read_sources(
         ["https://example.com/bad", "https://example.com/good"], TICKER
     )
 
-    assert len(notes) == 1
-    assert str(notes[0].source_url) == "https://example.com/good"
+    assert len(result.notes) == 1
+    assert str(result.notes[0].source_url) == "https://example.com/good"
+    assert result.unreachable_urls == ["https://example.com/bad"]
 
 
 # --- The separation ------------------------------------------------------
