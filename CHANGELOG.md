@@ -17,6 +17,27 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the valuation set, risk categories, and the written record (2026-08-04)
+
+- `m08`: enterprise value, EV to sales and dividend yield join price to
+  earnings and EV to EBITDA. All five now share one definition of enterprise
+  value (`_enterprise_value_of`), so it cannot drift between them. Valuation
+  figures render by kind — a multiple as "18.40x", enterprise value as scaled
+  currency, a yield as a percentage — rather than every figure as a multiple.
+- `m12`: the peer comparison table carries the valuation rows it was already
+  computing and sending only to the chart. The snapshot gains a valuation
+  table built from the subject's own comparison row, which exists even when
+  the peer ladder found nobody.
+- `m12`: each disclosed risk carries a category derived from the filer's own
+  heading, and the risks section shows the computed liquidity and leverage
+  figures beside the disclosures. The category says what a risk is about and
+  nothing more — there is no probability, impact score or severity anywhere,
+  because a filing states none of them.
+- `docs`: architecture, sourcing-and-validation and deployment, covering the
+  module pipeline and its failure behaviour, tier enforcement and the
+  reconciliation tolerances, and the deployed topology with the EDGAR rate
+  constraint. The Tier 2 position is stated plainly rather than left implicit.
+
 ### Fixed — narrative items are searched down a ladder (2026-08-04)
 
 - `m04`: each narrative item is now located down an ordered ladder rather than

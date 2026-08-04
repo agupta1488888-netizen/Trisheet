@@ -68,7 +68,9 @@ from app.config import (
     ANNUAL_FORM_TO_FILER_TYPE,
     ATOM_NAMESPACE,
     COMPETITION_MARKERS,
+    CURRENCY_DECIMAL_PLACES,
     DAYS_IN_YEAR,
+    DISPLAY_SCALE_DIVISOR,
     FISCAL_YEAR_END_TOLERANCE_DAYS,
     MAX_FILING_TEXT_BYTES,
     PEER_COMPARISON_MAX_COUNT,
@@ -81,11 +83,14 @@ from app.config import (
     PEER_NAME_MIN_CHARS,
     PEER_NAME_STOPWORDS,
     PEER_TARGET_COUNT,
+    PERCENT_DECIMAL_PLACES,
+    PERCENT_DISPLAY_TEMPLATE,
     PROXY_FORM,
     RATIO_DECIMAL_PLACES,
     SIC_BROWSE_PAGE_SIZE,
     SIC_BROWSE_TTL_SECONDS,
     TIMES_DISPLAY_TEMPLATE,
+    UNIT_PERCENT,
     UNIT_TIMES,
 )
 from app.models import (
@@ -107,7 +112,7 @@ from app.modules.m01_resolver import (
     load_index,
     normalise_name,
 )
-from app.modules.m07_analysis import compute_derived_metrics
+from app.modules.m07_analysis import PERCENT_SCALE, compute_derived_metrics
 from app.services import document, llm
 from app.services.edgar import (
     EdgarClient,
@@ -1074,8 +1079,11 @@ class PeerComparisonRow:
     net_margin: Fact | None = None
     operating_margin: Fact | None = None
     revenue_growth: Fact | None = None
+    enterprise_value: Fact | None = None
     price_to_earnings: Fact | None = None
     ev_to_ebitda: Fact | None = None
+    ev_to_sales: Fact | None = None
+    dividend_yield: Fact | None = None
 
     @property
     def facts(self) -> tuple[Fact, ...]:
@@ -1086,8 +1094,11 @@ class PeerComparisonRow:
                 self.net_margin,
                 self.operating_margin,
                 self.revenue_growth,
+                self.enterprise_value,
                 self.price_to_earnings,
                 self.ev_to_ebitda,
+                self.ev_to_sales,
+                self.dividend_yield,
             )
             if fact is not None
         )
@@ -1119,11 +1130,21 @@ _COMPARISON_METRICS: tuple[tuple[str, str], ...] = (
     ("growth.income.revenue.yoy", "revenue_growth"),
 )
 
-#: How each valuation multiple reads when relabelled onto a row.
+#: How each valuation figure reads when relabelled onto a row.
 _VALUATION_LABELS: dict[str, str] = {
+    "enterprise_value": "Enterprise value",
     "price_to_earnings": "Price to earnings",
     "ev_to_ebitda": "EV to EBITDA",
+    "ev_to_sales": "EV to sales",
+    "dividend_yield": "Dividend yield",
 }
+
+#: Valuation figures that are a count of currency rather than a multiple, and
+#: so are not rendered with the "×" suffix a multiple carries.
+_VALUATION_CURRENCY_METRICS = frozenset({"enterprise_value"})
+
+#: Valuation figures expressed as a percentage.
+_VALUATION_PERCENT_METRICS = frozenset({"dividend_yield"})
 
 
 async def build_peer_comparison(
@@ -1258,8 +1279,11 @@ def _row_from_facts(
         ticker=ticker,
         name=name,
         is_subject=is_subject,
+        enterprise_value=_enterprise_value(latest, ticker),
         price_to_earnings=_price_to_earnings(latest, ticker),
         ev_to_ebitda=_ev_to_ebitda(latest, ticker),
+        ev_to_sales=_ev_to_sales(latest, ticker),
+        dividend_yield=_dividend_yield(latest, ticker),
         **values,
     )
 
@@ -1306,6 +1330,42 @@ def _ratio(numerator: float, denominator: float) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _render_valuation(
+    metric: str, value: float, sources: Sequence[Fact]
+) -> tuple[float, str, str | None]:
+    """Rounds and renders a valuation figure by what kind of figure it is.
+
+    Three kinds live in this table and they cannot share a format. A multiple
+    is "18.40x"; enterprise value is a count of currency and is scaled the way
+    every other currency figure in the report is scaled, so it lines up in the
+    same column; a yield is a percentage. Rendering them all as multiples,
+    which is what this did when multiples were the only thing here, would have
+    printed a market capitalisation as "409000000000.00x".
+
+    Rounding happens here, at the boundary, for the same reason m07 rounds at
+    its own: two runs over the same filings must produce identical facts.
+    """
+    if metric in _VALUATION_PERCENT_METRICS:
+        rounded = round(value, PERCENT_DECIMAL_PLACES)
+        return (
+            rounded,
+            PERCENT_DISPLAY_TEMPLATE.format(value=rounded),
+            UNIT_PERCENT,
+        )
+
+    if metric in _VALUATION_CURRENCY_METRICS:
+        rounded = round(value, CURRENCY_DECIMAL_PLACES)
+        scaled = rounded / DISPLAY_SCALE_DIVISOR
+        display = f"{scaled:,.0f}" if abs(scaled) >= 1 else f"{scaled:,.2f}"
+        currency = next(
+            (source.unit for source in sources if source.unit), None
+        )
+        return rounded, display, currency
+
+    rounded = round(value, RATIO_DECIMAL_PLACES)
+    return rounded, TIMES_DISPLAY_TEMPLATE.format(value=rounded), UNIT_TIMES
+
+
 def _valuation_fact(
     *,
     ticker: str,
@@ -1326,14 +1386,14 @@ def _valuation_fact(
         return None
 
     anchor = max(sources, key=lambda f: (f.filed_date, f.accession_no))
-    rounded = round(value, RATIO_DECIMAL_PLACES)
+    rounded, display, unit = _render_valuation(metric, value, sources)
 
     return Fact(
         metric=f"peer.comparison.{ticker}.{metric}",
         label=f"{ticker} — {_VALUATION_LABELS[metric]}",
         value=rounded,
-        display_value=TIMES_DISPLAY_TEMPLATE.format(value=rounded),
-        unit=UNIT_TIMES,
+        display_value=display,
+        unit=unit,
         period_start=None,
         period_end=anchor.period_end,
         fiscal_year=None,
@@ -1372,38 +1432,131 @@ def _price_to_earnings(latest: dict[str, Fact], ticker: str) -> Fact | None:
     )
 
 
-def _ev_to_ebitda(latest: dict[str, Fact], ticker: str) -> Fact | None:
-    """Enterprise value over EBITDA. None unless every input is disclosed.
+def _enterprise_value_of(
+    latest: dict[str, Fact],
+) -> tuple[float, tuple[Fact, ...]] | None:
+    """Enterprise value and the facts behind it, or None if any is missing.
 
-    Enterprise value needs debt and cash as well as market capitalisation.
-    Where either is not disclosed, the multiple is not computed — treating an
-    undisclosed debt figure as zero would understate leverage while looking
-    like a complete answer, the same reasoning m07 applies to net debt itself.
+    Market capitalisation plus total debt less cash. Where debt or cash is not
+    disclosed the figure is not computed at all — treating an undisclosed debt
+    balance as zero would understate leverage while looking like a complete
+    answer, which is the same reasoning m07 applies to net debt itself.
+
+    Shared by every figure below it that needs enterprise value, so the four
+    inputs are located once and the definition cannot drift between them.
     """
     market_cap = latest.get("market.market_cap")
-    ebitda = latest.get("derived.ebitda")
     debt = latest.get("derived.total_debt")
     cash = latest.get("balance.cash_and_equivalents")
-    if market_cap is None or ebitda is None or debt is None or cash is None:
+    if market_cap is None or debt is None or cash is None:
         return None
-    if (
-        market_cap.value is None
-        or ebitda.value is None
-        or debt.value is None
-        or cash.value is None
-    ):
+    if market_cap.value is None or debt.value is None or cash.value is None:
         return None
 
-    enterprise_value = market_cap.value + debt.value - cash.value
-    value = _ratio(enterprise_value, ebitda.value)
+    value = market_cap.value + debt.value - cash.value
+    return value, (market_cap, debt, cash)
+
+
+def _enterprise_value(latest: dict[str, Fact], ticker: str) -> Fact | None:
+    """Enterprise value as a figure in its own right, not only as a divisor."""
+    computed = _enterprise_value_of(latest)
+    if computed is None:
+        return None
+    value, sources = computed
+    market_cap = sources[0]
+    return _valuation_fact(
+        ticker=ticker,
+        metric="enterprise_value",
+        value=value,
+        formula=(
+            f"market capitalisation as of {market_cap.filed_date.isoformat()} "
+            "+ total debt − cash and equivalents"
+        ),
+        sources=sources,
+    )
+
+
+def _ev_to_ebitda(latest: dict[str, Fact], ticker: str) -> Fact | None:
+    """Enterprise value over EBITDA. None unless every input is disclosed."""
+    computed = _enterprise_value_of(latest)
+    ebitda = latest.get("derived.ebitda")
+    if computed is None or ebitda is None or ebitda.value is None:
+        return None
+
+    enterprise_value, sources = computed
+    market_cap = sources[0]
     return _valuation_fact(
         ticker=ticker,
         metric="ev_to_ebitda",
-        value=value,
+        value=_ratio(enterprise_value, ebitda.value),
         formula=(
             f"(market capitalisation as of {market_cap.filed_date.isoformat()} "
             "+ total debt − cash and equivalents) ÷ EBITDA FY"
             f"{ebitda.fiscal_year or ebitda.period_end.year}"
         ),
-        sources=(market_cap, ebitda, debt, cash),
+        sources=(*sources, ebitda),
+    )
+
+
+def _ev_to_sales(latest: dict[str, Fact], ticker: str) -> Fact | None:
+    """Enterprise value over revenue.
+
+    Worth having beside EV/EBITDA because it survives a loss-making or
+    heavily-adjusted year, where an earnings-based multiple stops meaning
+    much. Revenue is the one line almost every filer reports on the same
+    basis.
+    """
+    computed = _enterprise_value_of(latest)
+    revenue = latest.get("income.revenue")
+    if computed is None or revenue is None or revenue.value is None:
+        return None
+
+    enterprise_value, sources = computed
+    market_cap = sources[0]
+    return _valuation_fact(
+        ticker=ticker,
+        metric="ev_to_sales",
+        value=_ratio(enterprise_value, revenue.value),
+        formula=(
+            f"(market capitalisation as of {market_cap.filed_date.isoformat()} "
+            "+ total debt − cash and equivalents) ÷ revenue FY"
+            f"{revenue.fiscal_year or revenue.period_end.year}"
+        ),
+        sources=(*sources, revenue),
+    )
+
+
+def _dividend_yield(latest: dict[str, Fact], ticker: str) -> Fact | None:
+    """Dividends paid over market capitalisation, as a percentage.
+
+    Built from the cash actually paid out in the filer's own cash flow
+    statement rather than from a declared rate, because the cash flow figure
+    is a reported fact and a forward rate is a projection. It is therefore a
+    trailing yield, and the formula that travels with it says so.
+
+    A filer that pays no dividend reports zero here, which is a disclosure,
+    not a gap — so zero is rendered rather than dropped.
+    """
+    market_cap = latest.get("market.market_cap")
+    dividends = latest.get("cashflow.dividends_paid")
+    if market_cap is None or dividends is None:
+        return None
+    if market_cap.value is None or dividends.value is None:
+        return None
+
+    # Cash outflows are reported as positive magnitudes by m03's sign
+    # convention, but a filer that tags the raw negative would otherwise
+    # produce a negative yield. The magnitude is what a yield means.
+    ratio = _ratio(abs(dividends.value), market_cap.value)
+    return _valuation_fact(
+        ticker=ticker,
+        metric="dividend_yield",
+        value=None if ratio is None else ratio * PERCENT_SCALE,
+        formula=(
+            "dividends paid FY"
+            f"{dividends.fiscal_year or dividends.period_end.year} ÷ market "
+            f"capitalisation as of {market_cap.filed_date.isoformat()}, "
+            "trailing"
+        ),
+        sources=(market_cap, dividends),
     )

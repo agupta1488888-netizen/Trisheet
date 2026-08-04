@@ -526,3 +526,101 @@ def test_peer_comparison_max_count_is_smaller_than_the_selection_ladder() -> Non
     from app.config import PEER_MAX_COUNT
 
     assert PEER_COMPARISON_MAX_COUNT < PEER_MAX_COUNT
+
+
+# --- The rest of the valuation set ------------------------------------------
+# Enterprise value, EV/sales and dividend yield joined P/E and EV/EBITDA so a
+# reader can see what the market pays and what it pays back, not only what it
+# pays per unit of earnings. All five share one definition of enterprise
+# value, which is the point of `_enterprise_value_of`.
+
+
+def test_enterprise_value_is_market_cap_plus_debt_less_cash() -> None:
+    latest = m08._latest_by_metric(_subject_facts())
+
+    fact = m08._enterprise_value(latest, "NKE")
+
+    # 50,000 market cap + 300 debt - 50 cash
+    assert fact is not None
+    assert fact.value == pytest.approx(50_250.0)
+    assert fact.tier == SourceTier.MARKET
+    assert fact.is_calculated is True
+    # A count of currency, not a multiple: it must not render as "50250.00x".
+    assert not fact.display_value.endswith("x")
+
+
+def test_ev_to_sales_divides_enterprise_value_by_revenue() -> None:
+    latest = m08._latest_by_metric(_subject_facts())
+
+    fact = m08._ev_to_sales(latest, "NKE")
+
+    # 50,250 enterprise value / 1,000 revenue
+    assert fact is not None
+    assert fact.value == pytest.approx(50.25)
+    assert fact.display_value.endswith("x")
+    assert "revenue" in (fact.formula or "")
+
+
+@pytest.mark.parametrize(
+    "missing_metric",
+    ["derived.total_debt", "balance.cash_and_equivalents", "income.revenue"],
+)
+def test_ev_to_sales_is_none_without_every_input(missing_metric: str) -> None:
+    """An undisclosed debt balance is not zero, here or anywhere else."""
+    facts = [f for f in _subject_facts() if f.metric != missing_metric]
+    latest = m08._latest_by_metric(facts)
+
+    assert m08._ev_to_sales(latest, "NKE") is None
+
+
+def test_dividend_yield_is_none_when_the_filer_reports_no_dividend_line() -> None:
+    # The fixture has no dividends paid. Absent is absent — never inferred as
+    # zero, which would render a 0.0% yield the filing never stated.
+    latest = m08._latest_by_metric(_subject_facts())
+
+    assert m08._dividend_yield(latest, "NKE") is None
+
+
+def test_dividend_yield_is_a_percentage_of_market_capitalisation() -> None:
+    facts = [
+        *_subject_facts(),
+        make_fact(
+            metric="cashflow.dividends_paid",
+            label="Dividends paid",
+            value=2_500.0,
+            display_value="2,500",
+            period_end=PERIOD_END,
+            fiscal_year=2024,
+        ),
+    ]
+    latest = m08._latest_by_metric(facts)
+
+    fact = m08._dividend_yield(latest, "NKE")
+
+    # 2,500 paid / 50,000 market cap
+    assert fact is not None
+    assert fact.value == pytest.approx(5.0)
+    assert fact.unit == "percent"
+    assert "trailing" in (fact.formula or "")
+
+
+def test_dividend_yield_uses_the_magnitude_of_an_outflow() -> None:
+    # A filer tagging the raw negative would otherwise produce a negative
+    # yield, which is not what a yield means.
+    facts = [
+        *_subject_facts(),
+        make_fact(
+            metric="cashflow.dividends_paid",
+            label="Dividends paid",
+            value=-2_500.0,
+            display_value="(2,500)",
+            period_end=PERIOD_END,
+            fiscal_year=2024,
+        ),
+    ]
+    latest = m08._latest_by_metric(facts)
+
+    fact = m08._dividend_yield(latest, "NKE")
+
+    assert fact is not None
+    assert fact.value == pytest.approx(5.0)

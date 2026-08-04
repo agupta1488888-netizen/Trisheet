@@ -47,6 +47,7 @@ from app.config import (
     MAX_CHART_SEGMENTS,
     MAX_TABLE_PERIODS,
     NOT_DISCLOSED_TEXT,
+    RISK_CATEGORY_MARKERS,
     SEGMENT_METRIC,
     UNSCALED_METRIC_PREFIXES,
 )
@@ -76,6 +77,7 @@ from app.models import (
     ReportDocument,
     RevenueMarginPoint,
     RevenueMarginSeries,
+    RiskCategory,
     RiskItem,
     SectionId,
     SegmentMixPoint,
@@ -654,10 +656,10 @@ def _snapshot_section(
         cited.append(fact.fact_id)
         rows.append(FigureRow(label=row.label, fact_ids=(fact.fact_id,)))
 
-    tables: tuple[FigureTable, ...] = ()
+    tables: list[FigureTable] = []
     if rows:
         as_of = index.latest["market.price"].period_end.isoformat()
-        tables = (
+        tables.append(
             FigureTable(
                 id="snapshot-market",
                 caption="Market data",
@@ -668,8 +670,12 @@ def _snapshot_section(
                     "Never used to support a figure in the financial "
                     "highlights."
                 ),
-            ),
+            )
         )
+
+    valuation = _valuation_table(inputs, index, cited)
+    if valuation is not None:
+        tables.append(valuation)
 
     return DocumentSection(
         id=SectionId.SNAPSHOT,
@@ -678,7 +684,75 @@ def _snapshot_section(
             None if (prose or tables) else _UNAVAILABLE[SectionId.SNAPSHOT]
         ),
         prose=prose,
-        tables=tables,
+        tables=tuple(tables),
+    )
+
+
+#: (label, attribute) for the subject's own valuation figures, in reading
+#: order: the size of the claim first, then what it costs per unit of
+#: earnings, cash profit and revenue, then what it pays back.
+_VALUATION_ROWS: tuple[
+    tuple[str, Callable[[m08_peers.PeerComparisonRow], Fact | None]], ...
+] = (
+    ("Enterprise value", lambda row: row.enterprise_value),
+    ("Price to earnings", lambda row: row.price_to_earnings),
+    ("EV to EBITDA", lambda row: row.ev_to_ebitda),
+    ("EV to sales", lambda row: row.ev_to_sales),
+    ("Dividend yield", lambda row: row.dividend_yield),
+)
+
+
+def _valuation_table(
+    inputs: AssemblyInput, index: _Index, cited: list[str]
+) -> FigureTable | None:
+    """How the market prices this filer, on its own rather than beside peers.
+
+    The figures are the subject's own row out of the peer comparison, which is
+    where they are already computed — reproducing the arithmetic here would be
+    a second definition of enterprise value waiting to drift from the first.
+    The subject's row is built even when no comparable was found, so this
+    table survives an empty peer ladder.
+
+    Returns None when market data was unavailable, which is the ordinary
+    degradation: every multiple needs a live quote, and the report renders
+    without them rather than not at all.
+    """
+    comparison = inputs.peer_comparison
+    if comparison is None:
+        return None
+
+    subject = next((row for row in comparison.rows if row.is_subject), None)
+    if subject is None:
+        return None
+
+    rows: list[FigureRow] = []
+    for label, getter in _VALUATION_ROWS:
+        fact = getter(subject)
+        if fact is None:
+            continue
+        cited.append(fact.fact_id)
+        rows.append(
+            FigureRow(
+                label=label,
+                fact_ids=(fact.fact_id,),
+                emphasis=FigureEmphasis.DERIVED,
+            )
+        )
+
+    if not rows:
+        return None
+
+    return FigureTable(
+        id="snapshot-valuation",
+        caption="Valuation",
+        periods=("Current",),
+        rows=tuple(rows),
+        unit_note=(
+            f"{_currency_note(index)}. Every figure is calculated, and the "
+            "formula travels with each one. Tier 3: each rests on a live "
+            "quote as well as the filings beneath it, so none of them may "
+            "support a figure in the financial highlights."
+        ),
     )
 
 
@@ -946,6 +1020,10 @@ def _peer_comparison_table(
     if comparison is None or not comparison.rows:
         return None
 
+    # Financials first, then valuation. The order is the one a comp table is
+    # read in: what the business did, then what the market pays for it. The
+    # valuation rows carry tier 3 because they need a live quote, which is why
+    # the unit note below says so — the financials beside them are tier 1.
     metric_rows: tuple[
         tuple[str, Callable[[m08_peers.PeerComparisonRow], Fact | None]], ...
     ] = (
@@ -953,6 +1031,11 @@ def _peer_comparison_table(
         ("Net margin", lambda row: row.net_margin),
         ("Operating margin", lambda row: row.operating_margin),
         ("Revenue growth, year on year", lambda row: row.revenue_growth),
+        ("Enterprise value", lambda row: row.enterprise_value),
+        ("Price to earnings", lambda row: row.price_to_earnings),
+        ("EV to EBITDA", lambda row: row.ev_to_ebitda),
+        ("EV to sales", lambda row: row.ev_to_sales),
+        ("Dividend yield", lambda row: row.dividend_yield),
     )
 
     rows: list[FigureRow] = []
@@ -975,7 +1058,9 @@ def _peer_comparison_table(
 
     note = (
         f"{_currency_note(index)}. Each company's own figures, read from its "
-        "own SEC filings the same way the subject's are."
+        "own SEC filings the same way the subject's are. The valuation rows "
+        "additionally need a live quote and are tier 3; the financials above "
+        "them are tier 1."
     )
     if comparison.notes:
         note = f"{note} {' '.join(comparison.notes)}"
@@ -1007,6 +1092,53 @@ def _developments_section(
     )
 
 
+def _risk_category(heading: str) -> RiskCategory | None:
+    """Which kind of hazard a filer's heading describes, or None.
+
+    Classification, not rating. The category says what the risk is about; it
+    says nothing about how likely or how severe it is, because the filing does
+    not say either and this system does not supply figures a filing omits.
+
+    The first category whose markers appear wins, which is why the order in
+    `RISK_CATEGORY_MARKERS` is deliberate: a heading about litigation over a
+    patent is a legal risk even though it also mentions a product, and legal
+    is declared first for exactly that reason. A heading matching nothing is
+    left uncategorised rather than swept into whichever category is nearest.
+    """
+    lowered = heading.lower()
+    for name, markers in RISK_CATEGORY_MARKERS:
+        if any(marker in lowered for marker in markers):
+            return RiskCategory(name)
+    return None
+
+
+def _risk_indicator_table(index: _Index, cited: list[str]) -> FigureTable | None:
+    """The filer's own financial position, beside the risks it discloses.
+
+    A risk factors item states hazards in prose and never quantifies them.
+    These are the computed figures a reader would reach for to judge how much
+    balance-sheet room the filer has if one of those hazards lands — already
+    derived in m07, shown here rather than left three sections away.
+
+    This is not a scoring of the risks. Nothing here ranks a disclosure or
+    attaches a probability to it; it is the same arithmetic the analysis
+    section shows, positioned where it answers a question.
+    """
+    return _table(
+        "risks-indicators",
+        "Financial position",
+        _STRENGTH_ROWS,
+        index,
+        cited,
+        unit_note=(
+            "Calculated, with each formula travelling on its figure. Shown "
+            "beside the disclosures because a risk factors item states "
+            "hazards without quantifying them. These figures do not rate the "
+            "risks above and are not a judgement about them."
+        ),
+    )
+
+
 def _risks_section(
     inputs: AssemblyInput, index: _Index, cited: list[str]
 ) -> DocumentSection:
@@ -1025,12 +1157,19 @@ def _risks_section(
                     "Disclosed by the filer in the risk factors item of its "
                     "annual report."
                 ),
+                category=_risk_category(heading),
                 fact_ids=(risk_fact.fact_id,),
             )
             for position, heading in enumerate(headings, start=1)
         )
 
     prose = _prose_blocks(inputs, SectionId.RISKS, cited)
+
+    tables: tuple[FigureTable, ...] = ()
+    if risks:
+        indicators = _risk_indicator_table(index, cited)
+        if indicators is not None:
+            tables = (indicators,)
 
     return DocumentSection(
         id=SectionId.RISKS,
@@ -1039,6 +1178,7 @@ def _risks_section(
             None if (risks or prose) else _UNAVAILABLE[SectionId.RISKS]
         ),
         prose=prose,
+        tables=tables,
         risks=risks,
     )
 
