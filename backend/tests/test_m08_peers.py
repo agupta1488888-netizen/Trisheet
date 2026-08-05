@@ -174,6 +174,11 @@ _NAME_INDEX_ENTRIES = [
     IndexEntry(cik="0000789019", ticker="MSFT", name="Microsoft Corp"),
     IndexEntry(cik="0000105620", ticker="PAYD", name="Paid Inc"),
     IndexEntry(cik="0000320187", ticker="NKE", name="Nike Inc"),
+    # Both reduce to "target" once the corporate suffix is stripped. CBDY is
+    # listed first on purpose: it is the order that produced the real defect,
+    # where an OTC filer shadowed the retailer a proxy statement had named.
+    IndexEntry(cik="0001586554", ticker="CBDY", name="Target Group Inc."),
+    IndexEntry(cik="0000027419", ticker="TGT", name="Target Corporation"),
 ]
 
 
@@ -200,6 +205,102 @@ def test_find_company_names_rejects_stopword_collisions() -> None:
     found = m08.find_company_names(text, _name_index())
 
     assert found == []
+
+
+def test_by_name_prefers_the_filer_bearing_the_full_name() -> None:
+    # The defect this covers: "Target Corporation" and "Target Group Inc."
+    # both strip to "target", and the stripped index was first-wins, so the
+    # OTC filer listed first answered for the retailer the proxy had named.
+    entry = _name_index().by_name("Target Corporation")
+
+    assert entry is not None
+    assert entry.ticker == "TGT"
+
+
+def test_by_name_refuses_a_stripped_name_two_filers_share() -> None:
+    # Neither filer bears the bare name, so there is nothing to prefer.
+    # Answering with either would put one company on the page under a name
+    # that does not distinguish it from the other.
+    assert _name_index().by_name("Target") is None
+
+
+def test_find_company_names_resolves_the_named_filer_not_its_namesake() -> None:
+    text = "We benchmark pay against Target Corporation and Apple Inc."
+
+    found = m08.find_company_names(text, _name_index())
+
+    assert [entry.ticker for entry in found] == ["TGT", "AAPL"]
+
+
+# --- Competitors named in the filing ----------------------------------------
+
+_COMPETITION_PASSAGE = (
+    "The athletic footwear market is highly competitive. We compete with "
+    "adidas AG, PUMA SE, Under Armour, Inc. and numerous other companies."
+)
+
+
+def test_kept_competitor_names_keeps_names_the_passage_contains() -> None:
+    kept = m08._kept_competitor_names(
+        ["adidas AG", "PUMA SE", "Under Armour, Inc."],
+        _COMPETITION_PASSAGE,
+        make_company(),
+    )
+
+    # adidas and PUMA file in Germany, so the peer ladder can never surface
+    # them. They are exactly the names a reader expects to see.
+    assert kept == ("adidas AG", "PUMA SE", "Under Armour, Inc.")
+
+
+def test_kept_competitor_names_drops_a_name_the_passage_does_not_contain() -> (
+    None
+):
+    # The control that makes this extraction rather than recall: New Balance is
+    # a real competitor and a plausible answer, but this passage does not name
+    # it, so it is not the filer's statement and does not appear.
+    kept = m08._kept_competitor_names(
+        ["adidas AG", "New Balance"], _COMPETITION_PASSAGE, make_company()
+    )
+
+    assert kept == ("adidas AG",)
+
+
+def test_kept_competitor_names_drops_the_subject_and_duplicates() -> None:
+    passage = "We compete with Test Filer, Inc. and adidas AG and adidas."
+
+    kept = m08._kept_competitor_names(
+        ["Test Filer, Inc.", "adidas AG", "adidas"], passage, make_company()
+    )
+
+    assert kept == ("adidas AG",)
+
+
+def test_competitor_facts_are_tier_one_and_carry_the_filing() -> None:
+    found = m08.NamedCompetitors(
+        names=("adidas AG", "PUMA SE"),
+        source_url="https://www.sec.gov/Archives/edgar/data/320193/nke.htm",
+        accession_no=APPLE_ACCESSION,
+        filed_date=dt.date(2024, 11, 1),
+        source_form="10-K",
+    )
+
+    facts = m08.competitor_facts(found)
+
+    assert [fact.display_value for fact in facts] == ["adidas AG", "PUMA SE"]
+    assert {fact.accession_no for fact in facts} == {APPLE_ACCESSION}
+    for fact in facts:
+        # Tier 1: the statement came out of a 10-K, so it carries that
+        # filing's provenance in full.
+        assert fact.tier is SourceTier.FILING
+        assert fact.metric.startswith("competitor.named.")
+        # A competitor contributes a name and never a quantity, so nothing
+        # here can reach an arithmetic check or a financial table.
+        assert fact.value is None
+        assert fact.unit is None
+
+
+def test_competitor_facts_without_a_filing_produce_nothing() -> None:
+    assert m08.competitor_facts(m08.NamedCompetitors()) == []
 
 
 def test_find_company_names_ignores_unresolved_capitalised_phrases() -> None:

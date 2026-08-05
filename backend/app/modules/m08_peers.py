@@ -68,6 +68,9 @@ from app.config import (
     ANNUAL_FORM_TO_FILER_TYPE,
     ATOM_NAMESPACE,
     COMPETITION_MARKERS,
+    COMPETITOR_MAX_COUNT,
+    COMPETITOR_NAME_MAX_CHARS,
+    COMPETITOR_NAME_MIN_CHARS,
     CURRENCY_DECIMAL_PLACES,
     DAYS_IN_YEAR,
     DISPLAY_SCALE_DIVISOR,
@@ -111,6 +114,7 @@ from app.modules.m01_resolver import (
     load_company,
     load_index,
     normalise_name,
+    normalise_name_exact,
 )
 from app.modules.m07_analysis import PERCENT_SCALE, compute_derived_metrics
 from app.services import document, llm
@@ -136,6 +140,10 @@ _NAME_CONNECTORS = frozenset({"and", "of", "de", "van", "der", "for", "the"})
 #: holds several peers at once, and a fact's identity is its metric and period
 #: — two peers sharing a metric would be one fact overwriting another.
 PEER_METRIC_TEMPLATE = "peer.company.{ticker}"
+
+#: A competitor is keyed by its name, not a ticker: most of the ones a filer
+#: names have no ticker, which is the whole reason they are kept separately.
+COMPETITOR_METRIC_TEMPLATE = "competitor.named.{slug}"
 
 #: What each rung is called when the reason is written for a reader.
 _METHOD_PHRASES: dict[PeerSelectionMethod, str] = {
@@ -195,25 +203,63 @@ class _NameIndex:
 
     def __init__(self, entries: Sequence[IndexEntry]) -> None:
         self._by_name: dict[str, IndexEntry] = {}
+        self._by_exact_name: dict[str, IndexEntry] = {}
+        self._ambiguous: set[str] = set()
         self._by_cik: dict[str, IndexEntry] = {}
         self._by_ticker: dict[str, IndexEntry] = {}
 
         for entry in entries:
+            exact = normalise_name_exact(entry.name)
+            if exact:
+                self._by_exact_name.setdefault(exact, entry)
+
             normalised = normalise_name(entry.name)
-            if normalised and normalised not in self._by_name:
-                self._by_name[normalised] = entry
+            if normalised:
+                held = self._by_name.get(normalised)
+                if held is None:
+                    self._by_name[normalised] = entry
+                elif held.cik != entry.cik:
+                    # Two different filers reduce to the same stripped name —
+                    # "Target Corporation" and "Target Group Inc." both become
+                    # "target". Whichever the index happened to list first
+                    # would otherwise shadow the other silently, which is how
+                    # an OTC shell came to stand in for a retailer.
+                    self._ambiguous.add(normalised)
+
             # A filer with several share classes appears more than once; the
             # shortest ticker is the one a reader recognises.
-            held = self._by_cik.get(entry.cik)
-            if held is None or len(entry.ticker) < len(held.ticker):
+            by_cik = self._by_cik.get(entry.cik)
+            if by_cik is None or len(entry.ticker) < len(by_cik.ticker):
                 self._by_cik[entry.cik] = entry
             self._by_ticker.setdefault(entry.ticker.upper(), entry)
 
     def by_name(self, name: str) -> IndexEntry | None:
+        """The filer of that name, or None if there is not exactly one.
+
+        The length and stopword guards are applied to the stripped form first,
+        so a filer whose name reduces to an ordinary English word is refused
+        however it was written. Only then is the full name tried, ahead of the
+        stripped one, so a prose mention carrying the suffix resolves to the
+        filer that actually bears it. A stripped name shared by more than one
+        filer resolves to nothing at all: picking one would be a guess, and a
+        guess here puts a different company on the page under the right name.
+        """
         normalised = normalise_name(name)
         if len(normalised) < PEER_NAME_MIN_CHARS:
             return None
         if normalised in PEER_NAME_STOPWORDS:
+            return None
+
+        exact = self._by_exact_name.get(normalise_name_exact(name))
+        if exact is not None:
+            return exact
+
+        if normalised in self._ambiguous:
+            logger.info(
+                "Peer name is ambiguous and was not resolved",
+                # Not "name": logging reserves that attribute on a record.
+                extra={"peer_name": name, "normalised": normalised},
+            )
             return None
         return self._by_name.get(normalised)
 
@@ -417,6 +463,260 @@ async def _candidates_from_filing(
         },
     )
     return candidates
+
+
+# --- Competitors named in the filing ----------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class NamedCompetitors:
+    """Competitors the filer named, and the filing it named them in.
+
+    Separate from `Peer` on purpose. A `Peer` is a live SEC filer whose own
+    statements the comparison table reads, so it must carry a CIK. A competitor
+    is whoever the filer said it competes with — adidas and Puma for Nike — and
+    most of the interesting ones never file with the SEC at all. Requiring a
+    CIK here would discard exactly the names the reader asked for.
+
+    What this carries instead is the filing's provenance, which is complete:
+    the passage came from a 10-K, so the accession number and filing date are
+    real. These are Tier 1 statements, and they contain no figures.
+    """
+
+    names: tuple[str, ...] = ()
+    source_url: str | None = None
+    accession_no: str | None = None
+    filed_date: dt.date | None = None
+    source_form: str | None = None
+
+
+_COMPETITOR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "names": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Company names copied verbatim from the passage. No figures, "
+                "no descriptions."
+            ),
+        }
+    },
+    "required": ["names"],
+    "additionalProperties": False,
+}
+
+_COMPETITOR_SYSTEM_PROMPT = (
+    "You extract company names from a passage of a company's own annual "
+    "report. You copy names that appear in the passage; you never add a "
+    "company from your own knowledge, however obvious it seems, and you never "
+    "return a figure, a description or a judgement. Every name you return is "
+    "checked against the passage before it is used, and one that does not "
+    "appear there is discarded — so adding a name gains the answer nothing. "
+    "Return the names exactly as the passage spells them, including lower "
+    "case brand styling. Returning fewer is correct; returning an empty list "
+    "is correct when the passage names no competitor."
+)
+
+
+def _competitor_slug(name: str) -> str:
+    """A stable metric suffix for a competitor name."""
+    normalised = normalise_name_exact(name)
+    return "_".join(part for part in normalised.split(" ") if part)
+
+
+async def find_named_competitors(
+    client: EdgarClient, filing: FilingRef, subject: Company
+) -> NamedCompetitors:
+    """The competitors a filer names in its own annual report.
+
+    Reads the same competition passage the peer ladder's second rung scans, and
+    keeps the names that rung has to throw away — the ones that do not resolve
+    to a US ticker, which is most of the ones a reader would recognise.
+
+    The model is used to read the passage, not to recall anything. Every name
+    it returns must appear in the passage it was shown, checked here in code:
+    a name the filing does not contain is dropped whatever produced it. That
+    check is what makes this extraction rather than the model's own knowledge,
+    and it is the same reasoning CLAUDE.md gives for tier enforcement — a rule
+    the code applies, not one the prompt requests.
+
+    Never raises. A filing that cannot be read, a passage that names nobody,
+    and an unconfigured model all produce no competitors and no report failure.
+    """
+    if not llm.is_configured():
+        logger.info(
+            "No model configured; no competitors are read from the filing",
+            extra={"cik": subject.cik},
+        )
+        return NamedCompetitors()
+
+    text = await _filing_text(client, filing)
+    if not text:
+        return NamedCompetitors()
+
+    windows = document.windows_around(
+        text, COMPETITION_MARKERS, PEER_CONTEXT_WINDOW_CHARS
+    )
+    if not windows:
+        logger.info(
+            "Annual report does not discuss competition; no competitors read",
+            extra={"accession_no": filing.accession_no},
+        )
+        return NamedCompetitors()
+
+    passage = "\n\n".join(windows)
+    user_prompt = (
+        f"The company is {subject.name}.\n\n"
+        "Below is a passage from its annual report discussing competition. "
+        "Return the names of the competitors the passage names. Do not "
+        "include the company itself. Copy each name exactly as written.\n\n"
+        f"Passage:\n{passage}"
+    )
+
+    try:
+        answer = await llm.complete_json(
+            _COMPETITOR_SYSTEM_PROMPT,
+            user_prompt,
+            _COMPETITOR_SCHEMA,
+            purpose="peers:competitors",
+        )
+    except llm.LlmError as cause:
+        logger.warning(
+            "The model did not answer when reading competitors",
+            extra={"cik": subject.cik, "error": str(cause)},
+        )
+        return NamedCompetitors()
+
+    raw = answer.get("names")
+    if not isinstance(raw, list):
+        return NamedCompetitors()
+
+    names = _kept_competitor_names(raw, passage, subject)
+    if not names:
+        return NamedCompetitors()
+
+    logger.info(
+        "Competitors read from the annual report",
+        extra={
+            "cik": subject.cik,
+            "accession_no": filing.accession_no,
+            "competitors": len(names),
+        },
+    )
+    return NamedCompetitors(
+        names=names,
+        source_url=str(filing.primary_doc_url),
+        accession_no=filing.accession_no,
+        filed_date=filing.filed_date,
+        source_form=filing.form,
+    )
+
+
+def _kept_competitor_names(
+    raw: Sequence[object], passage: str, subject: Company
+) -> tuple[str, ...]:
+    """The returned names that the passage actually contains.
+
+    Public behaviour worth stating: a name absent from the passage is dropped
+    and counted, never trimmed to fit or matched approximately. A near match on
+    a company name is a different company.
+    """
+    haystack = passage.casefold()
+    subject_key = normalise_name(subject.name)
+
+    kept: list[str] = []
+    invented: list[str] = []
+    seen: set[str] = set()
+
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        name = " ".join(item.split())
+        if not (
+            COMPETITOR_NAME_MIN_CHARS <= len(name) <= COMPETITOR_NAME_MAX_CHARS
+        ):
+            continue
+        if name.casefold() not in haystack:
+            invented.append(name)
+            continue
+
+        key = normalise_name(name)
+        if not key or key == subject_key or key in seen:
+            continue
+        seen.add(key)
+        kept.append(name)
+        if len(kept) >= COMPETITOR_MAX_COUNT:
+            break
+
+    if invented:
+        logger.warning(
+            "Names not present in the passage were dropped",
+            extra={"cik": subject.cik, "dropped": invented},
+        )
+
+    return tuple(kept)
+
+
+async def read_named_competitors(
+    company: Company, manifest: Sequence[FilingRef], client: EdgarClient
+) -> NamedCompetitors:
+    """The competitors named in this filer's latest annual report.
+
+    The public entry point. Picks the annual form this filer actually files —
+    a 10-K, or a 20-F/40-F for a foreign private issuer — so the passage read
+    is the right one without the caller knowing which form that is.
+    """
+    annual = _latest_of_form(manifest, _annual_forms_for(company.filer_type))
+    if annual is None:
+        return NamedCompetitors()
+    return await find_named_competitors(client, annual, company)
+
+
+def competitor_facts(found: NamedCompetitors) -> list[Fact]:
+    """One fact per named competitor, sourced to the filing that named it.
+
+    The fact carries a name and no figure. `value` is None and there is no
+    unit, because a competitor is a statement the filer made, not a quantity —
+    nothing here can reach an arithmetic check or a financial table.
+    """
+    if not found.names or found.accession_no is None:
+        return []
+
+    filed = found.filed_date or dt.date.today()
+    facts: list[Fact] = []
+
+    for name in found.names:
+        slug = _competitor_slug(name)
+        if not slug:
+            continue
+        try:
+            facts.append(
+                Fact(
+                    metric=COMPETITOR_METRIC_TEMPLATE.format(slug=slug),
+                    label="Competitor",
+                    value=None,
+                    display_value=name,
+                    unit=None,
+                    period_start=None,
+                    period_end=filed,
+                    fiscal_year=None,
+                    tier=SourceTier.FILING,
+                    source_type=SourceType.SEC_FILING,
+                    source_url=found.source_url,
+                    accession_no=found.accession_no,
+                    filed_date=filed,
+                    extraction_method=ExtractionMethod.NARRATIVE,
+                    confidence=1.0,
+                )
+            )
+        except ValueError as cause:
+            logger.warning(
+                "Competitor could not be expressed as a sourced fact",
+                extra={"competitor_name": name, "error": str(cause)},
+            )
+
+    return facts
 
 
 # --- Rung 3: SIC match ------------------------------------------------------

@@ -547,7 +547,16 @@ async def _extract(
         work.peer_comparison = comparison
         work.facts.extend(comparison.facts)
 
-        if not selected.peers:
+        # Read separately from the ladder above, and kept even when the ladder
+        # found nobody: a competitor the filer named is worth showing whether
+        # or not it files with the SEC, and most of the recognisable ones do
+        # not. These carry the annual report's own accession number.
+        competitors = await m08_peers.read_named_competitors(
+            company, work.manifest, client
+        )
+        work.facts.extend(m08_peers.competitor_facts(competitors))
+
+        if not selected.peers and not competitors.names:
             outcome.skip(
                 "No filed source named a comparable company for this filer.",
                 0,

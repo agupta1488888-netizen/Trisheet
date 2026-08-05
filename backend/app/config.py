@@ -1006,7 +1006,7 @@ SECTION_METRIC_PREFIXES: dict[int, tuple[str, ...]] = {
     ),
     4: ("segment.",),
     5: ("market.", "valuation."),
-    6: ("peer.",),
+    6: ("peer.", "competitor."),
     7: ("development.",),
     8: ("risk.",),
 }
@@ -1304,6 +1304,29 @@ DAYS_IN_YEAR = 365
 #: never for figures — and every one is resolved against the live index before
 #: it is allowed into the report.
 PEER_LLM_MAX_SUGGESTIONS = 10
+
+# --- Competitors named in the filing (m08) ----------------------------------
+# A peer must be a live SEC filer, because the comparison table reads its
+# financial statements. A competitor need not be: the company names adidas and
+# Puma in its own annual report, and dropping them because they file in Germany
+# leaves the reader with a list that answers a different question than the one
+# they asked.
+#
+# These are read from the same competition passage the peer ladder's second
+# rung already scans, so they carry that filing's accession number and filing
+# date and are Tier 1 like any other statement quoted from a 10-K. What they
+# never carry is a figure: a competitor contributes a name the filer used, and
+# nothing that could be mistaken for a reported number.
+
+#: Competitor names kept from one filing. The passage is a paragraph or two;
+#: a filer naming more than this is listing an industry, not its competitors.
+COMPETITOR_MAX_COUNT = 12
+
+#: A name shorter than this is an initialism or a fragment, not a company.
+COMPETITOR_NAME_MIN_CHARS = 3
+
+#: Longest name kept. Past this the model has returned a clause, not a name.
+COMPETITOR_NAME_MAX_CHARS = 60
 
 # --- Recent developments (m09) ----------------------------------------------
 # 8-K items are the filer's own index of what happened. Only the items that

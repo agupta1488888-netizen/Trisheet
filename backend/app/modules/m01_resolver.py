@@ -76,13 +76,25 @@ def normalise_name(name: str) -> str:
     "Nike" compare equal. Suffixes are stripped repeatedly because names like
     "Acme Holdings Ltd" carry more than one.
     """
-    lowered = _PUNCTUATION.sub(" ", name.lower())
-    collapsed = _WHITESPACE.sub(" ", lowered).strip()
-
-    words = collapsed.split(" ")
+    words = normalise_name_exact(name).split(" ")
     while len(words) > 1 and words[-1] in COMPANY_NAME_SUFFIXES:
         words.pop()
     return " ".join(words)
+
+
+def normalise_name_exact(name: str) -> str:
+    """Reduces a company name to a comparable form, suffixes intact.
+
+    The same punctuation and whitespace treatment as `normalise_name`, without
+    dropping the corporate suffix. Stripping it makes "Target Corporation" and
+    "Target Group Inc." both reduce to "target", so a lookup keyed on the
+    stripped form cannot tell a retailer from an unrelated filer that happens
+    to share a first word. This form keeps them distinct, and a caller that has
+    the filer's full name should try it before falling back to the stripped
+    one.
+    """
+    lowered = _PUNCTUATION.sub(" ", name.lower())
+    return _WHITESPACE.sub(" ", lowered).strip()
 
 
 # --- Ticker index -----------------------------------------------------------

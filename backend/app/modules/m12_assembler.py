@@ -999,12 +999,51 @@ def _peers_section(
     if comparison_table is not None:
         tables.append(comparison_table)
 
+    competitor_table = _named_competitor_table(index, cited)
+    if competitor_table is not None:
+        tables.append(competitor_table)
+
     return DocumentSection(
         id=SectionId.PEERS,
         title=_SECTION_TITLES[SectionId.PEERS],
         unavailable_reason=None if tables else _UNAVAILABLE[SectionId.PEERS],
         prose=_prose_blocks(inputs, SectionId.PEERS, cited),
         tables=tuple(tables),
+    )
+
+
+def _named_competitor_table(
+    index: _Index, cited: list[str]
+) -> FigureTable | None:
+    """The competitors the filer named, in its own words.
+
+    Rendered apart from the comparison table and after it, because it answers
+    a different question. The comparison table holds filers whose statements
+    this report has read; these are whoever the company said it competes with,
+    and most of them file in another jurisdiction or not at all. Putting them
+    in the same table would imply figures exist for them.
+    """
+    rows = [
+        FigureRow(label=fact.display_value, fact_ids=(fact.fact_id,))
+        for metric, fact in sorted(index.latest.items())
+        if metric.startswith("competitor.named.")
+    ]
+    if not rows:
+        return None
+
+    for row in rows:
+        cited.extend(fact_id for fact_id in row.fact_ids if fact_id is not None)
+
+    return FigureTable(
+        id="peers-competitors",
+        caption="Competitors named in the filing",
+        periods=("Named",),
+        rows=tuple(rows),
+        unit_note=(
+            "Named by the company in its own annual report. Listed whether or "
+            "not they file with the SEC, which is why no figures appear "
+            "beside them."
+        ),
     )
 
 
