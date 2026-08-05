@@ -744,6 +744,9 @@ async def find_web_competitors(company: Company) -> tuple[SourceNote, ...]:
 
     fetched = dt.datetime.now(dt.UTC)
     subject_key = normalise_name(company.name)
+    # "Apple Inc." already ends the sentence. Appending a full stop to a name
+    # that carries one reads as a typo on the page.
+    subject = company.name.rstrip(".")
     notes: list[SourceNote] = []
     seen: set[str] = set()
 
@@ -764,7 +767,7 @@ async def find_web_competitors(company: Company) -> tuple[SourceNote, ...]:
         try:
             notes.append(
                 SourceNote(
-                    text=f"{name} competes with {company.name}.",
+                    text=f"{name} competes with {subject}.",
                     source_url=url,
                     source_type=SourceType.NEWS,
                     tier=SourceTier.NEWS,

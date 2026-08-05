@@ -332,6 +332,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
   sections: [
     {
       id: "snapshot",
+      notes: [],
       title: "Snapshot",
       unavailableReason: null,
       prose: [
@@ -370,6 +371,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
     },
     {
       id: "business",
+      notes: [],
       title: "Business",
       unavailableReason: null,
       prose: [
@@ -403,6 +405,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
     },
     {
       id: "financials",
+      notes: [],
       title: "Financial highlights",
       unavailableReason: null,
       prose: [
@@ -470,6 +473,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
     },
     {
       id: "analysis",
+      notes: [],
       title: "Analysis",
       unavailableReason: null,
       prose: [
@@ -514,6 +518,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
     },
     {
       id: "peers",
+      notes: [],
       title: "Peers and valuation",
       unavailableReason: MARKET_UNAVAILABLE,
       prose: [],
@@ -523,6 +528,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
     },
     {
       id: "developments",
+      notes: [],
       title: "Recent developments",
       unavailableReason: null,
       prose: [],
@@ -547,6 +553,7 @@ export const FOREIGN_FIXTURE: ReportDocument = {
     },
     {
       id: "risks",
+      notes: [],
       title: "Risk factors",
       unavailableReason: null,
       prose: [

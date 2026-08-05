@@ -524,7 +524,12 @@ def assemble_document(inputs: AssemblyInput) -> ReportDocument:
         charts=_charts(inputs, index),
         compliance=inputs.compliance,
         artifacts=tuple(inputs.artifacts),
-        source_notes=tuple(inputs.source_notes),
+        # Only the links the reader attached. What the system found by search
+        # is rendered by the section it concerns, so listing it here as well
+        # would show the same statement twice under two different headings.
+        source_notes=tuple(
+            note for note in inputs.source_notes if note.is_user_supplied
+        ),
     )
 
     logger.info(
@@ -1003,12 +1008,25 @@ def _peers_section(
     if competitor_table is not None:
         tables.append(competitor_table)
 
+    # Competitors found by search sit with the peers they belong beside, not
+    # in the supplied-links block at the foot of the report — a reader looking
+    # at comparable companies should not have to scroll past every other
+    # section to learn who the filer actually competes with. They stay out of
+    # the tables above because they carry no accession number, and they keep
+    # their own caveat, so the two remain distinguishable.
+    found_notes = tuple(
+        note for note in inputs.source_notes if not note.is_user_supplied
+    )
+
     return DocumentSection(
         id=SectionId.PEERS,
         title=_SECTION_TITLES[SectionId.PEERS],
-        unavailable_reason=None if tables else _UNAVAILABLE[SectionId.PEERS],
+        unavailable_reason=(
+            None if tables or found_notes else _UNAVAILABLE[SectionId.PEERS]
+        ),
         prose=_prose_blocks(inputs, SectionId.PEERS, cited),
         tables=tuple(tables),
+        notes=found_notes,
     )
 
 

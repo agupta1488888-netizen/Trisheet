@@ -39,7 +39,7 @@ function hostOf(url: string): string {
   }
 }
 
-function NoteBlock({
+export function NoteBlock({
   id,
   heading,
   note,

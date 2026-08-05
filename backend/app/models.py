@@ -913,6 +913,13 @@ class DocumentSection(WireModel):
     tables: tuple[FigureTable, ...] = ()
     events: tuple[DevelopmentEvent, ...] = ()
     risks: tuple[RiskItem, ...] = ()
+    #: Statements that belong beside this section's subject but cannot be
+    #: figures — they carry no accession number, so they are not `Fact`s and
+    #: cannot enter a `FigureTable`, every cell of which cites one. The peers
+    #: section uses this for competitors found by search when the filing named
+    #: none. Rendered after the tables and under their own caveat, so a reader
+    #: is never left inferring which of the two they are looking at.
+    notes: tuple[SourceNote, ...] = ()
 
 
 # --- Chart series -----------------------------------------------------------

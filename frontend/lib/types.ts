@@ -382,6 +382,13 @@ export interface ReportSection {
   tables: readonly FigureTable[];
   events: readonly DevelopmentEvent[];
   risks: readonly RiskItem[];
+  /**
+   * Statements that belong beside this section but are not figures. They carry
+   * no accession number, so they are not facts and cannot appear in a table
+   * here — every cell of one cites a fact. The peers section uses this for
+   * competitors found by search when the filing named none.
+   */
+  notes: readonly SourceNote[];
 }
 
 /* ===========================================================================

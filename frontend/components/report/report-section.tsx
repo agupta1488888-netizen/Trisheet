@@ -18,6 +18,8 @@ import { DevelopmentsTimeline } from "@/components/report/developments-timeline"
 import { FigureTable } from "@/components/report/figure-table";
 import { Prose } from "@/components/report/prose";
 import { RiskList } from "@/components/report/risk-list";
+import { NoteBlock } from "@/components/report/source-notes";
+import { FOUND_NOTES_HEADING, FOUND_NOTES_NOTE } from "@/lib/constants";
 
 /**
  * Which chart sits in which section. One place, so a chart cannot end up
@@ -90,6 +92,16 @@ export function ReportSection({
           ) : null}
 
           {section.id === "risks" ? <RiskList risks={section.risks} /> : null}
+
+          {/* After the tables, under its own heading. These carry no
+              accession number, so they are kept visibly apart from the
+              cited figures above rather than folded in among them. */}
+          <NoteBlock
+            id={`${section.id}-found-notes`}
+            heading={FOUND_NOTES_HEADING}
+            note={FOUND_NOTES_NOTE}
+            notes={section.notes}
+          />
 
           <SectionCharts sectionId={section.id} charts={charts} />
         </>
