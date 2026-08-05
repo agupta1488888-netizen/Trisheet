@@ -32,6 +32,7 @@ Public interface
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import html
 import logging
@@ -3041,15 +3042,20 @@ async def publish(
     Neither rendering nor uploading can fail the report: an artifact that could
     not be produced comes back carrying the reason, which the interface shows
     in place of a download link.
-    """
-    refs: list[ArtifactRef] = []
 
-    for kind, render in (
-        (ArtifactKind.PDF, assemble_pdf),
-        (ArtifactKind.XLSX, assemble_xlsx),
-    ):
+    The two artifacts are independent of one another, so they are rendered and
+    uploaded concurrently rather than one after the other. Each render is handed
+    to a worker thread: both are synchronous and CPU-bound, and running one
+    inline would block the event loop for its whole duration — stalling the
+    progress feed that this same report is writing to, and every other request
+    the process is serving.
+    """
+
+    async def render_and_upload(
+        kind: ArtifactKind, render: Callable[[ReportDocument], bytes]
+    ) -> ArtifactRef:
         try:
-            content = render(document)
+            content = await asyncio.to_thread(render, document)
         except Exception as failure:  # noqa: BLE001 — see below
             # Broad on purpose. A renderer is a leaf of the pipeline and the
             # report is already verified by the time it runs, so no failure
@@ -3072,21 +3078,23 @@ async def publish(
                 },
                 exc_info=not isinstance(failure, ArtifactRenderError),
             )
-            refs.append(
-                ArtifactRef(
-                    kind=kind,
-                    size_bytes=0,
-                    content_type=ARTIFACT_CONTENT_TYPES[str(kind)],
-                    created_at=dt.datetime.now(dt.UTC),
-                    unavailable_reason=reason,
-                )
+            return ArtifactRef(
+                kind=kind,
+                size_bytes=0,
+                content_type=ARTIFACT_CONTENT_TYPES[str(kind)],
+                created_at=dt.datetime.now(dt.UTC),
+                unavailable_reason=reason,
             )
-            continue
 
-        refs.append(
-            await storage.upload(
-                report_id, document.company.ticker, kind, content
-            )
+        return await storage.upload(
+            report_id, document.company.ticker, kind, content
         )
 
-    return tuple(refs)
+    # gather resolves in argument order, so the PDF stays the first ref
+    # regardless of which render finishes first.
+    return tuple(
+        await asyncio.gather(
+            render_and_upload(ArtifactKind.PDF, assemble_pdf),
+            render_and_upload(ArtifactKind.XLSX, assemble_xlsx),
+        )
+    )
