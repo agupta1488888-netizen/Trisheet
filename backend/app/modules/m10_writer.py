@@ -42,6 +42,7 @@ Public interface
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -373,10 +374,25 @@ async def write_sections(
             )
         )
 
-    sections = [
-        await _write_section(company, section, facts)
-        for section in WRITER_SECTIONS
-    ]
+    # Concurrently, not in turn. Each section is shown its own facts and reads
+    # nothing the others produce, so writing them one at a time bought nothing
+    # and cost the report the sum of seven round trips rather than the longest
+    # one. That is invisible while the model answers in a second and dominates
+    # everything else when it does not: a provider slow enough to make one
+    # section take fifty seconds made the report take six minutes.
+    #
+    # gather resolves in argument order, so sections stay in report order.
+    # `_write_section` never raises — a section that could not be written
+    # carries its reason — so one slow or refused section cannot cancel the
+    # rest.
+    sections = list(
+        await asyncio.gather(
+            *(
+                _write_section(company, section, facts)
+                for section in WRITER_SECTIONS
+            )
+        )
+    )
 
     logger.info(
         "Prose generation complete",
