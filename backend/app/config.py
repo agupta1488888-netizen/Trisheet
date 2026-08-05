@@ -1197,11 +1197,25 @@ PEER_GROUP_MARKERS = (
 #: ordinary risk-factor boilerplate ("intense competition for talent",
 #: "highly competitive industry") with no named competitor nearby, and
 #: matching it opened a window practically anywhere in the document.
+#:
+#: Both voices are covered. The first-person forms alone missed every filer
+#: that writes about itself in the third person — Apple's competition section
+#: says "the markets in which the Company competes" and "the Company's
+#: competitors", and matched none of "we compete", "our competitors",
+#: "principal competitors" or "competitive landscape". That is a common house
+#: style, not an oddity, and it silently cost those filers the whole rung.
+#: The third-person entries below stay specific for the reason the bare word
+#: is excluded: each names a competitor relationship rather than the abstract
+#: fact of competition.
 COMPETITION_MARKERS = (
     "we compete",
     "our competitors",
     "principal competitors",
     "competitive landscape",
+    "company competes",
+    "company's competitors",
+    "competes with",
+    "competitors include",
 )
 
 #: Characters of text either side of a marker that are scanned for names. A

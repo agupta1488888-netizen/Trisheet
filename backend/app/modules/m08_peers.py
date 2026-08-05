@@ -61,6 +61,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from lxml import etree
+from pydantic import ValidationError
 
 from app.config import (
     AMENDMENT_FORM_SUFFIX,
@@ -105,6 +106,7 @@ from app.models import (
     Peer,
     PeerSelectionMethod,
     PeerSet,
+    SourceNote,
     SourceTier,
     SourceType,
 )
@@ -656,6 +658,135 @@ def _kept_competitor_names(
         )
 
     return tuple(kept)
+
+
+_WEB_COMPETITOR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "competitors": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "source_url": {
+                        "type": "string",
+                        "description": "The page this was read from.",
+                    },
+                },
+                "required": ["name", "source_url"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["competitors"],
+    "additionalProperties": False,
+}
+
+_WEB_COMPETITOR_SYSTEM_PROMPT = (
+    "You identify a company's competitors using web search. You return "
+    "company names and the page each was read from, and nothing else: no "
+    "figures, no market shares, no rankings, no reasoning. Every answer you "
+    "give is shown to the reader labelled as unverified and not taken from a "
+    "filing, so accuracy matters more than completeness. Return only "
+    "competitors you found stated on a page you searched. Returning fewer is "
+    "correct; returning an empty list is correct when the search does not "
+    "support an answer."
+)
+
+
+async def find_web_competitors(company: Company) -> tuple[SourceNote, ...]:
+    """Competitors read off the open web, for a filer that names none.
+
+    The fallback, and only the fallback. A company that names its competitors
+    in its own annual report has said something on the record, and nothing
+    found by search improves on that. This runs when the filing named nobody —
+    Apple's competition section, for instance, describes competition for two
+    pages without naming a single company.
+
+    What comes back is a `SourceNote`, never a `Fact`. A web page has no
+    accession number and no filing date, and inventing either so the field
+    could be populated would be fabricating provenance. `is_user_supplied` is
+    False, which is what lets the interface say where these came from rather
+    than implying the reader supplied them.
+
+    Never raises. No model, no search result and no answer all produce nothing.
+    """
+    if not llm.is_configured():
+        return ()
+
+    user_prompt = (
+        f"Company: {company.name} (ticker {company.ticker}).\n"
+        f"Industry, as classified by the SEC: "
+        f"{company.sector or 'not disclosed'}.\n"
+        f"Return at most {COMPETITOR_MAX_COUNT} companies that compete with "
+        "it in its product markets. Include companies listed outside the "
+        "United States and companies that are privately held."
+    )
+
+    try:
+        answer = await llm.complete_json_with_web_search(
+            _WEB_COMPETITOR_SYSTEM_PROMPT,
+            user_prompt,
+            _WEB_COMPETITOR_SCHEMA,
+            purpose="peers:competitors_web",
+        )
+    except llm.LlmError as cause:
+        logger.warning(
+            "The model did not answer when searching for competitors",
+            extra={"cik": company.cik, "error": str(cause)},
+        )
+        return ()
+
+    raw = answer.get("competitors")
+    if not isinstance(raw, list):
+        return ()
+
+    fetched = dt.datetime.now(dt.UTC)
+    subject_key = normalise_name(company.name)
+    notes: list[SourceNote] = []
+    seen: set[str] = set()
+
+    for item in raw[:COMPETITOR_MAX_COUNT]:
+        if not isinstance(item, dict):
+            continue
+        name = " ".join(str(item.get("name", "")).split())
+        url = str(item.get("source_url", "")).strip()
+        if not (
+            COMPETITOR_NAME_MIN_CHARS <= len(name) <= COMPETITOR_NAME_MAX_CHARS
+        ):
+            continue
+
+        key = normalise_name(name)
+        if not key or key == subject_key or key in seen:
+            continue
+
+        try:
+            notes.append(
+                SourceNote(
+                    text=f"{name} competes with {company.name}.",
+                    source_url=url,
+                    source_type=SourceType.NEWS,
+                    tier=SourceTier.NEWS,
+                    fetched_at=fetched,
+                    is_user_supplied=False,
+                )
+            )
+        except ValidationError as cause:
+            # Usually an unusable URL. The claim is dropped rather than kept
+            # without the page it came from.
+            logger.warning(
+                "Web competitor could not be expressed as a sourced note",
+                extra={"competitor_name": name, "error": str(cause)},
+            )
+            continue
+        seen.add(key)
+
+    logger.info(
+        "Competitors read from the web because the filing named none",
+        extra={"cik": company.cik, "competitors": len(notes)},
+    )
+    return tuple(notes)
 
 
 async def read_named_competitors(

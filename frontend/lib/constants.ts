@@ -25,6 +25,23 @@ export const SOURCE_NOTES_HEADING = "Sources you supplied";
 export const SOURCE_NOTES_NOTE =
   "Read from links supplied with this request, not from filings. These pages are self-reported and were not verified, and nothing here is used in the figures above.";
 
+/**
+ * The heading over statements the system went and found, rather than ones the
+ * reader supplied. Kept apart from those for the same reason both are kept
+ * apart from the filed sections: who went looking changes what the statement
+ * is worth, and the reader should not have to guess which of the two they are
+ * reading.
+ */
+export const FOUND_NOTES_HEADING = "Read from the web";
+
+/**
+ * Reached only when the filings did not answer. Says so, and says what that
+ * costs: a search result carries no accession number and no filing date, so
+ * none of this can be traced the way a figure above can.
+ */
+export const FOUND_NOTES_NOTE =
+  "Found by search because the filings did not state it. These pages were not verified, they carry no accession number or filing date, and nothing here is used in the figures above.";
+
 /** Section headings, in brief order. */
 export const SECTION_TITLE: Readonly<Record<SectionId, string>> = {
   snapshot: "Snapshot",

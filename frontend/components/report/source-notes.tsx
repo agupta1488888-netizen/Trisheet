@@ -20,7 +20,12 @@
  */
 
 import { formatFilingDate } from "@/lib/format";
-import { SOURCE_NOTES_HEADING, SOURCE_NOTES_NOTE } from "@/lib/constants";
+import {
+  FOUND_NOTES_HEADING,
+  FOUND_NOTES_NOTE,
+  SOURCE_NOTES_HEADING,
+  SOURCE_NOTES_NOTE,
+} from "@/lib/constants";
 import type { SourceNote } from "@/lib/types";
 
 /** The page's own host, which is what a reader actually recognises. */
@@ -34,46 +39,78 @@ function hostOf(url: string): string {
   }
 }
 
-export function SourceNotes({ notes }: { notes: readonly SourceNote[] }) {
+function NoteBlock({
+  id,
+  heading,
+  note,
+  notes,
+}: {
+  id: string;
+  heading: string;
+  note: string;
+  notes: readonly SourceNote[];
+}) {
   if (notes.length === 0) {
     return null;
   }
 
   return (
-    <section aria-labelledby="source-notes-heading" className="mt-12">
-      <h2
-        id="source-notes-heading"
-        className="font-display text-xl font-semibold text-ink"
-      >
-        {SOURCE_NOTES_HEADING}
+    <section aria-labelledby={id} className="mt-12">
+      <h2 id={id} className="font-display text-xl font-semibold text-ink">
+        {heading}
       </h2>
 
       <p className="mt-2 max-w-prose text-sm leading-relaxed text-muted-foreground">
-        {SOURCE_NOTES_NOTE}
+        {note}
       </p>
 
       <ul className="mt-5 border-t border-rule">
-        {notes.map((note) => (
+        {notes.map((entry) => (
           <li
-            key={`${note.sourceUrl}-${note.text}`}
+            key={`${entry.sourceUrl}-${entry.text}`}
             className="border-b border-rule py-3"
           >
-            <p className="text-sm leading-relaxed text-ink">{note.text}</p>
+            <p className="text-sm leading-relaxed text-ink">{entry.text}</p>
             <p className="ref mt-1.5 text-xs text-muted-foreground">
               <a
-                href={note.sourceUrl}
+                href={entry.sourceUrl}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="underline underline-offset-4 hover:text-ink"
               >
-                {hostOf(note.sourceUrl)}
+                {hostOf(entry.sourceUrl)}
               </a>
               <span aria-hidden="true"> · </span>
-              Read {formatFilingDate(note.fetchedAt)}
+              Read {formatFilingDate(entry.fetchedAt)}
             </p>
           </li>
         ))}
       </ul>
     </section>
+  );
+}
+
+export function SourceNotes({ notes }: { notes: readonly SourceNote[] }) {
+  // Split by who went looking. A note the reader attached and a note the
+  // system found by search are different claims, and one heading covering
+  // both would have to be false about one of them.
+  const supplied = notes.filter((note) => note.isUserSupplied);
+  const found = notes.filter((note) => !note.isUserSupplied);
+
+  return (
+    <>
+      <NoteBlock
+        id="source-notes-heading"
+        heading={SOURCE_NOTES_HEADING}
+        note={SOURCE_NOTES_NOTE}
+        notes={supplied}
+      />
+      <NoteBlock
+        id="found-notes-heading"
+        heading={FOUND_NOTES_HEADING}
+        note={FOUND_NOTES_NOTE}
+        notes={found}
+      />
+    </>
   );
 }

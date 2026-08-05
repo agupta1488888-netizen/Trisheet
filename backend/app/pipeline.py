@@ -556,6 +556,15 @@ async def _extract(
         )
         work.facts.extend(m08_peers.competitor_facts(competitors))
 
+        if not competitors.names:
+            # Only when the filing named nobody. A company that named its
+            # competitors on the record has said something the open web
+            # cannot improve on, and these arrive as notes rather than facts
+            # precisely because a web page has no accession number.
+            work.source_notes.extend(
+                await m08_peers.find_web_competitors(company)
+            )
+
         if not selected.peers and not competitors.names:
             outcome.skip(
                 "No filed source named a comparable company for this filer.",
