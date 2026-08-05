@@ -14,6 +14,7 @@ import {
 } from "@/lib/format";
 import type { AnalysisDepth, Company } from "@/lib/types";
 import { DEPTH_OPTIONS } from "@/lib/constants";
+import { CompanyLogo } from "@/components/report/company-logo";
 
 /** The annual form each filer type files. Detected upstream, never assumed. */
 const ANNUAL_FORM: Readonly<Record<Company["filerType"], string>> = {
@@ -51,8 +52,15 @@ export function ReportHeader({
 
   return (
     <header>
-      <p className="ref text-sm text-certified">{company.ticker}</p>
-      <h1 className="mt-1 text-4xl leading-tight text-ink">{company.name}</h1>
+      <div className="flex items-start gap-4">
+        <CompanyLogo ticker={company.ticker} />
+        <div>
+          <p className="ref text-sm text-certified">{company.ticker}</p>
+          <h1 className="mt-1 text-4xl leading-tight text-ink">
+            {company.name}
+          </h1>
+        </div>
+      </div>
 
       <dl className="mt-6 grid grid-cols-2 gap-x-8 gap-y-4 border-t border-rule pt-4 sm:grid-cols-3 lg:grid-cols-5">
         <Detail label="Annual form" value={ANNUAL_FORM[company.filerType]} />
