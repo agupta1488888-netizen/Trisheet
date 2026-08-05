@@ -23,6 +23,8 @@
  * tell.
  */
 
+import { FileSpreadsheet, FileText } from "lucide-react";
+
 import { formatBytes } from "@/lib/format";
 import type { ArtifactKind, ArtifactRef } from "@/lib/types";
 
@@ -31,18 +33,25 @@ const KIND_LABEL: Readonly<Record<ArtifactKind, string>> = {
   xlsx: "Excel",
 };
 
+const KIND_ICON: Readonly<Record<ArtifactKind, typeof FileText>> = {
+  pdf: FileText,
+  xlsx: FileSpreadsheet,
+};
+
 /** Declared here so the order is the document's, not the backend's array. */
 const KIND_ORDER: readonly ArtifactKind[] = ["pdf", "xlsx"];
 
 function Download({ artifact }: { artifact: ArtifactRef }) {
   const label = KIND_LABEL[artifact.kind];
+  const Icon = KIND_ICON[artifact.kind];
 
   if (artifact.url === null) {
     const reason =
       artifact.unavailableReason ??
       "This file was rendered but could not be published.";
     return (
-      <span className="text-xs text-muted-foreground">
+      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Icon aria-hidden="true" strokeWidth={2} className="size-3.5" />
         {label} — {reason}
       </span>
     );
@@ -52,8 +61,9 @@ function Download({ artifact }: { artifact: ArtifactRef }) {
     <a
       href={artifact.url}
       download
-      className="text-xs text-certified underline underline-offset-4 hover:text-ink focus-visible:text-ink"
+      className="flex items-center gap-1.5 text-xs text-certified underline underline-offset-4 hover:text-ink focus-visible:text-ink"
     >
+      <Icon aria-hidden="true" strokeWidth={2} className="size-3.5" />
       Download {label}
       <span className="figure ml-1.5 text-[0.68rem] text-muted-foreground">
         {formatBytes(artifact.sizeBytes)}

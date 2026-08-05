@@ -37,8 +37,20 @@ export function DevelopmentsTimeline({
         return (
           <li
             key={event.id}
-            className="grid gap-x-6 gap-y-1 border-b border-rule py-3 sm:grid-cols-[7.5rem_4.5rem_1fr]"
+            className="relative grid gap-x-6 gap-y-1 border-b border-rule py-3 pl-4 sm:grid-cols-[7.5rem_4.5rem_1fr] sm:pl-4"
           >
+            {/* The connector: a hairline running the height of the row,
+                with a dot marking the entry, so the list reads as
+                chronological rather than as unordered stacked rows. */}
+            <span
+              aria-hidden="true"
+              className="absolute top-0 bottom-0 left-0 w-px bg-rule"
+            />
+            <span
+              aria-hidden="true"
+              className="absolute top-4 left-0 size-1.5 -translate-x-[3px] rounded-full bg-certified"
+            />
+
             <span className="figure text-left text-xs text-muted-foreground sm:text-right">
               {formatFilingDate(event.date)}
             </span>

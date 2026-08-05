@@ -62,44 +62,59 @@ export function ReportHeader({
         </div>
       </div>
 
-      <dl className="mt-6 grid grid-cols-2 gap-x-8 gap-y-4 border-t border-rule pt-4 sm:grid-cols-3 lg:grid-cols-5">
-        <Detail label="Annual form" value={ANNUAL_FORM[company.filerType]} />
-        <Detail label="Filer" value={FILER_DESCRIPTION[company.filerType]} />
-        <Detail label="CIK" value={company.cik} />
-        <Detail
-          label="Reporting currency"
-          value={company.reportingCurrency ?? "Not disclosed"}
-        />
-        <Detail label="Sector" value={company.sector ?? "Not disclosed"} />
+      <div className="mt-6 border-t border-rule pt-4">
+        <p className="text-[0.62rem] font-medium tracking-wide text-muted-foreground uppercase">
+          Identity
+        </p>
+        <dl className="mt-2 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
+          <Detail label="Annual form" value={ANNUAL_FORM[company.filerType]} />
+          <Detail label="Filer" value={FILER_DESCRIPTION[company.filerType]} />
+          <Detail label="CIK" value={company.cik} />
+          {/* Off the filer's own submissions document. Every one of these
+              renders "Not disclosed" rather than vanishing when EDGAR does
+              not state it — a reader should be able to tell the difference
+              between a fact we do not have and a field we did not look for. */}
+          <Detail
+            label="Exchange"
+            value={company.exchange ?? "Not disclosed"}
+          />
+          <Detail label="Sector" value={company.sector ?? "Not disclosed"} />
+        </dl>
+      </div>
 
-        {/* Identity, off the filer's own submissions document. Every one of
-            these renders "Not disclosed" rather than vanishing when EDGAR
-            does not state it — a reader should be able to tell the
-            difference between a fact we do not have and a field we did not
-            look for. Employees is usually the absent one: most filers state
-            headcount in prose and never tag it. */}
-        <Detail label="Exchange" value={company.exchange ?? "Not disclosed"} />
-        <Detail
-          label="Headquarters"
-          value={company.headquarters ?? "Not disclosed"}
-        />
-        <Detail
-          label="Incorporated"
-          value={company.stateOfIncorporation ?? "Not disclosed"}
-        />
-        <Detail
-          label="Employees"
-          value={
-            company.employees === null
-              ? "Not disclosed"
-              : formatCount(company.employees)
-          }
-        />
-        <Detail
-          label="Fiscal year end"
-          value={formatFiscalYearEnd(company.fiscalYearEnd)}
-        />
-      </dl>
+      <div className="mt-5 border-t border-rule pt-4">
+        <p className="text-[0.62rem] font-medium tracking-wide text-muted-foreground uppercase">
+          Filing mechanics
+        </p>
+        <dl className="mt-2 grid grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
+          <Detail
+            label="Reporting currency"
+            value={company.reportingCurrency ?? "Not disclosed"}
+          />
+          <Detail
+            label="Headquarters"
+            value={company.headquarters ?? "Not disclosed"}
+          />
+          <Detail
+            label="Incorporated"
+            value={company.stateOfIncorporation ?? "Not disclosed"}
+          />
+          {/* Employees is usually the absent field: most filers state
+              headcount in prose and never tag it. */}
+          <Detail
+            label="Employees"
+            value={
+              company.employees === null
+                ? "Not disclosed"
+                : formatCount(company.employees)
+            }
+          />
+          <Detail
+            label="Fiscal year end"
+            value={formatFiscalYearEnd(company.fiscalYearEnd)}
+          />
+        </dl>
+      </div>
 
       <p className="mt-4 text-xs text-muted-foreground">
         {depthLabel} analysis

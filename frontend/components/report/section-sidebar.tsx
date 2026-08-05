@@ -55,7 +55,14 @@ export function SectionSidebar({ ids }: { ids: readonly string[] }) {
       aria-label="Sections"
       className="hidden lg:sticky lg:top-8 lg:block lg:max-h-[calc(100vh-4rem)] lg:self-start lg:overflow-y-auto lg:pb-8"
     >
-      <ul className="space-y-0.5 border-l border-rule">
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-sm font-medium text-ink">Sections</h2>
+        <span className="figure text-[0.68rem] text-muted-foreground">
+          {ids.length}
+        </span>
+      </div>
+
+      <ul className="mt-3 space-y-0.5 border-l border-rule">
         {ids.map((id) => {
           const isActive = id === activeId;
 

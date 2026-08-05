@@ -19,6 +19,7 @@
  */
 
 import { useId, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { formatAccession, formatFilingDate } from "@/lib/format";
@@ -197,8 +198,15 @@ export function ProvenanceRail({ index }: { index: SourceIndex }) {
             </span>
             <ActiveSummary index={index} />
           </span>
-          <span aria-hidden="true" className="ref shrink-0 text-xs text-muted-foreground">
-            {isOpen ? "Close" : "Open"}
+          <span
+            aria-hidden="true"
+            className="shrink-0 text-muted-foreground"
+          >
+            {isOpen ? (
+              <ChevronDown strokeWidth={2} className="size-4" />
+            ) : (
+              <ChevronUp strokeWidth={2} className="size-4" />
+            )}
           </span>
         </button>
 

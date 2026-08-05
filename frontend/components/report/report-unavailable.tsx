@@ -6,6 +6,7 @@
  */
 
 import Link from "next/link";
+import { AlertTriangle } from "lucide-react";
 
 import type { ApiError } from "@/lib/types";
 
@@ -15,7 +16,12 @@ export function ReportUnavailable({ error }: { error: ApiError }) {
       id="main"
       className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center px-5 py-20 sm:px-8"
     >
-      <h1 className="text-2xl text-ink">{error.message}</h1>
+      <AlertTriangle
+        aria-hidden="true"
+        strokeWidth={1.5}
+        className="size-6 text-muted-foreground"
+      />
+      <h1 className="mt-4 text-2xl text-ink">{error.message}</h1>
 
       {error.detail === null ? null : (
         <p className="ref mt-3 text-xs text-muted-foreground">{error.detail}</p>

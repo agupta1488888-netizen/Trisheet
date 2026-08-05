@@ -11,6 +11,8 @@
  * backend supplies, never recomputed from the ratio.
  */
 
+import { AlertTriangle, Check } from "lucide-react";
+
 import { cn } from "@/lib/utils";
 import { TIER_NAME } from "@/lib/constants";
 import { formatCount } from "@/lib/format";
@@ -75,21 +77,33 @@ function Metric({
   label,
   value,
   tone,
+  passed,
 }: {
   label: string;
   value: string;
   tone?: "certified" | "flag";
+  /** When set, a check/warning glyph supplements (never replaces) the text. */
+  passed?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[0.68rem] text-muted-foreground">{label}</span>
       <span
         className={cn(
-          "figure text-left text-sm",
+          "figure flex items-center gap-1.5 text-left text-sm",
           tone === "certified" && "text-certified",
           tone === "flag" && "text-flag",
         )}
       >
+        {passed === undefined ? null : passed ? (
+          <Check aria-hidden="true" strokeWidth={2} className="size-3.5" />
+        ) : (
+          <AlertTriangle
+            aria-hidden="true"
+            strokeWidth={2}
+            className="size-3.5"
+          />
+        )}
         {value}
       </span>
     </div>
@@ -120,10 +134,13 @@ function Reconciliations({ checks }: { checks: readonly CheckResult[] }) {
       </span>
       <ul className="mt-1.5 flex flex-col gap-1">
         {checks.map((check) => (
-          <li key={check.check} className="text-[0.7rem]">
+          <li
+            key={check.check}
+            className="flex items-center gap-1.5 text-[0.7rem]"
+          >
             <span
               className={cn(
-                "ref mr-2",
+                "ref flex items-center gap-1",
                 check.examined === 0
                   ? "text-muted-foreground"
                   : check.passed
@@ -131,6 +148,15 @@ function Reconciliations({ checks }: { checks: readonly CheckResult[] }) {
                     : "text-flag",
               )}
             >
+              {check.examined === 0 ? null : check.passed ? (
+                <Check aria-hidden="true" strokeWidth={2} className="size-3" />
+              ) : (
+                <AlertTriangle
+                  aria-hidden="true"
+                  strokeWidth={2}
+                  className="size-3"
+                />
+              )}
               {check.examined === 0
                 ? "Not applicable"
                 : check.passed
@@ -175,6 +201,7 @@ export function ComplianceStrip({
           label="Verification"
           value={compliance.passed ? "Passed" : "Failed"}
           tone={compliance.passed ? "certified" : "flag"}
+          passed={compliance.passed}
         />
 
         <div className="min-w-56 flex-1">

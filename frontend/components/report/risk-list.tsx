@@ -55,7 +55,7 @@ export function RiskList({ risks }: { risks: readonly RiskItem[] }) {
               {position + 1}
             </span>
             <div>
-              <h4 className="text-sm font-medium text-ink">
+              <h4 className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
                 {risk.heading}
                 <span className="whitespace-nowrap">
                   {markers.map((marker) => {
@@ -65,16 +65,16 @@ export function RiskList({ risks }: { risks: readonly RiskItem[] }) {
                     );
                   })}
                 </span>
-              </h4>
-              <p className="mt-1 max-w-prose text-sm leading-relaxed text-muted-foreground">
                 {/* An uncategorised risk shows no tag rather than a
                     catch-all one. "Other" would be a label the filer's own
                     heading does not support. */}
                 {risk.category === null ? null : (
-                  <span className="ref mr-2 text-[0.68rem] tracking-wide text-certified">
+                  <span className="ref inline-block border border-rule px-1.5 py-0.5 text-[0.65rem] font-normal tracking-wide text-muted-foreground">
                     {CATEGORY_LABEL[risk.category]}
                   </span>
                 )}
+              </h4>
+              <p className="mt-1 max-w-prose text-sm leading-relaxed text-muted-foreground">
                 {risk.summary}
               </p>
             </div>
