@@ -570,7 +570,22 @@ def _is_advice_question(question: str) -> bool:
 # -out metrics.
 
 _PEER_TRIGGER_WORDS = frozenset(
-    {"competitor", "competitors", "peer", "peers", "compare", "comparison", "versus"}
+    {
+        "competitor",
+        "competitors",
+        "peer",
+        "peers",
+        "compare",
+        "comparison",
+        "versus",
+        # "who does this compete with" is the same question as "who are its
+        # competitors" and was reaching a different answer for want of the
+        # verb form.
+        "compete",
+        "competes",
+        "rival",
+        "rivals",
+    }
 )
 
 
@@ -579,21 +594,29 @@ def _is_peer_question(question: str) -> bool:
 
 
 def _with_peer_facts(candidates: list[Fact], all_facts: Sequence[Fact]) -> list[Fact]:
-    """Adds every stored peer fact to the candidate list, deduplicated.
+    """Adds every stored peer and competitor fact to the candidates, deduped.
 
     Plain token overlap between "how does this compare to competitors" and a
     peer fact's own metric/label is not reliable — the trigger words above
     decide the question is about peers; once decided, every peer fact this
     report has is worth offering, not just the ones that happened to share a
     word with the question.
+
+    Competitors are offered alongside them, and matter more to this question
+    than the peers do. A peer is whoever the filer benchmarks pay against,
+    which for Nike is Best Buy and Coca-Cola; a competitor is whoever the
+    filer says it competes with, which is adidas and Puma. A reader asking
+    who this company competes with means the second, and answering with only
+    the first is answering a question they did not ask.
     """
     seen = {fact.fact_id for fact in candidates}
-    peer_facts = [
+    related = [
         fact
         for fact in all_facts
-        if fact.metric.startswith("peer.") and fact.fact_id not in seen
+        if fact.metric.startswith(("peer.", "competitor."))
+        and fact.fact_id not in seen
     ]
-    return (candidates + peer_facts)[:CHAT_TOOL_RESULT_FACT_LIMIT]
+    return (candidates + related)[:CHAT_TOOL_RESULT_FACT_LIMIT]
 
 
 # --- Interpretive insight ---------------------------------------------------

@@ -1609,3 +1609,53 @@ async def test_no_supplied_links_leaves_the_cascade_unchanged(
     )
 
     assert turn.not_found
+
+
+# --- Competitors reach the same question as peers ---------------------------
+
+
+def test_a_compete_question_is_recognised_as_a_peer_question() -> None:
+    # "who does it compete with" is the same question as "who are its
+    # competitors" and was missing the widening for want of the verb form.
+    for question in (
+        "who does Nike compete with",
+        "who are its competitors",
+        "how does this compare to peers",
+        "name its rivals",
+    ):
+        assert chat_agent._is_peer_question(question), question
+
+
+def test_widening_offers_competitors_alongside_peers() -> None:
+    peer = make_fact(
+        metric="peer.company.MSFT",
+        label="Peer — MSFT",
+        value=None,
+        display_value="MICROSOFT CORP (MSFT). Named in the proxy.",
+    )
+    competitor = make_fact(
+        metric="competitor.named.adidas_ag",
+        label="Competitor",
+        value=None,
+        display_value="adidas AG",
+    )
+    unrelated = make_fact(metric="income.revenue", label="Revenue")
+
+    widened = chat_agent._with_peer_facts([], [peer, competitor, unrelated])
+
+    # The competitor is the one that answers "who does Nike compete with";
+    # a compensation peer answers a different question.
+    assert [fact.display_value for fact in widened] == [
+        "MICROSOFT CORP (MSFT). Named in the proxy.",
+        "adidas AG",
+    ]
+
+
+def test_widening_does_not_duplicate_a_fact_already_offered() -> None:
+    competitor = make_fact(
+        metric="competitor.named.puma_se", label="Competitor", display_value="PUMA SE"
+    )
+
+    widened = chat_agent._with_peer_facts([competitor], [competitor])
+
+    assert len(widened) == 1
