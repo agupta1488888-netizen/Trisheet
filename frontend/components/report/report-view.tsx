@@ -14,8 +14,7 @@
  * declares. Sections are not reordered by how much data they happen to have.
  */
 
-import { useMemo } from "react";
-import Link from "next/link";
+import { useMemo, useState } from "react";
 
 import { SECTION_NAV_LABEL } from "@/lib/constants";
 import { buildSourceIndex } from "@/lib/provenance";
@@ -29,6 +28,7 @@ import { ReportHeader } from "@/components/report/report-header";
 import { ReportSection } from "@/components/report/report-section";
 import { SectionSidebar } from "@/components/report/section-sidebar";
 import { SourceNotes } from "@/components/report/source-notes";
+import { SiteHeader } from "@/components/chrome/site-header";
 
 /** Mobile/tablet fallback: the sidebar takes over at `lg`, see SectionSidebar. */
 function SectionNav({ ids }: { ids: readonly string[] }) {
@@ -55,6 +55,12 @@ export function ReportView({ document }: { document: ReportDocument }) {
     () => buildSourceIndex(document.facts, document.filings),
     [document.facts, document.filings],
   );
+  // Lifted here rather than kept inside ChatPanel so the site header's own
+  // "Ask" control opens the same panel instead of a second, disconnected one.
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  const toggleAssistant = () => {
+    setIsAssistantOpen((open) => !open);
+  };
 
   // Render in the declared order, and only sections the backend supplied.
   const sections = SECTION_ORDER.map((id) =>
@@ -63,18 +69,13 @@ export function ReportView({ document }: { document: ReportDocument }) {
 
   return (
     <ProvenanceProvider index={index}>
+      <SiteHeader variant="paper" backHref="/" onAskClick={toggleAssistant} />
+
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-x-10 px-5 py-10 pb-40 sm:px-8 lg:grid-cols-[9rem_minmax(0,1fr)_17rem] lg:pb-16">
         <SectionSidebar ids={sections.map((section) => section.id)} />
 
         <main id="report" className="min-w-0">
-          <Link
-            href="/"
-            className="text-sm text-certified underline underline-offset-4 hover:text-ink"
-          >
-            ← Back to search
-          </Link>
-
-          <div className="mt-6">
+          <div>
             <ReportHeader
               company={document.company}
               depth={document.depth}
@@ -112,7 +113,11 @@ export function ReportView({ document }: { document: ReportDocument }) {
         <ProvenanceRail index={index} />
       </div>
 
-      <ChatPanel reportId={document.report.id} />
+      <ChatPanel
+        reportId={document.report.id}
+        isOpen={isAssistantOpen}
+        onToggle={toggleAssistant}
+      />
     </ProvenanceProvider>
   );
 }

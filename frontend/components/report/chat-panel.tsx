@@ -10,8 +10,11 @@
  * else in this view.
  *
  * Layout:
- *  - `lg+`: a slim vertical "Ask" tab fixed to the right viewport edge
- *    slides a ~24rem panel in from the right.
+ *  - `lg+`: a circular floating launcher fixed to the bottom-right corner
+ *    slides a ~24rem panel in from the right. Open state is lifted to
+ *    `ReportView` (rather than kept internal) so the site header's own
+ *    "Ask" control can open the same panel without a second, disconnected
+ *    open flag.
  *  - below `lg`: `ProvenanceRail` already owns a `fixed inset-x-0 bottom-0`
  *    docked bar. This panel docks its own closed bar immediately above it —
  *    anchored `bottom-11` (2.75rem), which is the rail's own closed-button
@@ -32,6 +35,7 @@
  */
 
 import { useEffect, useId, useState } from "react";
+import { MessageCircle, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { fetchChatSuggestions, sendChatMessage } from "@/lib/api";
@@ -103,9 +107,17 @@ function GateNotice({ error }: { error: ApiError }) {
   );
 }
 
-export function ChatPanel({ reportId }: { reportId: string }) {
+export function ChatPanel({
+  reportId,
+  isOpen,
+  onToggle,
+}: {
+  reportId: string;
+  /** Lifted to `ReportView` so the site header's "Ask" control shares it. */
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
   const panelId = useId();
-  const [isOpen, setIsOpen] = useState(false);
   const [turns, setTurns] = useState<readonly ChatTurn[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [gateError, setGateError] = useState<ApiError | null>(null);
@@ -124,10 +136,6 @@ export function ChatPanel({ reportId }: { reportId: string }) {
       cancelled = true;
     };
   }, [reportId]);
-
-  const toggle = () => {
-    setIsOpen((open) => !open);
-  };
 
   const submit = async (message: string, pastedUrl?: string) => {
     const userTurn: ChatTurn = {
@@ -166,19 +174,24 @@ export function ChatPanel({ reportId }: { reportId: string }) {
 
   return (
     <>
-      {/* Wide: a finger tab that slides a panel in from the right edge. */}
+      {/* Wide: a floating launcher, bottom-right — the one deliberately
+          circular, bordered element in this view, justified as a labelled
+          control (equivalent to the docked bars below `lg`) rather than
+          decoration. Sits above the panel itself (`z-50` > the panel's
+          `z-40`) so it stays reachable as a close control once open. */}
       <button
         type="button"
         aria-expanded={isOpen}
         aria-controls={panelId}
-        onClick={toggle}
-        className={cn(
-          "fixed top-1/2 z-40 hidden -translate-y-1/2 items-center rounded-l-xs border border-r-0 border-rule bg-paper px-2 py-5 text-xs font-medium tracking-wide text-ink transition-[right] motion-reduce:transition-none hover:bg-wash lg:flex",
-          isOpen ? "right-96" : "right-0",
-        )}
-        style={{ writingMode: "vertical-rl" }}
+        onClick={onToggle}
+        className="fixed right-6 bottom-6 z-50 hidden size-12 items-center justify-center rounded-full border border-rule bg-paper text-certified transition-colors motion-reduce:transition-none hover:bg-wash lg:flex"
       >
-        Ask
+        <span className="sr-only">{isOpen ? "Close assistant" : "Ask the assistant"}</span>
+        {isOpen ? (
+          <X aria-hidden="true" strokeWidth={2} className="size-5" />
+        ) : (
+          <MessageCircle aria-hidden="true" strokeWidth={2} className="size-5" />
+        )}
       </button>
 
       <aside
@@ -194,7 +207,7 @@ export function ChatPanel({ reportId }: { reportId: string }) {
           <h2 className="text-sm font-medium text-ink">Assistant</h2>
           <button
             type="button"
-            onClick={toggle}
+            onClick={onToggle}
             className="ref text-xs text-muted-foreground hover:text-ink"
           >
             Close
@@ -260,7 +273,7 @@ export function ChatPanel({ reportId }: { reportId: string }) {
           type="button"
           aria-expanded={isOpen}
           aria-controls={`${panelId}-mobile`}
-          onClick={toggle}
+          onClick={onToggle}
           className="flex w-full items-center justify-between gap-3 border-t border-rule px-5 py-3 text-left"
         >
           <span className="text-sm font-medium text-ink">Ask</span>
