@@ -16,6 +16,7 @@ import type {
   ReportDocument,
   Resolution,
   TickerSuggestion,
+  ValuationResponse,
 } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -248,4 +249,21 @@ export async function fetchChatSuggestions(
   reportId: string,
 ): Promise<ApiResult<ChatSuggestions>> {
   return apiRequest<ChatSuggestions>(`/reports/${reportId}/chat/suggestions`);
+}
+
+/**
+ * This report's valuation under one set of assumptions.
+ *
+ * A GET whose query string is the same schema the browser's own URL carries,
+ * so a shared link and this call say the same thing without a second
+ * serialiser between them — pass the string `toQuery` produced.
+ */
+export async function fetchValuation(
+  reportId: string,
+  query: string,
+): Promise<ApiResult<ValuationResponse>> {
+  const suffix = query === "" ? "" : `?${query}`;
+  return apiRequest<ValuationResponse>(
+    `/reports/${reportId}/valuation${suffix}`,
+  );
 }

@@ -703,3 +703,135 @@ export interface ReportDocument {
   /** Rendered PDF and XLSX, when they were built. Offered as downloads. */
   artifacts: readonly ArtifactRef[];
 }
+
+// --- Valuation ---------------------------------------------------------------
+//
+// These mirror the valuation models in `backend/app/models.py`. When one
+// changes, change both.
+//
+// Everything below is a projection. None of it is a `Fact`, and that is
+// structural rather than a convention: a `ValuationFigure` has a value, a
+// rendering and a unit, and deliberately no accession number, no filing date
+// and no source url. The real figures a calculation rested on arrive
+// separately, in `ValuationResponse.inputs`, as ordinary facts — so an input
+// earns a card in the provenance rail and an output cannot.
+
+/** Which direction the calculation runs. */
+export type ValuationMode = "reverse" | "forward";
+
+/**
+ * A projected number, already rendered.
+ *
+ * The browser never scales, divides or formats a figure — the same rule the
+ * printed document follows — so `display` arrives ready to print.
+ */
+export interface ValuationFigure {
+  value: number;
+  display: string;
+  unit: string | null;
+}
+
+/**
+ * One modelling choice, named as the choice it is.
+ *
+ * `source` is "default" for the fixed illustrative constant, "user_supplied"
+ * when the reader chose it, and "solved" for the rate the reverse calculation
+ * worked out from the market's own valuation.
+ */
+export interface AssumptionOut {
+  name: string;
+  value: number;
+  display: string;
+  source: "default" | "user_supplied" | "solved";
+  note: string;
+}
+
+/** A forward projection, and the ids of the real facts behind it. */
+export interface DcfEstimate {
+  enterpriseValue: ValuationFigure | null;
+  equityValue: ValuationFigure | null;
+  valuePerShare: ValuationFigure | null;
+  projectedFreeCashFlow: readonly ValuationFigure[];
+  baseFcfFactId: string | null;
+  netDebtFactId: string | null;
+  sharesFactId: string | null;
+  discountRate: AssumptionOut;
+  fcfGrowthRate: AssumptionOut;
+  terminalGrowthRate: AssumptionOut;
+  projectionYears: number;
+  unavailableReason: string | null;
+}
+
+/** What the market's own valuation implies, solved rather than assumed. */
+export interface ImpliedGrowth {
+  impliedGrowthRate: AssumptionOut | null;
+  marketCap: ValuationFigure | null;
+  marketCapFactId: string | null;
+  baseFcfFactId: string | null;
+  netDebtFactId: string | null;
+  discountRate: AssumptionOut;
+  terminalGrowthRate: AssumptionOut;
+  projectionYears: number;
+  iterations: number;
+  converged: boolean;
+  /**
+   * "lower" or "upper" when the valuation lies outside the search bracket.
+   * The bound is then reported as a bound, never extrapolated past.
+   */
+  boundHit: "lower" | "upper" | null;
+  unavailableReason: string | null;
+}
+
+/** One cell of the grid. No fact id, by construction. */
+export interface SensitivityCell {
+  discountRate: AssumptionOut;
+  fcfGrowthRate: AssumptionOut;
+  valuePerShare: ValuationFigure | null;
+  equityValue: ValuationFigure | null;
+}
+
+/**
+ * Value re-run across discount rate and growth at once. Rows are
+ * `discountRates`, columns are `fcfGrowthRates`, and `cells` is row-major.
+ */
+export interface SensitivityGrid {
+  discountRates: readonly AssumptionOut[];
+  fcfGrowthRates: readonly AssumptionOut[];
+  cells: readonly SensitivityCell[];
+  unavailableReason: string | null;
+}
+
+/** One named growth case and the estimate under it. */
+export interface ScenarioCase {
+  name: string;
+  fcfGrowthRate: AssumptionOut;
+  estimate: DcfEstimate;
+}
+
+/** Everything the workbench renders for one set of assumptions. */
+export interface ValuationResponse {
+  mode: ValuationMode;
+  /**
+   * The real facts the calculation rested on, as the document carries them.
+   * Ids are content-addressed, so they resolve against an index the page has
+   * already built and can be merged into the rail without renumbering it.
+   */
+  inputs: readonly Fact[];
+  implied: ImpliedGrowth | null;
+  estimate: DcfEstimate | null;
+  sensitivity: SensitivityGrid | null;
+  scenarios: readonly ScenarioCase[];
+  unavailableReason: string | null;
+  /** Standing statements the interface must show beside these figures. */
+  notes: readonly string[];
+}
+
+/** The assumptions a reader can move, as they travel in the query string. */
+export interface ValuationAssumptions {
+  mode: ValuationMode;
+  /** Percentages as a reader types them: 9 means 9%. */
+  discountRatePct: number | null;
+  fcfGrowthRatePct: number | null;
+  terminalGrowthRatePct: number | null;
+  projectionYears: number | null;
+}

@@ -18,7 +18,13 @@ import { useMemo, useState } from "react";
 
 import { SECTION_NAV_LABEL } from "@/lib/constants";
 import { buildSourceIndex } from "@/lib/provenance";
-import { SECTION_ORDER, type ReportDocument } from "@/lib/types";
+import {
+  SECTION_ORDER,
+  type Fact,
+  type ReportDocument,
+  type ValuationAssumptions,
+  type ValuationResponse,
+} from "@/lib/types";
 import { ArtifactDownloads } from "@/components/report/artifact-downloads";
 import { ChatPanel } from "@/components/report/chat-panel";
 import { ComplianceStrip } from "@/components/report/compliance-strip";
@@ -28,6 +34,8 @@ import { ReportHeader } from "@/components/report/report-header";
 import { ReportSection } from "@/components/report/report-section";
 import { SectionSidebar } from "@/components/report/section-sidebar";
 import { SourceNotes } from "@/components/report/source-notes";
+import { ValuationWorkbench } from "@/components/report/workbench/valuation-workbench";
+import { DEFAULT_ASSUMPTIONS } from "@/lib/valuation-url";
 import { SiteHeader } from "@/components/chrome/site-header";
 
 /** Mobile/tablet fallback: the sidebar takes over at `lg`, see SectionSidebar. */
@@ -50,10 +58,31 @@ function SectionNav({ ids }: { ids: readonly string[] }) {
   );
 }
 
-export function ReportView({ document }: { document: ReportDocument }) {
+export function ReportView({
+  document,
+  valuation = null,
+  assumptions = DEFAULT_ASSUMPTIONS,
+}: {
+  document: ReportDocument;
+  valuation?: ValuationResponse | null;
+  assumptions?: ValuationAssumptions;
+}) {
+  // The workbench rests on real facts, and they earn real cards. Held in
+  // state because a recompute can name a fact the first response did not.
+  const [valuationInputs, setValuationInputs] = useState<readonly Fact[]>(
+    valuation?.inputs ?? [],
+  );
+
+  // Safe to append: buildSourceIndex numbers markers in first-appearance order
+  // and reuses a card per accession, so adding inputs can only add cards at
+  // the end. It can never renumber a marker already on the page.
   const index = useMemo(
-    () => buildSourceIndex(document.facts, document.filings),
-    [document.facts, document.filings],
+    () =>
+      buildSourceIndex(
+        [...document.facts, ...valuationInputs],
+        document.filings,
+      ),
+    [document.facts, valuationInputs, document.filings],
   );
   // Lifted here rather than kept inside ChatPanel so the site header's own
   // "Ask" control opens the same panel instead of a second, disconnected one.
@@ -108,6 +137,19 @@ export function ReportView({ document }: { document: ReportDocument }) {
               to the record rather than part of it, and renders nothing when
               no link was supplied. */}
           <SourceNotes notes={document.sourceNotes} />
+
+          {/* Appended for the same reason: what follows from the filings under
+              stated assumptions is not itself a filed section. */}
+          <div className="mt-12">
+            <ValuationWorkbench
+              reportId={document.report.id}
+              initial={valuation}
+              initialAssumptions={assumptions}
+              onInputsChange={(response) => {
+                setValuationInputs(response.inputs);
+              }}
+            />
+          </div>
         </main>
 
         <ProvenanceRail index={index} />

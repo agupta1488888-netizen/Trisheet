@@ -185,3 +185,31 @@ export const TIER_NAME = {
   3: "Market",
   4: "News",
 } as const;
+
+/**
+ * Between a reader moving an assumption and the recompute being asked for.
+ * Slightly longer than autocomplete's: a valuation is a heavier answer and a
+ * reader dragging through values wants the result, not every result on the way.
+ */
+export const VALUATION_DEBOUNCE_MS = 200;
+
+/** The workbench's heading. */
+export const WORKBENCH_HEADING = "Valuation workbench";
+
+/**
+ * Shown under that heading, always, and never dismissible.
+ *
+ * The backend serves the same words from config so the assistant and this
+ * section cannot describe the same caveat differently; this is the fallback
+ * for a response that arrived without notes.
+ */
+export const WORKBENCH_NOTE =
+  "Every figure in this section is a projection. The inputs it rests on are " +
+  "filed figures, cited and sourced like the rest of this report. The " +
+  "outputs are not: they carry no accession number, no filing date and no " +
+  "source card, they are not counted toward this report's citation " +
+  "coverage, and they change with the assumptions stated beside them.";
+
+/** What a projected figure's dagger says on hover. */
+export const WORKBENCH_ASSUMPTION_NOTE =
+  "A projection. It rests on the assumptions stated above, not on a filing.";

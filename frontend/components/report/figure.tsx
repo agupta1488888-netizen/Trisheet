@@ -134,6 +134,33 @@ export function Figure({
  * The "calculated" label. A derived figure is rendered with its formula or it
  * is not rendered — this is how the formula reaches the reader.
  */
+/**
+ * The "assumption" tag: the discounted-cash-flow analogue of `CalculatedLabel`.
+ *
+ * A calculated figure names the formula that produced it. An assumed one has
+ * no formula and no filing — only a stated choice — so this names the choice.
+ * Shared by the assistant and the valuation workbench so a reader meeting the
+ * same caveat in both places meets the same words for it.
+ */
+export function AssumptionLabel({
+  note,
+  children = "assumption",
+}: {
+  note: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <span className="ml-2 align-middle text-[0.68rem] text-muted-foreground">
+      <abbr
+        title={note}
+        className="cursor-help no-underline decoration-dotted underline-offset-2 hover:underline"
+      >
+        {children}
+      </abbr>
+    </span>
+  );
+}
+
 export function CalculatedLabel({ factId }: { factId: string }) {
   const { index } = useProvenance();
   const fact = index.factById.get(factId);

@@ -29,7 +29,11 @@ import { cn } from "@/lib/utils";
 import { formatAccession, formatFilingDate } from "@/lib/format";
 import { SOURCE_TYPE_LABEL } from "@/lib/provenance";
 import type { ChatClaim, ChatTurn, SourceType } from "@/lib/types";
-import { SourceMarker, tierClassName } from "@/components/report/figure";
+import {
+  AssumptionLabel,
+  SourceMarker,
+  tierClassName,
+} from "@/components/report/figure";
 import { useProvenance } from "@/components/report/provenance-context";
 
 const NOT_FOUND_TEXT = "Not found in this report's filed data.";
@@ -83,19 +87,6 @@ function FreshCitation({ claim }: { claim: ChatClaim }) {
  * calculated figure's formula is a tooltip, an assumption's tooltip is why it
  * is not a sourced fact at all.
  */
-function AssumptionLabel({ note }: { note: string }) {
-  return (
-    <span className="ml-2 align-middle text-[0.68rem] text-muted-foreground">
-      <abbr
-        title={note}
-        className="cursor-help no-underline decoration-dotted underline-offset-2 hover:underline"
-      >
-        assumption
-      </abbr>
-    </span>
-  );
-}
-
 function Claim({ claim }: { claim: ChatClaim }) {
   const { index } = useProvenance();
 
