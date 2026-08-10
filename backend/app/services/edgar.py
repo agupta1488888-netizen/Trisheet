@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 HTTP_TOO_MANY_REQUESTS = 429
 HTTP_NOT_FOUND = 404
+HTTP_FORBIDDEN = 403
 HTTP_SERVER_ERROR_FLOOR = 500
 HTTP_CLIENT_ERROR_FLOOR = 400
 
@@ -79,6 +80,20 @@ class EdgarNotConfiguredError(EdgarError):
 
 class EdgarNotFoundError(EdgarError):
     """EDGAR has no document at this URL. Not retried — it will not appear."""
+
+
+class EdgarForbiddenError(EdgarError):
+    """SEC refused the request.
+
+    Distinguished from the generic error because 403 is not one condition on
+    sec.gov. It is the refusal a missing or blocked User-Agent earns, and it is
+    *also* what the Archives serve for a path that does not exist — the daily
+    index for a day whose file has not been built yet answers 403, never 404.
+
+    So a caller that can tell "this document does not exist yet" from "we are
+    being refused" by context needs to catch it separately; one that cannot
+    should keep treating it as the failure it usually is.
+    """
 
 
 class EdgarUnavailableError(EdgarError):
@@ -362,6 +377,10 @@ class EdgarClient:
                     attempt, retry_after=_parse_retry_after(response)
                 )
                 continue
+
+            if status == HTTP_FORBIDDEN:
+                message = f"EDGAR refused the request for {url}"
+                raise EdgarForbiddenError(message)
 
             if status >= HTTP_CLIENT_ERROR_FLOOR:
                 message = f"EDGAR rejected the request for {url}: HTTP {status}"

@@ -11,6 +11,8 @@ import pytest
 
 from app.services.edgar import (
     EdgarClient,
+    EdgarError,
+    EdgarForbiddenError,
     EdgarNotConfiguredError,
     EdgarNotFoundError,
     EdgarUnavailableError,
@@ -154,6 +156,39 @@ async def test_404_is_not_retried(tmp_path: Path) -> None:
             await client.get_json("https://data.sec.gov/missing.json")
 
     assert attempts == 1
+
+
+async def test_403_is_typed_and_not_retried(tmp_path: Path) -> None:
+    """SEC answers a path that does not exist with 403, never 404.
+
+    The Archives do this for a daily index whose file has not been built yet,
+    so a caller that can tell absence from refusal by context needs its own
+    exception to catch. Not retried: a refusal will not change on the second
+    ask any more than a 404 would.
+    """
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(403)
+
+    async with _client(handler, tmp_path) as client:
+        with pytest.raises(EdgarForbiddenError):
+            await client.get_text("https://www.sec.gov/Archives/unbuilt.idx")
+
+    assert attempts == 1
+
+
+async def test_a_refusal_is_still_an_edgar_error(tmp_path: Path) -> None:
+    """Callers that cannot tell absence from refusal keep their old behaviour."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403)
+
+    async with _client(handler, tmp_path) as client:
+        with pytest.raises(EdgarError):
+            await client.get_text("https://www.sec.gov/Archives/unbuilt.idx")
 
 
 async def test_retry_after_header_is_honoured(tmp_path: Path) -> None:
