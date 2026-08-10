@@ -417,3 +417,68 @@ def test_the_tightening_did_not_cost_the_headings_it_was_meant_to_keep() -> None
     )
 
     assert len(kept) == 2
+
+
+# --- Headings read from the whole item ----------------------------------------
+
+
+def _risk_fact(text: str, **overrides: object) -> object:
+    from tests.conftest import make_fact
+
+    fields: dict[str, object] = {
+        "metric": "risk.factors",
+        "label": "Risk factors",
+        "value": None,
+        "display_value": text,
+        "unit": None,
+    }
+    fields.update(overrides)
+    return make_fact(**fields)
+
+
+def test_headings_are_read_from_the_facts_that_carry_them() -> None:
+    """Rather than re-parsed out of text that truncation already cut.
+
+    The item's own display value is capped because it travels into m10's
+    prompt as a single table cell. The headings are what the report renders,
+    so they are taken from the whole item at extraction time and kept apart —
+    which took a live Apple 10-K from seven headings to twelve with no change
+    at all to what is stored or prompted.
+    """
+    from app.modules.m04_narrative import risk_headings
+
+    facts = [
+        _risk_fact("truncated body with no headings left in it"),
+        _risk_fact("Second risk could harm us.", metric="risk.factor.2"),
+        _risk_fact("First risk could harm us.", metric="risk.factor.1"),
+        _risk_fact("Third risk could harm us.", metric="risk.factor.3"),
+    ]
+
+    assert risk_headings(facts) == [
+        "First risk could harm us.",
+        "Second risk could harm us.",
+        "Third risk could harm us.",
+    ]
+
+
+def test_a_fact_set_without_heading_facts_still_renders() -> None:
+    """A report stored before these existed reads exactly as it did."""
+    from app.modules.m04_narrative import risk_headings
+
+    body = "\n\n".join(
+        [
+            "Cybersecurity incidents could materially harm the Company.",
+            "We depend on a concentrated group of manufacturing partners.",
+        ]
+    )
+
+    assert len(risk_headings([_risk_fact(body)])) == 2
+
+
+def test_the_item_metric_is_not_mistaken_for_a_heading_fact() -> None:
+    """"risk.factors" and "risk.factor.1" differ by one character in the middle."""
+    from app.modules.m04_narrative import risk_headings
+
+    assert risk_headings([_risk_fact("Some risk could harm us.")]) == [
+        "Some risk could harm us."
+    ]

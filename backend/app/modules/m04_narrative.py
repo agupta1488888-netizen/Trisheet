@@ -68,6 +68,17 @@ logger = logging.getLogger(__name__)
 #: back off it rather than recomputed, so the list and the quotation agree.
 RISK_METRIC = "risk.factors"
 
+#: One fact per individual risk heading.
+#:
+#: They are emitted separately so they can be read from the whole item rather
+#: than from the part of it that survived truncation. The item's own text is
+#: cut at `NARRATIVE_MAX_SECTION_CHARS` because a display value travels into
+#: m10's prompt as a single table cell, and a hundred and fifty thousand
+#: characters there helps nobody — but the headings are what the report
+#: actually renders, and a live Apple 10-K yielded seven of them from the
+#: truncated text against roughly thirty in the filing.
+RISK_FACTOR_METRIC = "risk.factor"
+
 #: Confidence on a narrative fact. It is not 1.0 because locating an item by
 #: its heading is a heuristic over a document with no machine-readable
 #: structure — unlike an XBRL tag, which either resolved or did not.
@@ -133,9 +144,9 @@ async def extract_narrative(
             continue
 
         body, rung = located
-        fact = _build_fact(spec, body, annual, str(annual.primary_doc_url))
-        if fact is not None:
-            facts.append(fact)
+        found = _facts_for(spec, body, annual, str(annual.primary_doc_url))
+        if found:
+            facts.extend(found)
             logger.info(
                 "Narrative item located",
                 extra={
@@ -214,12 +225,12 @@ async def _from_exhibits(
                 continue
 
             body, rung = located
-            fact = _build_fact(spec, body, annual, str(exhibit.url))
-            if fact is None:
+            found = _facts_for(spec, body, annual, str(exhibit.url))
+            if not found:
                 still_missing.append(spec)
                 continue
 
-            facts.append(fact)
+            facts.extend(found)
             logger.info(
                 "Narrative item located in an exhibit",
                 extra={
@@ -253,10 +264,30 @@ def risk_headings(facts: Sequence[Fact]) -> list[str]:
     invent its own. Returns an empty list when no risk factors item was
     extracted, which renders as an unavailable section rather than a blank one.
     """
+    # Prefer the headings read from the whole item at extraction time. Falling
+    # back to the stored text keeps a fact set written before these existed
+    # rendering exactly as it did.
+    headed = sorted(
+        (
+            fact
+            for fact in facts
+            if fact.metric.startswith(f"{RISK_FACTOR_METRIC}.")
+        ),
+        key=lambda fact: _heading_position(fact.metric),
+    )
+    if headed:
+        return [fact.display_value for fact in headed]
+
     risk = next((fact for fact in facts if fact.metric == RISK_METRIC), None)
     if risk is None:
         return []
     return _headings_in(risk.display_value)
+
+
+def _heading_position(metric: str) -> int:
+    """The index a heading fact was emitted under, for restoring filer order."""
+    tail = metric.rsplit(".", 1)[-1]
+    return int(tail) if tail.isdigit() else 0
 
 
 # --- Locating an item --------------------------------------------------------
@@ -493,6 +524,56 @@ def _is_heading(candidate: str) -> bool:
 
 
 # --- Fact construction -------------------------------------------------------
+
+
+def _facts_for(
+    spec: NarrativeSpec, body: str, filing: FilingRef, source_url: str
+) -> list[Fact]:
+    """The item's own fact, plus its headings where it has any.
+
+    Both are built from the untruncated body. Only the item's text is cut on
+    the way into its fact; the headings are short by definition, and taking
+    them from the whole item is the point of emitting them at all.
+    """
+    fact = _build_fact(spec, body, filing, source_url)
+    if fact is None:
+        return []
+    if spec.metric != RISK_METRIC:
+        return [fact]
+    return [fact, *_heading_facts(body, filing, source_url)]
+
+
+def _heading_facts(
+    body: str, filing: FilingRef, source_url: str
+) -> list[Fact]:
+    """One fact per risk heading, in the order the filer wrote them."""
+    facts: list[Fact] = []
+    for index, heading in enumerate(_headings_in(body), start=1):
+        try:
+            facts.append(
+                Fact(
+                    metric=f"{RISK_FACTOR_METRIC}.{index}",
+                    label=f"Risk factor {index}",
+                    value=None,
+                    display_value=heading,
+                    unit=None,
+                    period_end=filing.period_of_report or filing.filed_date,
+                    fiscal_year=(
+                        filing.period_of_report or filing.filed_date
+                    ).year,
+                    tier=SourceTier.FILING,
+                    source_type=SourceType.SEC_FILING,
+                    source_url=source_url,
+                    accession_no=filing.accession_no,
+                    filed_date=filing.filed_date,
+                    extraction_method=ExtractionMethod.NARRATIVE,
+                    confidence=NARRATIVE_CONFIDENCE,
+                )
+            )
+        except ValidationError:
+            # One unusable heading costs that heading, never the list.
+            continue
+    return facts
 
 
 def _build_fact(
