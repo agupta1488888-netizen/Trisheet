@@ -426,6 +426,60 @@ def test_leverage_ratios_and_interest_coverage() -> None:
     assert _value_of(result, "leverage.interest_coverage", 2025) == 10.0
 
 
+def test_net_debt_nets_short_term_marketable_securities() -> None:
+    """Short-term securities are cash in all but name.
+
+    Leaving them out overstates leverage at exactly the cash-rich filers a
+    reader is most likely to be checking: one holding several times its cash
+    balance in short-dated paper reads as geared when measured on cash alone,
+    and every enterprise-value multiple built on it inherits the error.
+    """
+    facts = [
+        *_general_facts(),
+        _stock("balance.marketable_securities_current", 2025, 12_000.0),
+    ]
+
+    result = analyse(facts)
+
+    # 50,000 debt − (10,000 cash + 12,000 securities).
+    assert _value_of(result, "derived.net_debt", 2025) == 28_000.0
+    # And the ratio built on it moves with it: 28,000 over EBITDA 25,000.
+    assert _value_of(result, "leverage.net_debt_to_ebitda", 2025) == 1.12
+
+
+def test_net_debt_states_which_offsets_it_used() -> None:
+    """A reader who nets differently has to be able to see what to adjust."""
+    with_securities = analyse(
+        [
+            *_general_facts(),
+            _stock("balance.marketable_securities_current", 2025, 12_000.0),
+        ]
+    )
+    without = analyse(_general_facts())
+
+    assert "marketable securities" in (
+        _find(with_securities, "derived.net_debt", 2025).formula or ""
+    )
+    assert "marketable securities" not in (
+        _find(without, "derived.net_debt", 2025).formula or ""
+    )
+
+
+def test_net_debt_leaves_long_term_securities_out_of_the_offset() -> None:
+    """They are extracted and shown, but they are not ready liquidity.
+
+    Conventions differ on long-dated holdings, so folding them in silently
+    would pick a side without saying so. Netting them here would turn this
+    filer from 40,000 of net debt into 50,000 of net cash on no disclosure.
+    """
+    facts = [
+        *_general_facts(),
+        _stock("balance.marketable_securities_noncurrent", 2025, 90_000.0),
+    ]
+
+    assert _value_of(analyse(facts), "derived.net_debt", 2025) == 40_000.0
+
+
 def test_total_debt_needs_both_halves_of_the_debt() -> None:
     """Summing only the disclosed half would understate leverage silently."""
     facts = [

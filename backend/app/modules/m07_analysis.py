@@ -51,6 +51,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -69,11 +70,18 @@ from app.config import (
     DCF_DEFAULT_FCF_GROWTH_RATE,
     DCF_DEFAULT_PROJECTION_YEARS,
     DCF_DEFAULT_TERMINAL_GROWTH_RATE,
+    DCF_REVERSE_GROWTH_MAX,
+    DCF_REVERSE_GROWTH_MIN,
+    DCF_REVERSE_MAX_ITERATIONS,
+    DCF_REVERSE_RATE_TOLERANCE,
+    DCF_REVERSE_VALUE_TOLERANCE,
     DCF_SCENARIO_FCF_GROWTH_DELTAS,
     DCF_SENSITIVITY_DISCOUNT_RATE_STEPS,
+    DCF_SENSITIVITY_FCF_GROWTH_STEPS,
     DISPLAY_SCALE_DIVISOR,
     GEOGRAPHIC_SEGMENT_AXES,
     GROWTH_METRICS,
+    MARKET_CAP_METRIC,
     NON_CURRENCY_UNIT_KEYS,
     PER_SHARE_DISPLAY_TEMPLATE,
     PERCENT_DECIMAL_PLACES,
@@ -591,6 +599,257 @@ def project_dcf(
     )
 
 
+# --- The implied-growth solver ------------------------------------------------
+# `project_dcf` assumes a growth rate and reports a value. This runs it the
+# other way: it takes the market's own valuation as given and reports the
+# growth rate that would justify it.
+#
+# That is worth having because it removes the least defensible assumption in a
+# discounted cash flow — the one about the future — and leaves a statement
+# about the present: this is what today's price implies. It is also the only
+# form of valuation this system can offer without breaking its own promise not
+# to estimate, because nothing here is projected on the filer's behalf.
+#
+# It removes one assumption, not three. A discount rate and a terminal growth
+# rate are still chosen, and both are still labelled as choices.
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseDcfResult:
+    """The free cash flow growth rate the market's own valuation implies."""
+
+    #: Set to the bound rather than a solution when `bound_hit` is set, so a
+    #: reader learns the direction and the limit instead of nothing at all.
+    #: None only when `unavailable_reason` is set.
+    implied_growth_rate: DcfAssumption | None
+    market_cap: float | None
+
+    #: Ids of the real, already-sourced facts the solve rested on.
+    market_cap_fact_id: str | None
+    base_fcf_fact_id: str | None
+    net_debt_fact_id: str | None
+
+    discount_rate: DcfAssumption
+    terminal_growth_rate: DcfAssumption
+    projection_years: int
+
+    iterations: int
+    converged: bool
+    #: "lower" or "upper" when the market values this filer outside the search
+    #: bracket. Nothing is extrapolated past a bound.
+    bound_hit: str | None = None
+    #: Set, with every figure above None, when the solve could not run.
+    unavailable_reason: str | None = None
+
+
+def _reverse_unavailable(
+    reason: str,
+    *,
+    discount_rate: DcfAssumption,
+    terminal_growth_rate: DcfAssumption,
+    projection_years: int,
+) -> ReverseDcfResult:
+    return ReverseDcfResult(
+        implied_growth_rate=None,
+        market_cap=None,
+        market_cap_fact_id=None,
+        base_fcf_fact_id=None,
+        net_debt_fact_id=None,
+        discount_rate=discount_rate,
+        terminal_growth_rate=terminal_growth_rate,
+        projection_years=projection_years,
+        iterations=0,
+        converged=False,
+        unavailable_reason=reason,
+    )
+
+
+def solve_implied_growth(
+    facts: Sequence[Fact],
+    *,
+    market_cap: float | None = None,
+    discount_rate: float | None = None,
+    terminal_growth_rate: float | None = None,
+    projection_years: int = DCF_DEFAULT_PROJECTION_YEARS,
+) -> ReverseDcfResult:
+    """Solves for the growth rate at which a DCF equals the market's valuation.
+
+    Equity value is the comparison, not enterprise value: `project_dcf` already
+    bridges enterprise value to equity through `derived.net_debt`, and a market
+    capitalisation is an equity claim, so equity against equity is the
+    like-for-like test and avoids a second definition of net debt.
+
+    The search is a bracketed bisection rather than a Newton step. Equity value
+    is strictly increasing in the growth rate whenever the base free cash flow
+    is positive and the discount rate exceeds the terminal rate, so a bisection
+    always converges, needs no derivative, and cannot step outside the bracket
+    into the region where the terminal value stops being finite. For a solve
+    that costs about twenty evaluations of a five-year loop, the speed a Newton
+    step would buy is not worth the failure mode it would add.
+
+    Pure, and composed entirely of `project_dcf` calls: no discounting
+    arithmetic lives twice.
+
+    Args:
+        facts: Reported and derived facts for one filer.
+        market_cap: Overrides the `market.market_cap` fact. Present for tests
+            and callers holding a valuation the fact store does not.
+        discount_rate: Overrides `DCF_DEFAULT_DISCOUNT_RATE`.
+        terminal_growth_rate: Overrides `DCF_DEFAULT_TERMINAL_GROWTH_RATE`.
+        projection_years: Years projected before the terminal value takes over.
+
+    Returns:
+        A `ReverseDcfResult`. Every figure is None with a stated reason when
+        the filer's facts do not support a solve. A market valuation outside
+        the search bracket is reported as a bound, never extrapolated past.
+    """
+    discount = _dcf_assumption(
+        "discount_rate", discount_rate, DCF_DEFAULT_DISCOUNT_RATE
+    )
+    terminal = _dcf_assumption(
+        "terminal_growth_rate",
+        terminal_growth_rate,
+        DCF_DEFAULT_TERMINAL_GROWTH_RATE,
+    )
+    unavailable = partial(
+        _reverse_unavailable,
+        discount_rate=discount,
+        terminal_growth_rate=terminal,
+        projection_years=projection_years,
+    )
+
+    if discount.value <= terminal.value:
+        return unavailable(
+            "The discount rate must exceed the terminal growth rate, or the "
+            "terminal value is not a finite number."
+        )
+
+    cap_fact = _latest_fact(facts, MARKET_CAP_METRIC)
+    target = market_cap if market_cap is not None else (
+        cap_fact.value if cap_fact is not None else None
+    )
+    if target is None:
+        return unavailable(
+            "No market capitalisation is available for this filer, so there "
+            "is nothing to solve the implied growth rate against."
+        )
+
+    base_fact = _latest_fact(facts, "cashflow.free_cash_flow")
+    if base_fact is None or base_fact.value is None:
+        return unavailable(
+            "Free cash flow is not available for this filer, so no "
+            "discounted-cash-flow estimate can be built to solve against."
+        )
+    if base_fact.value <= 0:
+        # On a negative base, a higher growth rate makes the projection more
+        # negative, so the relationship inverts and a solved rate would be
+        # arithmetically valid and financially meaningless.
+        return unavailable(
+            "Free cash flow was not positive in the most recent period, so "
+            "no growth rate applied to it reaches the market's valuation."
+        )
+
+    net_debt_fact = _latest_fact(facts, "derived.net_debt")
+    if net_debt_fact is None or net_debt_fact.value is None:
+        return unavailable(
+            "Net debt is not available, so enterprise value cannot be bridged "
+            "to the market's equity valuation."
+        )
+
+    def equity_at(growth: float) -> float | None:
+        return project_dcf(
+            facts,
+            discount_rate=discount.value,
+            fcf_growth_rate=growth,
+            terminal_growth_rate=terminal.value,
+            projection_years=projection_years,
+        ).equity_value
+
+    low, high = DCF_REVERSE_GROWTH_MIN, DCF_REVERSE_GROWTH_MAX
+    at_low, at_high = equity_at(low), equity_at(high)
+    if at_low is None or at_high is None:
+        return unavailable(
+            "The discounted-cash-flow estimate this solve rests on could not "
+            "be built from the filer's facts."
+        )
+
+    def solved(
+        rate: float, *, converged: bool, iterations: int, bound: str | None
+    ) -> ReverseDcfResult:
+        return ReverseDcfResult(
+            implied_growth_rate=DcfAssumption(
+                name="fcf_growth_rate",
+                value=rate,
+                source="solved",
+                note=_implied_growth_note(rate, projection_years, bound),
+            ),
+            market_cap=target,
+            market_cap_fact_id=cap_fact.fact_id if cap_fact is not None else None,
+            base_fcf_fact_id=base_fact.fact_id,
+            net_debt_fact_id=net_debt_fact.fact_id,
+            discount_rate=discount,
+            terminal_growth_rate=terminal,
+            projection_years=projection_years,
+            iterations=iterations,
+            converged=converged,
+            bound_hit=bound,
+        )
+
+    if at_low > target:
+        return solved(low, converged=False, iterations=0, bound="lower")
+    if at_high < target:
+        return solved(high, converged=False, iterations=0, bound="upper")
+
+    iterations = 0
+    while (
+        high - low > DCF_REVERSE_RATE_TOLERANCE
+        and iterations < DCF_REVERSE_MAX_ITERATIONS
+    ):
+        iterations += 1
+        mid = (low + high) / 2
+        value = equity_at(mid)
+        if value is None:
+            return unavailable(
+                "The discounted-cash-flow estimate this solve rests on could "
+                "not be built from the filer's facts."
+            )
+        if abs(value - target) <= abs(target) * DCF_REVERSE_VALUE_TOLERANCE:
+            low = high = mid
+            break
+        if value < target:
+            low = mid
+        else:
+            high = mid
+
+    return solved(
+        (low + high) / 2, converged=True, iterations=iterations, bound=None
+    )
+
+
+def _implied_growth_note(
+    rate: float, projection_years: int, bound: str | None
+) -> str:
+    """What the solved rate is, in the interface's voice."""
+    if bound == "lower":
+        return (
+            f"At or below {_pct(rate)} a year. The market values this filer "
+            "below what the lowest growth rate searched would justify, so "
+            "this is reported as a bound rather than solved to a figure."
+        )
+    if bound == "upper":
+        return (
+            f"At or above {_pct(rate)} a year. The market values this filer "
+            "above what the highest growth rate searched would justify, so "
+            "this is reported as a bound rather than solved to a figure."
+        )
+    return (
+        f"{_pct(rate)} a year for {projection_years} years — solved so that "
+        "discounted cash flow equals the market's own valuation, at the "
+        "discount and terminal rates stated beside it. Not a forecast, and "
+        "not a filed figure."
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DcfSensitivityPoint:
     """One discount-rate point in a sensitivity table, and the DCF result at it."""
@@ -678,6 +937,117 @@ def project_dcf_sensitivity(
 
     return DcfSensitivityResult(
         points=tuple(points),
+        base_fcf_fact_id=base_result.base_fcf_fact_id,
+        net_debt_fact_id=base_result.net_debt_fact_id,
+        shares_fact_id=base_result.shares_fact_id,
+        unavailable_reason=None,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DcfGridCell:
+    """One cell of a two-dimensional sensitivity grid."""
+
+    discount_rate: DcfAssumption
+    fcf_growth_rate: DcfAssumption
+    result: DcfResult
+
+
+@dataclass(frozen=True, slots=True)
+class DcfGridResult:
+    """A discounted-cash-flow estimate re-run across two axes at once.
+
+    `project_dcf_sensitivity` varies the discount rate alone, which answers
+    "how sure are we about the rate". A reader looking at a valuation wants
+    the other question too — how much of the answer is the growth assumption
+    — and the two interact, so a pair of one-dimensional tables cannot show
+    it. Cells are in row-major order over `discount_rates` then
+    `fcf_growth_rates`.
+
+    Every cell shares the same real inputs; only the two assumptions vary.
+    `unavailable_reason` set means the base cell could not be computed and no
+    other cell was attempted, on the same reasoning the one-dimensional table
+    gives: a partial grid beside a cell that could not be built invites the
+    reader to fill the gap themselves.
+    """
+
+    discount_rates: tuple[DcfAssumption, ...]
+    fcf_growth_rates: tuple[DcfAssumption, ...]
+    cells: tuple[DcfGridCell, ...]
+    base_fcf_fact_id: str | None
+    net_debt_fact_id: str | None
+    shares_fact_id: str | None
+    unavailable_reason: str | None = None
+
+
+def project_dcf_grid(
+    facts: Sequence[Fact],
+    *,
+    discount_rate: float | None = None,
+    fcf_growth_rate: float | None = None,
+    terminal_growth_rate: float | None = None,
+    projection_years: int = DCF_DEFAULT_PROJECTION_YEARS,
+    discount_steps: Sequence[float] = DCF_SENSITIVITY_DISCOUNT_RATE_STEPS,
+    growth_steps: Sequence[float] = DCF_SENSITIVITY_FCF_GROWTH_STEPS,
+) -> DcfGridResult:
+    """A discounted-cash-flow estimate re-run over discount rate and growth.
+
+    Each offset pair is added to the two base rates and run through
+    `project_dcf` unchanged, exactly as the one-dimensional table does: no
+    discounting arithmetic lives twice, so a change to the model reaches the
+    grid without the grid being touched.
+    """
+    base_discount = (
+        discount_rate if discount_rate is not None else DCF_DEFAULT_DISCOUNT_RATE
+    )
+    base_growth = (
+        fcf_growth_rate
+        if fcf_growth_rate is not None
+        else DCF_DEFAULT_FCF_GROWTH_RATE
+    )
+
+    def at(discount: float, growth: float) -> DcfResult:
+        return project_dcf(
+            facts,
+            discount_rate=discount,
+            fcf_growth_rate=growth,
+            terminal_growth_rate=terminal_growth_rate,
+            projection_years=projection_years,
+        )
+
+    base_result = at(base_discount, base_growth)
+    if base_result.unavailable_reason is not None:
+        return DcfGridResult(
+            discount_rates=(),
+            fcf_growth_rates=(),
+            cells=(),
+            base_fcf_fact_id=None,
+            net_debt_fact_id=None,
+            shares_fact_id=None,
+            unavailable_reason=base_result.unavailable_reason,
+        )
+
+    cells: list[DcfGridCell] = []
+    for discount_step in discount_steps:
+        for growth_step in growth_steps:
+            result = (
+                base_result
+                if discount_step == 0.0 and growth_step == 0.0
+                else at(base_discount + discount_step, base_growth + growth_step)
+            )
+            cells.append(
+                DcfGridCell(
+                    discount_rate=result.discount_rate,
+                    fcf_growth_rate=result.fcf_growth_rate,
+                    result=result,
+                )
+            )
+
+    stride = len(growth_steps)
+    return DcfGridResult(
+        discount_rates=tuple(cell.discount_rate for cell in cells[::stride]),
+        fcf_growth_rates=tuple(cell.fcf_growth_rate for cell in cells[:stride]),
+        cells=tuple(cells),
         base_fcf_fact_id=base_result.base_fcf_fact_id,
         net_debt_fact_id=base_result.net_debt_fact_id,
         shares_fact_id=base_result.shares_fact_id,
@@ -1299,17 +1669,40 @@ def _derive_debt(
     cash = workspace.lookup("balance.cash_and_equivalents", year)
     if cash is None:
         return
-    net_debt = total_debt - cash[0]
-    net_sources = sources + cash[1]
+
+    # Short-term marketable securities are cash in all but name, and the
+    # standard convention nets them. Omitting them overstates leverage at
+    # precisely the cash-rich filers a reader is most likely to be checking:
+    # a filer holding four times its cash balance in three-month paper looks
+    # geared on cash alone and is not.
+    #
+    # Long-term holdings are extracted and shown but deliberately not netted.
+    # They are not readily available liquidity, conventions differ on them, and
+    # a figure that silently picked one convention would be unauditable. The
+    # formula names what was subtracted, so a reader who nets differently can
+    # see exactly what to adjust.
+    securities = workspace.lookup("balance.marketable_securities_current", year)
+
+    offset = cash[0] if securities is None else cash[0] + securities[0]
+    net_sources = sources + cash[1] + (() if securities is None else securities[1])
+    net_debt = total_debt - offset
     workspace.put("derived.net_debt", year, net_debt, net_sources)
 
     if MetricGroup.LEVERAGE in groups:
+        subtracted = (
+            f"cash and equivalents FY{year}"
+            if securities is None
+            else (
+                f"(cash and equivalents FY{year} + short-term marketable "
+                f"securities FY{year})"
+            )
+        )
         ledger.add(
             metric="derived.net_debt",
             label="Net debt",
             kind=_Kind.CURRENCY,
             value=net_debt,
-            formula=f"total debt FY{year} − cash and equivalents FY{year}",
+            formula=f"total debt FY{year} − {subtracted}",
             sources=net_sources,
         )
 
