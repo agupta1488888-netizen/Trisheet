@@ -2109,6 +2109,12 @@ RISK_HEADING_MARKERS = (
 #: word for the damage. Paired with the length ceiling and the one-sentence
 #: rule, that identifies a heading without admitting the body prose beneath it,
 #: which is longer and rarely stops at a single clause.
+#: Characters a bullet begins with. A bulleted line is an item in a list the
+#: filer is making, not a heading over a risk — JPMorgan's 10-K opens its risk
+#: item with a summary list of them, and every bullet in it carries a
+#: consequence clause, so the claim markers below admit the lot without this.
+RISK_HEADING_BULLET_CHARACTERS = ("•", "‣", "▪", "-", "–", "—", "*", "·")
+
 RISK_HEADING_CLAIM_MARKERS = (
     "could",
     "may ",

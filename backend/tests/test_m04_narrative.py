@@ -375,3 +375,45 @@ def test_the_new_items_route_to_a_section_that_exists() -> None:
         assert not any(
             metric.startswith(prefix) for prefix in MARKET_METRIC_PREFIXES
         )
+
+
+def test_a_bulleted_list_entry_is_not_a_heading() -> None:
+    """Learned from JPMorgan's 10-K, which opens its risk item with a summary.
+
+    Every bullet in that list carries a consequence clause, so the claim
+    markers admitted the lot — twelve entries, none of them a heading, filling
+    the cap and pushing out the real ones underneath.
+    """
+    kept = _headings(
+        "• Political risks, including the potential negative effects of policy.",
+        "• Conduct risks, including the harm that could result from misconduct.",
+        "Regulatory change could materially affect the firm's cost of doing business.",
+    )
+
+    assert len(kept) == 1
+    assert kept[0].startswith("Regulatory change")
+
+
+def test_a_line_introducing_a_list_is_not_a_heading() -> None:
+    assert _headings("The principal risk factors include the following:") == []
+
+
+def test_a_sentence_continuation_is_not_a_heading() -> None:
+    """A paragraph break inside a sentence leaves a fragment opening lower-case."""
+    assert (
+        _headings(
+            "credit risk with respect to clients, counterparties and other "
+            "market participants could adversely affect results."
+        )
+        == []
+    )
+
+
+def test_the_tightening_did_not_cost_the_headings_it_was_meant_to_keep() -> None:
+    """Both shapes the classifier exists to catch still pass."""
+    kept = _headings(
+        "Cybersecurity incidents could materially harm the Company.",
+        "We depend on a concentrated group of manufacturing partners.",
+    )
+
+    assert len(kept) == 2

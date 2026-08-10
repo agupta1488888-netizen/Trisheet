@@ -42,6 +42,7 @@ from app.config import (
     NARRATIVE_SPECS,
     NARRATIVE_SUMMARY_CHARS,
     NARRATIVE_TRUNCATION_NOTE,
+    RISK_HEADING_BULLET_CHARACTERS,
     RISK_HEADING_CLAIM_MARKERS,
     RISK_HEADING_MARKERS,
     RISK_HEADING_MAX_CHARS,
@@ -469,6 +470,17 @@ def _is_heading(candidate: str) -> bool:
     # A heading is one claim. Two full stops mean it is already prose.
     if candidate.count(". ") > 1:
         return False
+    # Three shapes a heading never has, each learned from a live filing.
+    # A bullet is an entry in a list the filer is making. A line ending in a
+    # colon introduces one. And a line opening lower-case is the middle of a
+    # sentence that a paragraph break happened to split.
+    if candidate[:1] in RISK_HEADING_BULLET_CHARACTERS:
+        return False
+    if candidate.endswith(":"):
+        return False
+    if not candidate[:1].isupper():
+        return False
+
     lowered = candidate.lower()
     if lowered.startswith("item "):
         return False
