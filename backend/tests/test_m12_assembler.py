@@ -317,3 +317,146 @@ def test_a_standard_depth_run_still_shows_only_its_five_extracted_years() -> Non
     index = _build_index(facts)
 
     assert index.years == tuple(years)
+
+
+# --- The analysis tables ------------------------------------------------------
+#
+# m07 computes considerably more than m12 once rendered: DuPont, common size,
+# compound growth, per-share, shareholder returns, the margin bridge and the
+# working-capital durations were all derived on every run and then dropped on
+# the floor at assembly. These guard against that happening again silently —
+# a metric family that stops resolving fails here rather than simply vanishing
+# from the report.
+#
+# The fact set is m07's own, imported rather than restated so that the two
+# modules are exercised against one description of what a filer discloses.
+
+
+def _analysed_index() -> object:
+    from app.modules.m07_analysis import analyse
+    from tests.test_m07_analysis import _general_facts
+
+    facts = list(_general_facts())
+    return _build_index([*facts, *analyse(facts).facts])
+
+
+@pytest.mark.parametrize(
+    ("caption", "rows_name"),
+    [
+        ("Return on equity, decomposed", "_DUPONT_ROWS"),
+        ("Working capital", "_WORKING_CAPITAL_ROWS"),
+        ("Compound growth", "_CAGR_ROWS"),
+        ("What moved the operating margin", "_BRIDGE_ROWS"),
+        ("Per share", "_PER_SHARE_ROWS"),
+        ("Shareholder returns", "_SHAREHOLDER_ROWS"),
+        ("Income statement, common size", "_COMMON_SIZE_INCOME_ROWS"),
+        ("Balance sheet, common size", "_COMMON_SIZE_BALANCE_ROWS"),
+    ],
+)
+def test_each_analysis_table_renders_from_what_m07_derives(
+    caption: str, rows_name: str
+) -> None:
+    from app.modules import m12_assembler as m12
+
+    index = _analysed_index()
+    rows = getattr(m12, rows_name)
+
+    table = m12._table("t", caption, rows, index, [], unit_note="")
+
+    assert table is not None, f"{caption} rendered no table"
+    assert table.rows, f"{caption} rendered no rows"
+    populated = sum(1 for row in table.rows for cell in row.fact_ids if cell)
+    assert populated > 0, f"{caption} rendered rows but no figures"
+
+
+def test_the_cash_conversion_cycle_is_not_shown_twice_in_the_analysis() -> None:
+    """It belongs with the durations it is made of, not among leverage ratios.
+
+    The risks section shows the leverage set again on purpose, and says why;
+    showing the cycle in two analysis tables would be duplication with no such
+    reason behind it.
+    """
+    from app.modules import m12_assembler as m12
+
+    strength = {row.metric for row in m12._STRENGTH_ROWS}
+    working = {row.metric for row in m12._WORKING_CAPITAL_ROWS}
+
+    assert "working_capital.cash_conversion_cycle" in working
+    assert "working_capital.cash_conversion_cycle" not in strength
+
+
+def test_common_size_rows_borrow_their_statement_labels() -> None:
+    """So a line renamed on the statement is renamed here too."""
+    from app.modules import m12_assembler as m12
+
+    income = {row.metric: row.label for row in m12._INCOME_ROWS}
+    common = {row.metric: row.label for row in m12._COMMON_SIZE_INCOME_ROWS}
+
+    assert common["common_size.income.net_income"] == income["income.net_income"]
+    # A metric with no statement row of its own still gets a readable label
+    # rather than a raw dotted path.
+    assert common["common_size.income.operating_expenses"] == "Operating expenses"
+
+
+def test_the_derived_amounts_behind_the_ratios_are_shown() -> None:
+    """A ratio a reader cannot check is a ratio they have to trust.
+
+    Net debt to EBITDA was reported without either figure appearing anywhere
+    in the document, so the one number that would have exposed a wrong net
+    debt was the one number not shown.
+    """
+    from app.modules import m12_assembler as m12
+
+    index = _analysed_index()
+
+    table = m12._table(
+        "t", "Derived amounts", m12._DERIVED_ABSOLUTE_ROWS, index, [], unit_note=""
+    )
+
+    assert table is not None
+    shown = {row.label for row in table.rows}
+    assert {"EBITDA", "Total debt", "Net debt"} <= shown
+
+
+def test_a_line_the_filer_never_reported_gets_no_empty_row() -> None:
+    """Twenty new optional metrics must not become twenty "Not disclosed" rows.
+
+    A filer holding no goodwill is not withholding one, and `_table` drops a
+    row nothing answered for — which is what makes it safe to widen the
+    statement tables this far.
+    """
+    from app.modules import m12_assembler as m12
+
+    index = _analysed_index()
+
+    table = m12._table(
+        "t", "Balance sheet", m12._BALANCE_ROWS, index, [], unit_note=""
+    )
+
+    assert table is not None
+    assert len(table.rows) < len(m12._BALANCE_ROWS)
+    assert "Goodwill" not in {row.label for row in table.rows}
+
+
+def test_the_statements_stay_reported_only() -> None:
+    """Derived amounts live in the analysis section, not the financials one.
+
+    Section 3 is reported figures, and m06/m11 enforce the tier rule on it.
+    Keeping calculated amounts out of those three tables is what keeps that
+    section's own description true.
+    """
+    from app.modules import m12_assembler as m12
+
+    statement_metrics = {
+        row.metric
+        for rows in (m12._INCOME_ROWS, m12._BALANCE_ROWS, m12._CASHFLOW_ROWS)
+        for row in rows
+    }
+
+    assert not any(
+        metric.startswith("derived.") for metric in statement_metrics
+    )
+    # Free cash flow is the documented exception: it is on the cash flow
+    # statement's own terms, and already carried its DERIVED emphasis before
+    # this table was widened.
+    assert "cashflow.free_cash_flow" in statement_metrics

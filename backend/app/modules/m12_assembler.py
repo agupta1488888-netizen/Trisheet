@@ -42,6 +42,9 @@ from typing import TYPE_CHECKING
 
 from app.config import (
     ARTIFACT_CONTENT_TYPES,
+    CAGR_WINDOWS_YEARS,
+    COMMON_SIZE_BALANCE_METRICS,
+    COMMON_SIZE_INCOME_METRICS,
     DAYS_IN_YEAR,
     DISPLAY_SCALE_DIVISOR,
     DISPLAY_SCALE_NOTE,
@@ -144,6 +147,7 @@ _INCOME_ROWS: tuple[_Row, ...] = (
     _Row("income.selling_general_administrative", "Selling, general and admin"),
     _Row("income.operating_income", "Operating income", FigureEmphasis.TOTAL),
     _Row("income.interest_expense", "Interest expense"),
+    _Row("income.other_income_expense", "Other income and expense, net"),
     _Row("income.pretax_income", "Income before tax"),
     _Row("income.income_tax_expense", "Income tax expense"),
     _Row("income.net_income", "Net income", FigureEmphasis.TOTAL),
@@ -153,30 +157,91 @@ _INCOME_ROWS: tuple[_Row, ...] = (
 
 _BALANCE_ROWS: tuple[_Row, ...] = (
     _Row("balance.cash_and_equivalents", "Cash and cash equivalents"),
+    _Row(
+        "balance.marketable_securities_current",
+        "Short-term marketable securities",
+    ),
     _Row("balance.accounts_receivable", "Accounts receivable"),
     _Row("balance.inventory", "Inventory"),
     _Row("balance.current_assets", "Total current assets", FigureEmphasis.TOTAL),
+    _Row(
+        "balance.marketable_securities_noncurrent",
+        "Long-term marketable securities",
+    ),
+    _Row("balance.ppe_net", "Property, plant and equipment, net"),
+    _Row("balance.goodwill", "Goodwill"),
+    _Row("balance.intangibles", "Intangible assets"),
+    _Row("balance.rou_asset", "Operating lease right-of-use assets"),
     _Row("balance.total_assets", "Total assets", FigureEmphasis.TOTAL),
     _Row("balance.accounts_payable", "Accounts payable"),
+    _Row("balance.deferred_revenue", "Deferred revenue"),
     _Row("balance.current_liabilities", "Total current liabilities"),
+    _Row("balance.commercial_paper", "Commercial paper"),
     _Row("balance.short_term_debt", "Short-term debt"),
     _Row("balance.long_term_debt", "Long-term debt"),
+    _Row(
+        "balance.lease_liability_noncurrent",
+        "Operating lease liabilities, non-current",
+    ),
     _Row("balance.total_liabilities", "Total liabilities", FigureEmphasis.TOTAL),
+    _Row("balance.retained_earnings", "Retained earnings"),
+    _Row("balance.treasury_stock", "Treasury stock"),
+    _Row("balance.aoci", "Accumulated other comprehensive income"),
+    _Row("balance.minority_interest", "Non-controlling interests"),
     _Row("balance.total_equity", "Total equity", FigureEmphasis.TOTAL),
 )
 
 _CASHFLOW_ROWS: tuple[_Row, ...] = (
-    _Row("cashflow.operating", "Net cash from operating activities"),
-    _Row("cashflow.investing", "Net cash from investing activities"),
-    _Row("cashflow.financing", "Net cash from financing activities"),
+    _Row(
+        "cashflow.operating",
+        "Net cash from operating activities",
+        FigureEmphasis.TOTAL,
+    ),
+    # The reconciliation between net income and cash from operations. A reader
+    # can otherwise see that the two differ and not why, which is the whole of
+    # the earnings-quality question.
+    _Row("income.depreciation_amortisation", "Depreciation and amortisation"),
+    _Row("cashflow.stock_based_compensation", "Stock-based compensation"),
+    _Row("cashflow.deferred_taxes", "Deferred income taxes"),
+    _Row(
+        "cashflow.investing",
+        "Net cash from investing activities",
+        FigureEmphasis.TOTAL,
+    ),
     _Row("cashflow.capital_expenditure", "Capital expenditure"),
+    _Row("cashflow.acquisitions", "Acquisitions, net of cash acquired"),
+    _Row("cashflow.securities_purchased", "Purchases of marketable securities"),
+    _Row(
+        "cashflow.securities_matured",
+        "Maturities and sales of marketable securities",
+    ),
+    _Row(
+        "cashflow.financing",
+        "Net cash from financing activities",
+        FigureEmphasis.TOTAL,
+    ),
+    _Row("cashflow.debt_issued", "Debt issued"),
+    _Row("cashflow.debt_repaid", "Debt repaid"),
+    _Row("cashflow.dividends_paid", "Dividends paid"),
+    _Row("cashflow.share_repurchases", "Share repurchases"),
     _Row(
         "cashflow.free_cash_flow",
         "Free cash flow",
         FigureEmphasis.DERIVED,
     ),
-    _Row("cashflow.dividends_paid", "Dividends paid"),
-    _Row("cashflow.share_repurchases", "Share repurchases"),
+)
+
+#: Figures m07 derives as amounts rather than ratios. Every one was computed on
+#: every run and rendered nowhere: a report showed net debt to EBITDA without
+#: ever stating either, so a reader could see the ratio and not check it.
+_DERIVED_ABSOLUTE_ROWS: tuple[_Row, ...] = (
+    _Row("derived.ebitda", "EBITDA", FigureEmphasis.DERIVED),
+    _Row("derived.total_debt", "Total debt", FigureEmphasis.DERIVED),
+    _Row("derived.net_debt", "Net debt", FigureEmphasis.DERIVED),
+    _Row("derived.net_working_capital", "Net working capital", FigureEmphasis.DERIVED),
+    _Row("derived.nopat", "NOPAT", FigureEmphasis.DERIVED),
+    _Row("derived.invested_capital", "Invested capital", FigureEmphasis.DERIVED),
+    _Row("cashflow.fcff", "Free cash flow to the firm", FigureEmphasis.DERIVED),
 )
 
 _MARGIN_ROWS: tuple[_Row, ...] = (
@@ -213,10 +278,79 @@ _STRENGTH_ROWS: tuple[_Row, ...] = (
         "Free cash flow conversion",
         FigureEmphasis.DERIVED,
     ),
+)
+
+#: The cash conversion cycle sits with the three durations it is made of
+#: rather than among the leverage ratios. A reader who sees a cycle move
+#: wants to know which of collection, inventory or payment moved it, and m07
+#: has already computed all three.
+_WORKING_CAPITAL_ROWS: tuple[_Row, ...] = (
+    _Row("working_capital.dso", "Days sales outstanding", FigureEmphasis.DERIVED),
+    _Row("working_capital.dio", "Days inventory outstanding", FigureEmphasis.DERIVED),
+    _Row("working_capital.dpo", "Days payable outstanding", FigureEmphasis.DERIVED),
     _Row(
         "working_capital.cash_conversion_cycle",
         "Cash conversion cycle",
+        FigureEmphasis.TOTAL,
+    ),
+)
+
+#: Return on equity, decomposed. A high return built on thin equity is a
+#: different fact about a company than the same return built on margin, and
+#: the undecomposed figure cannot tell them apart — a filer that has bought
+#: back most of its equity posts a return that looks like operating skill.
+_DUPONT_ROWS: tuple[_Row, ...] = (
+    _Row("dupont.net_margin", "Net margin", FigureEmphasis.DERIVED),
+    _Row("dupont.asset_turnover", "Asset turnover", FigureEmphasis.DERIVED),
+    _Row("dupont.equity_multiplier", "Equity multiplier", FigureEmphasis.DERIVED),
+    _Row("dupont.roe", "Return on equity", FigureEmphasis.TOTAL),
+)
+
+_PER_SHARE_ROWS: tuple[_Row, ...] = (
+    _Row("per_share.eps_basic", "Basic earnings per share", FigureEmphasis.DERIVED),
+    _Row(
+        "per_share.eps_diluted",
+        "Diluted earnings per share",
         FigureEmphasis.DERIVED,
+    ),
+    _Row("per_share.book_value", "Book value per share", FigureEmphasis.DERIVED),
+    _Row("per_share.dividend", "Dividend per share", FigureEmphasis.DERIVED),
+)
+
+_SHAREHOLDER_ROWS: tuple[_Row, ...] = (
+    _Row("shareholder.payout_ratio", "Dividend payout", FigureEmphasis.DERIVED),
+    _Row("shareholder.buyback_ratio", "Share repurchases", FigureEmphasis.DERIVED),
+    _Row(
+        "shareholder.total_payout_ratio",
+        "Total payout",
+        FigureEmphasis.TOTAL,
+    ),
+    _Row(
+        "shareholder.share_count_change",
+        "Change in diluted share count",
+        FigureEmphasis.DERIVED,
+    ),
+)
+
+#: What moved the operating margin, in percentage points. The contributions
+#: sum to the change, so a reader can see whether a margin moved on pricing or
+#: on cost control rather than inferring it from two ratios.
+_BRIDGE_ROWS: tuple[_Row, ...] = (
+    _Row(
+        "bridge.gross_margin_contribution",
+        "Gross margin contribution",
+        FigureEmphasis.DERIVED,
+    ),
+    _Row(
+        "bridge.opex_contribution",
+        "Operating expense contribution",
+        FigureEmphasis.DERIVED,
+    ),
+    _Row("bridge.other_contribution", "Other contribution", FigureEmphasis.DERIVED),
+    _Row(
+        "bridge.operating_margin_change",
+        "Change in operating margin",
+        FigureEmphasis.TOTAL,
     ),
 )
 
@@ -248,6 +382,54 @@ _GROWTH_ROWS: tuple[_Row, ...] = (
         FigureEmphasis.DERIVED,
     ),
 )
+
+#: Metrics worth a compound rate beside their year-on-year one. A single bad
+#: year reads as a trend break in a year-on-year column and as what it is —
+#: one year — in a compound one.
+_CAGR_METRIC_LABELS: tuple[tuple[str, str], ...] = (
+    ("income.revenue", "Revenue"),
+    ("income.operating_income", "Operating income"),
+    ("income.net_income", "Net income"),
+    ("income.eps_diluted", "Diluted EPS"),
+)
+
+_CAGR_ROWS: tuple[_Row, ...] = tuple(
+    _Row(
+        f"growth.{metric}.cagr_{window}y",
+        f"{label}, {window}-year compound",
+        FigureEmphasis.DERIVED,
+    )
+    for metric, label in _CAGR_METRIC_LABELS
+    for window in CAGR_WINDOWS_YEARS
+)
+
+
+def _label_from_metric(metric: str) -> str:
+    """A readable label for a metric with no row of its own to borrow from."""
+    leaf = metric.rsplit(".", 1)[-1].replace("_", " ")
+    return leaf[:1].upper() + leaf[1:]
+
+
+def _common_size_rows(metrics: Sequence[str]) -> tuple[_Row, ...]:
+    """Common-size rows, labelled from the statement rows they mirror.
+
+    Borrowing the label rather than restating it means a line renamed in the
+    statement is renamed here too, and the two tables cannot end up calling
+    the same line by two names.
+    """
+    labels = {row.metric: row.label for row in (*_INCOME_ROWS, *_BALANCE_ROWS)}
+    return tuple(
+        _Row(
+            f"common_size.{metric}",
+            labels.get(metric) or _label_from_metric(metric),
+            FigureEmphasis.DERIVED,
+        )
+        for metric in metrics
+    )
+
+
+_COMMON_SIZE_INCOME_ROWS = _common_size_rows(COMMON_SIZE_INCOME_METRICS)
+_COMMON_SIZE_BALANCE_ROWS = _common_size_rows(COMMON_SIZE_BALANCE_METRICS)
 
 _MARKET_ROWS: tuple[_Row, ...] = (
     _Row("market.price", "Price"),
@@ -861,6 +1043,17 @@ def _analysis_section(
         table
         for table in (
             _table(
+                "analysis-derived-amounts",
+                "Derived amounts",
+                _DERIVED_ABSOLUTE_ROWS,
+                index,
+                cited,
+                unit_note=(
+                    "The amounts the ratios below are built from, stated so "
+                    "each ratio can be checked rather than taken on trust."
+                ),
+            ),
+            _table(
                 "analysis-margins",
                 "Margins and returns",
                 _MARGIN_ROWS,
@@ -869,9 +1062,29 @@ def _analysis_section(
                 unit_note=derived_note,
             ),
             _table(
+                "analysis-dupont",
+                "Return on equity, decomposed",
+                _DUPONT_ROWS,
+                index,
+                cited,
+                unit_note=(
+                    "Margin, turnover and leverage multiply to the return "
+                    "above them. A return earned on thin equity and one "
+                    "earned on margin read alike until they are separated."
+                ),
+            ),
+            _table(
                 "analysis-strength",
                 "Liquidity and leverage",
                 _STRENGTH_ROWS,
+                index,
+                cited,
+                unit_note=derived_note,
+            ),
+            _table(
+                "analysis-working-capital",
+                "Working capital",
+                _WORKING_CAPITAL_ROWS,
                 index,
                 cited,
                 unit_note=derived_note,
@@ -883,6 +1096,64 @@ def _analysis_section(
                 index,
                 cited,
                 unit_note=derived_note,
+            ),
+            _table(
+                "analysis-compound-growth",
+                "Compound growth",
+                _CAGR_ROWS,
+                index,
+                cited,
+                unit_note=(
+                    "Compound annual rates over the window ending in each "
+                    "year. Stated beside the year-on-year rates above "
+                    "because one weak year reads as a trend break there."
+                ),
+            ),
+            _table(
+                "analysis-bridge",
+                "What moved the operating margin",
+                _BRIDGE_ROWS,
+                index,
+                cited,
+                unit_note=(
+                    "Percentage points. The contributions sum to the change "
+                    "beneath them."
+                ),
+            ),
+            _table(
+                "analysis-per-share",
+                "Per share",
+                _PER_SHARE_ROWS,
+                index,
+                cited,
+                unit_note=derived_note,
+            ),
+            _table(
+                "analysis-shareholder",
+                "Shareholder returns",
+                _SHAREHOLDER_ROWS,
+                index,
+                cited,
+                unit_note=(
+                    "Dividends and repurchases as a share of net income, and "
+                    "the change in the diluted share count they produced."
+                ),
+            ),
+            _table(
+                "analysis-common-size-income",
+                "Income statement, common size",
+                _COMMON_SIZE_INCOME_ROWS,
+                index,
+                cited,
+                unit_note="Each line as a percentage of revenue.",
+            ),
+            _table(
+                "analysis-common-size-balance",
+                "Balance sheet, common size",
+                _COMMON_SIZE_BALANCE_ROWS,
+                index,
+                cited,
+                unit_note="Each line as a percentage of total assets.",
             ),
         )
         if table is not None
@@ -1995,12 +2266,20 @@ def _render_compliance(document: ReportDocument) -> str:
         f"T{tier} <span class='figure'>{count}</span>"
         for tier, count in sorted(compliance.tier_counts.items())
     )
+    # "(0/0 figures)" beside a coverage score reads as a measurement, and a
+    # tally of nothing is not one. When there were no prose figures to check,
+    # the count is left off and the score itself says so.
+    tally = (
+        f" ({compliance.cited_figure_count}/{compliance.figure_count} figures)"
+        if compliance.figure_count
+        else ""
+    )
     return (
         "<div class='compliance'>"
         f"<span class='{state}'>{_escape(verdict)}</span> · "
         f"Citation coverage <span class='figure'>"
-        f"{_escape(compliance.coverage_display)}</span> "
-        f"({compliance.cited_figure_count}/{compliance.figure_count} figures)"
+        f"{_escape(compliance.coverage_display)}</span>"
+        f"{tally}"
         f" · Facts <span class='figure'>{compliance.fact_count}</span>"
         f" · {tiers}"
         f" · Verified {compliance.verified_at.date().isoformat()}"
