@@ -491,3 +491,29 @@ def _refs(rows: list[tuple[str, str, str, str]]) -> list[Any]:
             "items": [""] * len(rows),
         },
     )
+
+
+# --- Annual report exhibits ---------------------------------------------------
+
+
+def test_annual_reports_are_expanded_for_their_exhibits_too() -> None:
+    """m04's exhibit rung was unreachable for the filers that needed it.
+
+    A 40-F wraps its annual information form as an exhibit rather than in the
+    primary document, and some 10-K filers carry item 1 the same way. The
+    fallback that looks there existed, but only current reports were ever
+    enumerated, so the filings holding those exhibits had no exhibit list to
+    search and the rung was dead code.
+    """
+    from app.config import (
+        ANNUAL_FORMS,
+        CURRENT_REPORT_FORMS,
+        MAX_ANNUAL_REPORTS_WITH_EXHIBITS,
+    )
+
+    assert ANNUAL_FORMS == frozenset({"10-K", "20-F", "40-F"})
+    assert not (ANNUAL_FORMS & CURRENT_REPORT_FORMS)
+    # Bounded far lower than the current reports: the item is in the latest
+    # annual filing or the one before it, never further back, and each index
+    # costs a request against the shared SEC budget.
+    assert MAX_ANNUAL_REPORTS_WITH_EXHIBITS <= 3

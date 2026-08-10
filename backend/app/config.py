@@ -119,6 +119,10 @@ ANNUAL_FORM_TO_FILER_TYPE = {
     "40-F": "canadian",
 }
 
+#: The annual forms as a set, derived from the mapping above so the two cannot
+#: disagree about what counts as an annual report.
+ANNUAL_FORMS = frozenset(ANNUAL_FORM_TO_FILER_TYPE)
+
 #: Forms a report may draw on. Anything else is dropped from the manifest.
 PERMITTED_FORMS = frozenset(
     {"10-K", "10-Q", "8-K", "DEF 14A", "20-F", "40-F", "6-K"}
@@ -133,6 +137,14 @@ EXHIBIT_TYPES_OF_INTEREST = ("EX-99.1", "EX-99.2")
 #: Every current report costs one extra request to fetch its index, so only the
 #: most recent ones are expanded. Older exhibits are fetched on demand.
 MAX_CURRENT_REPORTS_WITH_EXHIBITS = 24
+
+#: Annual reports whose indexes are also read. A 40-F wraps its annual
+#: information form as an exhibit rather than in the primary document, and some
+#: 10-K filers carry item 1 the same way — so m04's exhibit rung exists for
+#: exactly this case and could never fire while only current reports were
+#: expanded. Bounded far lower than the current reports above: the item is in
+#: the most recent annual filing or the one before it, never further back.
+MAX_ANNUAL_REPORTS_WITH_EXHIBITS = 3
 
 # --- Resolution -------------------------------------------------------------
 

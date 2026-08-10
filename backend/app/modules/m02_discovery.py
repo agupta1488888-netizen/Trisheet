@@ -35,8 +35,10 @@ from lxml import html
 
 from app.config import (
     AMENDMENT_FORM_SUFFIX,
+    ANNUAL_FORMS,
     CURRENT_REPORT_FORMS,
     EXHIBIT_TYPES_OF_INTEREST,
+    MAX_ANNUAL_REPORTS_WITH_EXHIBITS,
     MAX_CURRENT_REPORTS_WITH_EXHIBITS,
     PERMITTED_FORMS,
     SEC_ARCHIVES_BASE_URL,
@@ -313,17 +315,31 @@ def parse_exhibits(index_html: str) -> tuple[ExhibitRef, ...]:
 async def _attach_exhibits(
     client: EdgarClient, refs: list[FilingRef]
 ) -> list[FilingRef]:
-    """Reads indexes for the most recent current reports and attaches exhibits.
+    """Reads indexes for the most recent filings and attaches their exhibits.
 
     Each index costs one request against the SEC budget, so only the most
-    recent current reports are expanded.
+    recent of each kind is expanded.
+
+    Annual reports are read as well as current ones. A 40-F wraps its annual
+    information form as an exhibit rather than in the primary document, and
+    some 10-K filers carry item 1 the same way — so m04's exhibit rung was
+    unreachable for exactly the filers that needed it, because the filings
+    holding those exhibits were never enumerated.
     """
-    current = sorted(
-        (ref for ref in refs if ref.base_form in CURRENT_REPORT_FORMS),
-        key=lambda ref: ref.filed_date,
-        reverse=True,
-    )[:MAX_CURRENT_REPORTS_WITH_EXHIBITS]
-    targets = {ref.accession_no for ref in current}
+
+    def most_recent(forms: frozenset[str], limit: int) -> set[str]:
+        return {
+            ref.accession_no
+            for ref in sorted(
+                (ref for ref in refs if ref.base_form in forms),
+                key=lambda ref: ref.filed_date,
+                reverse=True,
+            )[:limit]
+        }
+
+    targets = most_recent(
+        CURRENT_REPORT_FORMS, MAX_CURRENT_REPORTS_WITH_EXHIBITS
+    ) | most_recent(ANNUAL_FORMS, MAX_ANNUAL_REPORTS_WITH_EXHIBITS)
 
     resolved: list[FilingRef] = []
     for ref in refs:
