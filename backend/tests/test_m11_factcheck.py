@@ -20,6 +20,7 @@ import pytest
 from app.config import (
     BALANCE_SHEET_TOLERANCE,
     CASH_FLOW_TIE_TOLERANCE,
+    COVERAGE_NOT_MEASURED_TEXT,
     SEGMENT_METRIC,
     SEGMENT_SUM_TOLERANCE,
     CheckName,
@@ -290,7 +291,9 @@ class TestFiguresSourced:
 
         assert result.passed
         assert result.figure_count == 0
-        assert result.coverage_display == "100%"
+        # Passing, but not scored: there was no figure to check, and a report
+        # that claimed 100% here would be claiming credit for work not done.
+        assert result.coverage_display == COVERAGE_NOT_MEASURED_TEXT
 
 
 # --- Citation coverage ------------------------------------------------------
@@ -778,13 +781,33 @@ class TestComplianceReport:
         assert result.passed
         assert result.figure_count == 0
 
-    def test_an_empty_report_passes_with_full_coverage(self) -> None:
+    def test_an_empty_report_passes_but_is_not_scored(self) -> None:
+        """The gate and the score answer different questions.
+
+        Nothing went uncited, so the gate passes and the ratio stays 1.0 —
+        an empty report is not a failing one. What a reader is shown is not
+        the same claim: coverage is measured over written passages, and with
+        none there is nothing measured, so the interface says so rather than
+        reporting a perfect score for an unexamined document. This is the
+        "100% (0/0 figures)" a live run put in the header.
+        """
         result = verify(report(), [])
 
         assert result.passed
         assert result.coverage_ratio == 1.0
-        assert result.coverage_display == "100%"
+        assert result.coverage_display == COVERAGE_NOT_MEASURED_TEXT
         assert result.fact_count == 0
+
+    def test_coverage_is_scored_once_there_is_a_figure_to_score(self) -> None:
+        fact = make_fact()
+        prose = report(
+            section(("Revenue was 391,035,000,000.", (fact.fact_id,)))
+        )
+
+        result = verify(prose, [fact])
+
+        assert result.figure_count == 1
+        assert result.coverage_display == "100%"
 
     def test_verification_does_not_mutate_its_inputs(self) -> None:
         """The gate is a pure function of the prose and the facts."""

@@ -226,7 +226,9 @@ def _print_outcome(outcome: pipeline.RunOutcome) -> None:
         _field(
             "Citation coverage",
             f"{compliance.coverage_display} "
-            f"({compliance.cited_figure_count}/{compliance.figure_count})",
+            f"({compliance.cited_figure_count}/{compliance.figure_count})"
+            if compliance.figure_count
+            else compliance.coverage_display,
         )
         _field(
             "Tiers",

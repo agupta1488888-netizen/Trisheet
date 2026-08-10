@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from app.config import (
     BALANCE_SHEET_TOLERANCE,
     CASH_FLOW_TIE_TOLERANCE,
+    COVERAGE_NOT_MEASURED_TEXT,
     PERCENT_SANITY_BOUNDS,
     PROSE_FIGURE_TOLERANCE,
     PROSE_SCALE_WORDS,
@@ -861,7 +862,17 @@ def verify(
         if violation.severity is Severity.BLOCKING
     )
 
+    # A ratio over no figures is not a hundred per cent — it is a measurement
+    # that did not happen. The gate still passes, because nothing went uncited
+    # and an empty report is not a failing one, but the score reported to a
+    # reader must not be earned by having checked nothing: coverage is measured
+    # over written passages, and a report generated without prose has none.
     coverage_ratio = 1.0 if figure_count == 0 else cited_count / figure_count
+    coverage_display = (
+        COVERAGE_NOT_MEASURED_TEXT
+        if figure_count == 0
+        else f"{coverage_ratio:.0%}"
+    )
 
     # Every tier starts at 0 so a tier with no facts reports a count, not a
     # missing key — the UI renders whatever key is absent as "NaN".
@@ -877,7 +888,7 @@ def verify(
         figure_count=figure_count,
         cited_figure_count=cited_count,
         coverage_ratio=coverage_ratio,
-        coverage_display=f"{coverage_ratio:.0%}",
+        coverage_display=coverage_display,
         checks=checks,
         violations=violations,
     )
