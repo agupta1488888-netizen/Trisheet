@@ -132,7 +132,33 @@ PERMITTED_FORMS = frozenset(
 CURRENT_REPORT_FORMS = frozenset({"8-K", "6-K"})
 
 #: Exhibits worth resolving: the press release and the presentation.
-EXHIBIT_TYPES_OF_INTEREST = ("EX-99.1", "EX-99.2")
+#:
+#: The union of what the two consumers need, because m02 reads each index once
+#: and an exhibit it does not collect is one no later module can ask for.
+#: m09 wants the press release and the slides behind a current report; m04
+#: wants the narrative an annual report attached rather than stated inline —
+#: EX-13 for a 10-K that ships its annual report to shareholders as an exhibit,
+#: EX-1 for the 40-F information form. Collecting these costs no extra request:
+#: the index page is already fetched, and this only decides what is kept from
+#: it.
+#:
+#: Enumerated rather than prefix-matched, and the numbered variants are spelled
+#: out because filers use them: BCE attaches its information form as EX-99.1
+#: and TC Energy splits its across EX-13.1, EX-13.2 and EX-13.3. Prefix
+#: matching would be shorter and wrong — every filing carries EX-101.CAL,
+#: EX-101.SCH and their siblings, which are XBRL linkbases, and "EX-1" as a
+#: prefix would pull in all of them.
+EXHIBIT_TYPES_OF_INTEREST = (
+    "EX-99.1",
+    "EX-99.2",
+    "EX-99",
+    "EX-13",
+    "EX-13.1",
+    "EX-13.2",
+    "EX-13.3",
+    "EX-1",
+    "EX-1.1",
+)
 
 #: Every current report costs one extra request to fetch its index, so only the
 #: most recent ones are expanded. Older exhibits are fetched on demand.

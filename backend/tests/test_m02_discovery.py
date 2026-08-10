@@ -517,3 +517,43 @@ def test_annual_reports_are_expanded_for_their_exhibits_too() -> None:
     # annual filing or the one before it, never further back, and each index
     # costs a request against the shared SEC budget.
     assert MAX_ANNUAL_REPORTS_WITH_EXHIBITS <= 3
+
+
+def test_the_exhibit_list_covers_what_both_consumers_ask_for() -> None:
+    """m02 reads each index once, so what it drops no later module can ask for.
+
+    m09 opens the press release behind a current report; m04 looks for the
+    narrative an annual report attached rather than stated inline. Collecting
+    only m09's types left m04's exhibit rung with nothing to search — which was
+    the rung written for 40-F filers, who are exactly the ones that need it.
+    """
+    from app.config import EXHIBIT_TYPES_OF_INTEREST, NARRATIVE_EXHIBIT_TYPES
+
+    for wanted in NARRATIVE_EXHIBIT_TYPES:
+        assert any(
+            kept.startswith(wanted) for kept in EXHIBIT_TYPES_OF_INTEREST
+        ), f"m04 asks for {wanted} and m02 collects nothing that satisfies it"
+
+
+def test_the_exhibit_types_cannot_match_an_xbrl_linkbase() -> None:
+    """Which is why they are enumerated rather than prefix-matched.
+
+    Every filing carries EX-101.CAL, EX-101.SCH and their siblings. Matching
+    "EX-1" as a prefix would pull in all of them, and they are linkbases rather
+    than narrative — TC Energy's 40-F lists five.
+    """
+    from app.config import EXHIBIT_TYPES_OF_INTEREST
+
+    linkbases = (
+        "EX-101.CAL", "EX-101.DEF", "EX-101.LAB", "EX-101.PRE", "EX-101.SCH",
+    )
+    for linkbase in linkbases:
+        assert linkbase not in EXHIBIT_TYPES_OF_INTEREST
+
+
+def test_the_numbered_variants_filers_actually_use_are_listed() -> None:
+    """BCE files its information form as EX-99.1; TC Energy splits EX-13.1-3."""
+    from app.config import EXHIBIT_TYPES_OF_INTEREST
+
+    for used in ("EX-99.1", "EX-13.1", "EX-13.2", "EX-13.3"):
+        assert used in EXHIBIT_TYPES_OF_INTEREST
