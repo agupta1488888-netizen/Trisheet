@@ -20,9 +20,10 @@ import {
   WORKBENCH_ASSUMPTION_NOTE,
   WORKBENCH_HEADING,
   WORKBENCH_NOTE,
+  COPY_CONFIRMATION_MS,
 } from "@/lib/constants";
 import { fetchValuation } from "@/lib/api";
-import { toQuery } from "@/lib/valuation-url";
+import { DEFAULT_ASSUMPTIONS, isDefault, toQuery } from "@/lib/valuation-url";
 import type {
   ValuationAssumptions,
   ValuationFigure,
@@ -53,6 +54,7 @@ export function ValuationWorkbench({
   const [response, setResponse] = useState<ValuationResponse | null>(initial);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [copied, setCopied] = useState(false);
   // The first render already has the server's answer for this URL. Fetching
   // again on mount would spend a request to learn what is already on screen.
   const settled = useRef(true);
@@ -181,17 +183,56 @@ export function ValuationWorkbench({
         ) : null}
 
         <div>
-          <button
-            type="button"
-            onClick={() =>
-              setMode(assumptions.mode === "reverse" ? "forward" : "reverse")
-            }
-            className="text-sm text-certified underline-offset-4 hover:underline focus-visible:underline"
-          >
-            {assumptions.mode === "reverse"
-              ? "Use your own assumptions"
-              : "Back to what the price implies"}
-          </button>
+          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+            <button
+              type="button"
+              onClick={() =>
+                setMode(assumptions.mode === "reverse" ? "forward" : "reverse")
+              }
+              className="text-sm text-certified underline-offset-4 hover:underline focus-visible:underline"
+            >
+              {assumptions.mode === "reverse"
+                ? "Use your own assumptions"
+                : "Back to what the price implies"}
+            </button>
+
+            {!isDefault(assumptions) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAssumptions(DEFAULT_ASSUMPTIONS);
+                }}
+                className="text-sm text-muted-foreground underline-offset-4 hover:text-ink hover:underline focus-visible:text-ink focus-visible:underline"
+              >
+                Reset to defaults
+              </button>
+            ) : null}
+
+            {/* The only place a shareable link is materialised. Assumptions
+                are already in the address bar; this saves a reader selecting
+                it, and is what makes a scenario sendable. */}
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(window.location.href)
+                  .then(() => {
+                    setCopied(true);
+                    window.setTimeout(() => {
+                      setCopied(false);
+                    }, COPY_CONFIRMATION_MS);
+                  })
+                  .catch(() => {
+                    // A browser that refuses clipboard access is not an error
+                    // worth interrupting a reader over — the URL is visible.
+                    setCopied(false);
+                  });
+              }}
+              className="text-sm text-muted-foreground underline-offset-4 hover:text-ink hover:underline focus-visible:text-ink focus-visible:underline"
+            >
+              {copied ? "Link copied" : "Copy link to these assumptions"}
+            </button>
+          </div>
 
           {assumptions.mode === "forward" ? (
             <div className="mt-4 max-w-md">

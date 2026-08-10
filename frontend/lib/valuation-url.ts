@@ -11,7 +11,7 @@
  * written as absence, so a clean URL is the default view and stays clean.
  */
 
-import type { ValuationAssumptions, ValuationMode } from "@/lib/types";
+import type { ValuationAssumptions } from "@/lib/types";
 
 /** The view a reader gets with no query string at all. */
 export const DEFAULT_ASSUMPTIONS: ValuationAssumptions = {
@@ -111,9 +111,4 @@ export function toQuery(assumptions: ValuationAssumptions): string {
 /** True when these are the defaults, so the reset control can hide itself. */
 export function isDefault(assumptions: ValuationAssumptions): boolean {
   return toQuery(assumptions) === "";
-}
-
-/** The mode a reader is in, for labelling. */
-export function modeLabel(mode: ValuationMode): string {
-  return mode === "reverse" ? "What the price implies" : "Your assumptions";
 }

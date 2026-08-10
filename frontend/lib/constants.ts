@@ -213,3 +213,6 @@ export const WORKBENCH_NOTE =
 /** What a projected figure's dagger says on hover. */
 export const WORKBENCH_ASSUMPTION_NOTE =
   "A projection. It rests on the assumptions stated above, not on a filing.";
+
+/** How long "Link copied" stays up before the control reverts. */
+export const COPY_CONFIRMATION_MS = 2000;
