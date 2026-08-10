@@ -218,3 +218,58 @@ def test_the_metric_cannot_address_the_financial_highlights() -> None:
         MARKET_CAP_METRIC.startswith(prefix)
         for prefix in SECTION_METRIC_PREFIXES[3]
     )
+
+
+def test_it_refuses_a_quote_in_a_currency_the_filer_does_not_report_in() -> None:
+    """Found on a live SAP run: a 20-F in EUR, depositary receipts in USD.
+
+    Multiplying the two produced a figure labelled USD that would then be added
+    to EUR net debt to reach an enterprise value, and compared against a EUR
+    equity value in the implied-growth solver — two currencies mixed silently
+    through every multiple built on it.
+
+    A depositary receipt is not a share either. The ratio between them is a
+    fact about the programme rather than about the filing, and nothing here can
+    read it, so even the standalone figure may be wrong by a factor. Refused
+    rather than approximated.
+    """
+    euro_revenue = make_fact(
+        metric="income.revenue",
+        value=34_176_000_000.0,
+        display_value="34,176",
+        unit="EUR",
+    )
+
+    derived = m05_market.derive_market_cap(
+        [price_fact(unit="USD"), share_fact(), euro_revenue]
+    )
+
+    assert derived is None
+
+
+def test_it_still_derives_when_the_quote_matches_the_filings() -> None:
+    """The guard must not cost a domestic filer its capitalisation."""
+    usd_revenue = make_fact(
+        metric="income.revenue",
+        value=416_161_000_000.0,
+        display_value="416,161",
+        unit="USD",
+    )
+
+    derived = m05_market.derive_market_cap(
+        [price_fact(unit="USD"), share_fact(), usd_revenue]
+    )
+
+    assert derived is not None
+    assert derived.unit == "USD"
+
+
+def test_a_share_count_alone_does_not_look_like_a_currency() -> None:
+    """"shares" is not an ISO code, and neither is "percent".
+
+    Were either mistaken for one, the guard would compare a price against it
+    and refuse every filer.
+    """
+    derived = m05_market.derive_market_cap([price_fact(), share_fact()])
+
+    assert derived is not None

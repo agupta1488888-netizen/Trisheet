@@ -2268,6 +2268,10 @@ STOOQ_QUOTE_URL_TEMPLATE = (
 #: Sent on every market request. Some providers reject an unidentified client.
 MARKET_USER_AGENT_TEMPLATE = "Trisheet {contact_email}"
 
+#: Length of an ISO 4217 code. Used to tell a currency unit apart from
+#: "shares" or "percent" when reading a filer's own currency off its facts.
+CURRENCY_CODE_LENGTH = 3
+
 #: Metric prefixes m05 is allowed to emit. Anything else is dropped before it
 #: leaves the module, with the rejection logged.
 MARKET_METRIC_PREFIXES = ("market.", "valuation.")

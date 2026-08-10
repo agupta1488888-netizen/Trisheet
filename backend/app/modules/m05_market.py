@@ -56,6 +56,7 @@ from typing import Any
 import httpx
 
 from app.config import (
+    CURRENCY_CODE_LENGTH,
     MARKET_ACCESSION_TEMPLATE,
     MARKET_CACHE_TTL_SECONDS,
     MARKET_CAP_LABEL,
@@ -493,6 +494,31 @@ def derive_market_cap(facts: Sequence[Fact]) -> Fact | None:
     if shares.value <= 0:
         return None
 
+    # A quote in one currency against a share count from accounts kept in
+    # another cannot be combined with anything the filer reported. SAP files a
+    # 20-F in EUR and its depositary receipts trade in USD, so multiplying the
+    # two yields a figure that reads as a capitalisation, is labelled USD, and
+    # is then added to EUR net debt to make an enterprise value — mixing two
+    # currencies silently through every multiple built on it.
+    #
+    # A depositary receipt is not a share either: the ratio between them is a
+    # fact about the programme, not about the filing, and nothing here can read
+    # it. So even the standalone figure may be wrong by a factor.
+    #
+    # Refused rather than approximated. A missing capitalisation is a gap the
+    # interface states; a wrong one is a number a reader would act on.
+    reporting_currency = _reporting_currency(facts)
+    if reporting_currency is not None and price.unit != reporting_currency:
+        logger.info(
+            "Market capitalisation not derived: the quote and the filings are "
+            "in different currencies",
+            extra={
+                "quote_currency": price.unit,
+                "reporting_currency": reporting_currency,
+            },
+        )
+        return None
+
     if not _is_market_metric(MARKET_CAP_METRIC):
         logger.error(
             "Refusing to emit a non-market metric from the market module",
@@ -527,6 +553,22 @@ def derive_market_cap(facts: Sequence[Fact]) -> Fact | None:
             f"shares outstanding as at {shares.period_end.isoformat()}"
         ),
     )
+
+
+def _reporting_currency(facts: Sequence[Fact]) -> str | None:
+    """The currency the filer keeps its accounts in, from its own figures.
+
+    Read off the facts rather than taken as an argument so that both callers —
+    the pipeline and the peer comparison — get the check without either having
+    to remember to pass it.
+    """
+    for fact in facts:
+        if fact.tier is not SourceTier.FILING or fact.unit is None:
+            continue
+        unit = fact.unit
+        if len(unit) == CURRENCY_CODE_LENGTH and unit.isalpha():
+            return unit
+    return None
 
 
 def _latest(facts: Sequence[Fact], metric: str) -> Fact | None:
