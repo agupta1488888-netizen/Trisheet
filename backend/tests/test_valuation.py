@@ -365,3 +365,21 @@ def test_percentages_are_converted_once_at_the_boundary() -> None:
 def test_an_absent_parameter_means_the_default() -> None:
     """Which is what keeps a clean URL the default view."""
     assert ValuationQuery().as_rates() == (None, None, None)
+
+
+def test_the_share_count_behind_a_per_share_figure_is_traceable(
+    completed_report: list[Fact],
+) -> None:
+    """The grid divides by it in both modes, so it has to reach the rail.
+
+    The reverse result names free cash flow, net debt and the market
+    capitalisation — not the share count, because it solves against equity
+    value. But the grid beside it renders value per share, which divides by
+    that count, so without the grid's own inputs a reader would see per-share
+    figures with no way to reach the figure underneath them.
+    """
+    with _client() as client:
+        body = client.get(f"/reports/{REPORT_ID}/valuation").json()
+
+    assert body["mode"] == "reverse"
+    assert "income.shares_diluted" in {fact["metric"] for fact in body["inputs"]}

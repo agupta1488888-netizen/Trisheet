@@ -57,6 +57,19 @@ export function ValuationWorkbench({
   // again on mount would spend a request to learn what is already on screen.
   const settled = useRef(true);
 
+  // Held in a ref, and deliberately not in the effect's dependencies.
+  //
+  // The parent hands this down as an inline closure, so its identity changes
+  // on every parent render — and the callback itself re-renders the parent, by
+  // handing it the facts to merge into the rail. As a dependency it would
+  // therefore drive a loop: fetch, merge, re-render, new identity, fetch. A
+  // ref makes the effect depend only on what should actually re-run it, which
+  // is the assumptions, whatever the parent does with its own rendering.
+  const notify = useRef(onInputsChange);
+  useEffect(() => {
+    notify.current = onInputsChange;
+  }, [onInputsChange]);
+
   useEffect(() => {
     if (settled.current) {
       settled.current = false;
@@ -85,7 +98,7 @@ export function ValuationWorkbench({
         if (result.ok) {
           setFailed(false);
           setResponse(result.data);
-          onInputsChange?.(result.data);
+          notify.current?.(result.data);
         } else {
           setFailed(true);
         }
@@ -96,7 +109,7 @@ export function ValuationWorkbench({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [assumptions, reportId, onInputsChange]);
+  }, [assumptions, reportId]);
 
   const setMode = useCallback((mode: ValuationAssumptions["mode"]) => {
     setAssumptions((current) => ({ ...current, mode }));

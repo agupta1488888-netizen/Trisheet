@@ -135,7 +135,7 @@ async def build(report_id: str, query: ValuationQuery) -> ValuationResponse:
 
     return ValuationResponse(
         mode=query.mode,
-        inputs=_inputs(report_id, facts, implied, estimate),
+        inputs=_inputs(report_id, facts, implied, estimate, grid),
         implied=implied,
         estimate=estimate,
         sensitivity=_grid(grid, currency),
@@ -265,6 +265,7 @@ def _inputs(
     facts: Sequence[Fact],
     implied: ImpliedGrowth | None,
     estimate: DcfEstimate | None,
+    grid: m07_analysis.DcfGridResult,
 ) -> tuple[DocumentFact, ...]:
     """Only the facts actually used, as the document carries them.
 
@@ -272,10 +273,15 @@ def _inputs(
     provenance rail would gain cards for figures this section never touched,
     and a reader tracing a projection back would have to guess which of them
     it rested on.
+
+    The grid is included because it is rendered in both modes and divides by a
+    share count to reach value per share — a real figure the reverse mode's own
+    result never names, so without this a reader could see per-share values
+    with no way to reach the count behind them.
     """
     wanted = {
         identifier
-        for source in (implied, estimate)
+        for source in (implied, estimate, grid)
         if source is not None
         for identifier in (
             getattr(source, "market_cap_fact_id", None),

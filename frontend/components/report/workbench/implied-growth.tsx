@@ -37,7 +37,7 @@ export function ImpliedGrowth({ implied }: { implied: ImpliedGrowthData }) {
         </span>{" "}
         discount rate, a market capitalisation of{" "}
         {implied.marketCapFactId !== null ? (
-          <Figure factId={implied.marketCapFactId} />
+          <Figure factId={implied.marketCapFactId} align="inline" />
         ) : (
           <span className="figure text-muted-foreground">
             {implied.marketCap?.display ?? "an unavailable figure"}
