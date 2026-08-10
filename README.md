@@ -125,6 +125,7 @@ The full annotated list is in [.env.example](.env.example). In brief:
 | `SUPABASE_URL` | yes | Project URL. |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Server-side database access. Bypasses row level security — never expose it to the browser. |
 | `CORS_ALLOWED_ORIGINS` | no | Comma-separated browser origins. Defaults to `http://localhost:3000`. |
+| `FEED_ENABLED` | no | Whether the background filing poller runs. Defaults to `true`. Set `false` to stop polling SEC without a code deploy. |
 | `ENVIRONMENT` | no | `development` or `production`. |
 | `LOG_LEVEL` | no | `DEBUG`, `INFO`, `WARNING` or `ERROR`. |
 | `PORT` | no | Railway sets this at deploy time. |

@@ -137,6 +137,47 @@ export const AUTOCOMPLETE_DEBOUNCE_MS = 180;
 /** Fallback poll interval when Supabase Realtime is unavailable. */
 export const PROGRESS_POLL_INTERVAL_MS = 2_000;
 
+/* ---------------------------------------------------------------------------
+   Live filing feed
+   --------------------------------------------------------------------------- */
+
+/** Filings shown in the landing page's feed. */
+export const FEED_ITEMS_SHOWN = 12;
+
+/**
+ * How long a rendered feed is served before the page asks the backend again.
+ * The poller writes at most every ninety seconds, so anything shorter buys
+ * nothing and costs a request per visitor.
+ */
+export const FEED_REVALIDATE_SECONDS = 90;
+
+/**
+ * Not "Filed today": on a Monday morning the newest filing is Friday's, and a
+ * heading that claimed otherwise would be wrong three mornings in five.
+ */
+export const FEED_HEADING = "Latest filings";
+
+export const FEED_EYEBROW = "Read directly from SEC EDGAR";
+
+export const FEED_INTRO =
+  "Companies file with the SEC continuously. Every filing below was read from EDGAR directly, and every quoted sentence is the company's own — from the press release attached to the filing, not from a summary of it.";
+
+/**
+ * The empty state. States the condition and why it is normal, because EDGAR
+ * publishing nothing is far more often a Sunday than a fault, and a spinner
+ * would imply otherwise.
+ */
+export const FEED_EMPTY_HEADING = "No filings yet";
+
+export const FEED_EMPTY_BODY =
+  "EDGAR accepts filings on business days between 06:00 and 22:00 Eastern. Nothing has been filed by a tracked company since then.";
+
+/** Prefix on a quoted forward-looking sentence. Mirrors GUIDANCE_LABEL_PREFIX. */
+export const FEED_GUIDANCE_LABEL = "Guidance";
+
+/** Heading over sentences quoted from a filing's press release. */
+export const FEED_QUOTED_LABEL = "From the filing";
+
 /** Tier names, as the compliance strip and rail render them. */
 export const TIER_NAME = {
   1: "Filings",

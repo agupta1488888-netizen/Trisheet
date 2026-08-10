@@ -66,6 +66,15 @@ export interface InputScreenProps {
     periods: number | null,
     sourceUrls: readonly string[],
   ) => void;
+  /**
+   * The live filing feed, passed in already rendered.
+   *
+   * A node rather than a component because the feed is an async server
+   * component and this screen is a client one, which cannot render one as a
+   * child. Passing the element down is the same injection this screen already
+   * uses for its data functions, and it keeps the feed server-rendered.
+   */
+  feed?: React.ReactNode;
 }
 
 function defaultSearch(query: string): Promise<readonly TickerSuggestion[]> {
@@ -80,6 +89,7 @@ export function InputScreen({
   search = defaultSearch,
   resolve = defaultResolve,
   onStart,
+  feed,
 }: InputScreenProps) {
   const router = useRouter();
   const prefersReducedMotion = useReducedMotion();
@@ -244,6 +254,8 @@ export function InputScreen({
           </div>
         </div>
       </div>
+
+      {feed}
 
       <AiFinancialAgentSection />
     </main>

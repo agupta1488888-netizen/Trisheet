@@ -17,6 +17,58 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the landing page shows what companies have filed (2026-08-10)
+
+- `feed`: a background poller that keeps a table of recent SEC filings warm, so
+  the landing page can show today's filings without any visitor costing an
+  EDGAR request. Two lanes, neither of which scales with the tracked universe:
+  the current-events Atom feed returns the newest filings across every filer in
+  one request per form, and the daily form index is swept twice an hour to
+  catch anything that scrolled off that window during a burst.
+- `feed`: the poller runs inside the API process rather than as its own
+  service, so it shares the EDGAR token bucket. The 10 req/s SEC ceiling is
+  enforced per process, so a second polling process would put the limit out of
+  reach of both. Enrichment is sequential and bounded per cycle for the same
+  reason: a reader waiting on a report must never queue behind a hundred
+  earnings 8-Ks.
+- `feed`: nothing in the feed is generated. A headline is EDGAR's own item
+  label or the form's own name; a quoted sentence is the filer's own, from the
+  EX-99.1 press release, split into results and guidance by the same `m09`
+  function the report uses — so a projection cannot read as a reported figure
+  in one place and not the other. `FeedItem` has no summary field, and
+  deliberately does not: a written sentence here would be the one unsourced
+  claim on the front page.
+- `main`: `GET /feed`. Reads only what the poller wrote, and returns an empty
+  page rather than an error on any failure — an unconfigured deployment, an
+  unreachable database and a genuinely quiet Sunday are all things the reader
+  can do nothing about.
+- `db`: `feed_items`, keyed on the accession number so that re-seeing a filing
+  — which both lanes do constantly by design — is an idempotent upsert.
+- `frontend/input`: the feed section, below the hero. Two timestamps rather
+  than one: EDGAR publishes nothing overnight or at a weekend, so a three-day-
+  old newest filing is usually a working feed, and stating both when EDGAR last
+  had something to say and when this deployment last asked is the only way to
+  tell that from a poller that died on Friday.
+- `config`: `FEED_ENABLED`, so polling can be stopped per environment without a
+  code deploy.
+
+### Fixed — a weekend looked like a broken poller (2026-08-10)
+
+- `edgar`: 403 now raises a typed `EdgarForbiddenError` rather than the generic
+  one. The status means two different things on sec.gov — the refusal a missing
+  User-Agent earns, and the answer the Archives give for a path that does not
+  exist — and a caller that can tell them apart by context needs its own
+  exception to catch.
+- `feed`: the reconciliation sweep treated only a 404 as "no index published
+  yet". SEC never answers a daily index that way: an index file that has not
+  been built returns 403, verified against a Sunday, a pre-index weekday
+  morning and a date a year out. So every weekend and every morning before the
+  day's first filing reported a failed cycle — the exact false alarm the poller
+  is written to be immune to. The refusal is forgiven for that one URL only,
+  where it cannot mask a genuine block: the poll phase reads four current-
+  events feeds from the same host first, and would already have recorded the
+  errors.
+
 ### Fixed — the cover overflowed onto a second page (2026-08-05)
 
 - `m12`: `.cover` set `height: 297mm` and `padding: 24mm 20mm` without

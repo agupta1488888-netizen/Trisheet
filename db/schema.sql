@@ -435,6 +435,65 @@ create index if not exists chat_messages_report_tier_created_idx
   on chat_messages (report_id, highest_tier_used, created_at desc);
 
 -- ---------------------------------------------------------------------------
+-- feed_items
+--
+-- The landing page's live filing feed. Unlike every other table here, a row is
+-- not owned by a report: the poller writes filings for a tracked universe of
+-- companies whether or not anyone has ever asked for a report on them. That is
+-- why cik carries no foreign key to companies — requiring one would restrict
+-- the feed to companies that had already been fully resolved, which is the
+-- opposite of what a discovery surface is for.
+--
+-- Every row is Tier 1 or 2 by construction. headline is EDGAR's own item
+-- label; result_sentences and guidance_sentences are quoted verbatim from the
+-- filing's EX-99.1 press release. Nothing in this table is generated prose,
+-- which is what keeps a landing-page feed from becoming an unsourced claim.
+--
+-- accession_no is the primary key, so re-seeing a filing — which both polling
+-- lanes do constantly by design — is an idempotent upsert rather than a
+-- duplicate.
+-- ---------------------------------------------------------------------------
+
+create table if not exists feed_items (
+  accession_no        text        primary key,
+  cik                 text        not null,
+  ticker              text,
+  company_name        text        not null,
+  form                text        not null,
+  filed_at            timestamptz not null,
+  -- EDGAR item numbers as filed, filtered to the ones a profile reports.
+  items               text[]      not null default '{}',
+  -- What those item numbers mean, in EDGAR's own words.
+  item_labels         text[]      not null default '{}',
+  headline            text        not null,
+  -- Quoted from the EX-99.1 press release. Empty until enrichment runs, and
+  -- permanently empty for a filing that has no such exhibit.
+  result_sentences    text[]      not null default '{}',
+  -- Forward-looking sentences, stored apart from results so a projection can
+  -- never be rendered as a reported figure.
+  guidance_sentences  text[]      not null default '{}',
+  source_url          text        not null,
+  exhibit_url         text,
+  -- Null until the press release has been read. Distinguishes "not enriched
+  -- yet" from "enriched and found nothing quotable".
+  enriched_at         timestamptz,
+  created_at          timestamptz not null default now(),
+
+  constraint feed_items_cik_is_padded check (cik ~ '^[0-9]{10}$')
+);
+
+-- The feed's only ordering. Every read is "newest first", optionally narrowed.
+create index if not exists feed_items_filed_at_idx
+  on feed_items (filed_at desc);
+create index if not exists feed_items_form_filed_idx
+  on feed_items (form, filed_at desc);
+create index if not exists feed_items_cik_filed_idx
+  on feed_items (cik, filed_at desc);
+-- Drives the enrichment queue: unenriched current reports, oldest first.
+create index if not exists feed_items_unenriched_idx
+  on feed_items (filed_at desc) where enriched_at is null;
+
+-- ---------------------------------------------------------------------------
 -- report_runs
 --
 -- The monitoring view, for humans reading the database directly. The /metrics
@@ -501,6 +560,7 @@ alter table market_cache enable row level security;
 alter table run_logs     enable row level security;
 alter table artifacts    enable row level security;
 alter table chat_messages enable row level security;
+alter table feed_items   enable row level security;
 
 drop policy if exists companies_read on companies;
 create policy companies_read on companies
@@ -538,6 +598,14 @@ create policy run_logs_read on run_logs
 -- the browser everywhere else in this schema.
 drop policy if exists chat_messages_read on chat_messages;
 create policy chat_messages_read on chat_messages
+  for select to anon, authenticated using (true);
+
+-- feed_items is readable: it is the landing page's content, and every row is
+-- already public information — a filing the SEC published, quoted from the
+-- filer's own press release. There is no write policy for any browser role;
+-- only the poller's service-role write reaches this table.
+drop policy if exists feed_items_read on feed_items;
+create policy feed_items_read on feed_items
   for select to anon, authenticated using (true);
 
 -- ---------------------------------------------------------------------------

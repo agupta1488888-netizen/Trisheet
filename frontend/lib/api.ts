@@ -11,6 +11,7 @@ import type {
   ApiError,
   ChatSuggestions,
   ChatTurn,
+  FeedPage,
   Report,
   ReportDocument,
   Resolution,
@@ -173,6 +174,30 @@ export async function createReport(
         .filter((url) => url !== ""),
     }),
   });
+}
+
+/**
+ * Recent filings by the companies the feed tracks.
+ *
+ * Returns an empty page on any failure rather than a result type, for the same
+ * reason `searchTickers` returns an empty list: this is landing-page content,
+ * and an unconfigured backend, an unreachable one and a genuinely quiet
+ * weekend are all states the reader can do nothing about. The section renders
+ * its own empty state and the rest of the page is unaffected.
+ *
+ * Revalidated rather than `no-store`: the poller writes at most every ninety
+ * seconds, so a per-visitor request to the backend would buy nothing.
+ */
+export async function fetchFeed(
+  limit: number,
+  revalidateSeconds: number,
+): Promise<FeedPage> {
+  const result = await apiRequest<FeedPage>(`/feed?limit=${limit}`, {
+    next: { revalidate: revalidateSeconds },
+  });
+  return result.ok
+    ? result.data
+    : { items: [], lastCheckedAt: null, latestFiledAt: null };
 }
 
 export async function fetchReport(

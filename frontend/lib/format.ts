@@ -142,6 +142,31 @@ export function formatFeedTime(iso: string): string {
 }
 
 /**
+ * A timestamp on EDGAR's own clock: "7 Aug, 17:30 ET".
+ *
+ * Always Eastern, never the reader's zone. EDGAR accepts filings on a New York
+ * business day, so a filing that arrived at 17:30 ET is "after the close" to
+ * every reader of this page regardless of where they are — rendering it as
+ * 03:00 in Delhi would describe the reader's night rather than the market's
+ * day, and would make the feed's quiet hours look arbitrary.
+ */
+export function formatEasternTimestamp(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) {
+    return iso;
+  }
+  const formatted = new Intl.DateTimeFormat(LOCALE, {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "America/New_York",
+  }).format(parsed);
+  return `${formatted} ET`;
+}
+
+/**
  * An accession number, hyphenated as EDGAR writes it:
  * 000032019325000073 -> 0000320193-25-000073. Already-hyphenated input is
  * returned unchanged.

@@ -541,6 +541,75 @@ class DevelopmentTimeline(BaseModel):
     facts: tuple[Fact, ...] = ()
 
 
+# --- Live filing feed -------------------------------------------------------
+
+
+class FeedItem(BaseModel):
+    """One filing in the landing page's live feed.
+
+    A close cousin of `DevelopmentEvent`, and deliberately not the same model.
+    A development belongs to a report and carries `fact_ids` into that report's
+    provenance rail; a feed item belongs to no report and never becomes a Fact,
+    because nothing downstream reasons over it — it is read once, by a browser,
+    and rendered.
+
+    Every field is either EDGAR's own metadata or a verbatim quotation. There
+    is no summary field, and there deliberately is not one: a generated
+    sentence here would be an unsourced claim on the front page.
+
+    Mirrors `FeedItem` in frontend/lib/types.ts.
+    """
+
+    model_config = WIRE_CONFIG
+
+    accession_no: str
+    cik: str
+    #: Null for a filer the tracked universe knows by CIK but not by ticker.
+    ticker: str | None = None
+    company_name: str
+    form: str
+    filed_at: dt.datetime
+    #: EDGAR item numbers, as filed, filtered to the ones worth reporting.
+    items: tuple[str, ...] = ()
+    #: What those item numbers mean, in EDGAR's own words.
+    item_labels: tuple[str, ...] = ()
+    headline: str
+    source_url: HttpUrl
+    #: Sentences quoted from the EX-99.1 press release, when there is one.
+    result_sentences: tuple[str, ...] = ()
+    #: Forward-looking sentences, kept apart so a projection can never be
+    #: rendered as a reported figure.
+    guidance_sentences: tuple[str, ...] = ()
+    exhibit_url: HttpUrl | None = None
+    #: Null until the press release has been read. Distinguishes "not yet
+    #: enriched" from "enriched, nothing quotable found".
+    enriched_at: dt.datetime | None = None
+
+
+class FeedPage(BaseModel):
+    """What `GET /feed` returns.
+
+    Two timestamps, because they answer two different questions and a surface
+    that conflated them would mislead. EDGAR publishes nothing overnight or at
+    a weekend, so a feed whose newest filing is three days old is usually
+    working perfectly — and the only way for the page to tell that apart from a
+    poller that died on Friday is to state both when EDGAR last had something
+    to say and when this deployment last asked.
+
+    `last_checked_at` is null when the poller is not running in this process,
+    which is the honest answer for a deployment serving a feed it does not
+    itself maintain.
+    """
+
+    model_config = WIRE_CONFIG
+
+    items: tuple[FeedItem, ...] = ()
+    #: When the poller last completed a cycle against EDGAR.
+    last_checked_at: dt.datetime | None = None
+    #: When the newest filing in the feed was disseminated.
+    latest_filed_at: dt.datetime | None = None
+
+
 # --- Generated prose (m10) --------------------------------------------------
 
 

@@ -630,6 +630,56 @@ export interface ArtifactRef {
   unavailableReason: string | null;
 }
 
+/* ---------------------------------------------------------------------------
+   Live filing feed
+
+   The landing page's feed of recent filings. A close cousin of
+   `DevelopmentEvent` and deliberately a separate type: a development belongs
+   to a report and carries fact ids into that report's provenance rail, while a
+   feed item belongs to no report and never becomes a fact.
+
+   Mirrors `FeedItem` in backend/app/models.py.
+   --------------------------------------------------------------------------- */
+
+export interface FeedItem {
+  accessionNo: string;
+  cik: string;
+  /** Null for a filer the tracked universe knows by CIK but not by ticker. */
+  ticker: string | null;
+  companyName: string;
+  form: string;
+  /** ISO 8601, with offset. EDGAR's dissemination time. */
+  filedAt: string;
+  /** EDGAR item numbers, as filed. */
+  items: readonly string[];
+  /** What those item numbers mean, in EDGAR's own words. */
+  itemLabels: readonly string[];
+  headline: string;
+  sourceUrl: string;
+  /** Sentences quoted from the filing's EX-99.1 press release. */
+  resultSentences: readonly string[];
+  /**
+   * Forward-looking sentences from the same release. Held apart from
+   * `resultSentences` for the same reason as on `DevelopmentEvent`: guidance
+   * is a projection, and the interface must never let one read as the other.
+   */
+  guidanceSentences: readonly string[];
+  exhibitUrl: string | null;
+  /** Null until the press release has been read. */
+  enrichedAt: string | null;
+}
+
+export interface FeedPage {
+  items: readonly FeedItem[];
+  /**
+   * When the poller last completed a cycle against EDGAR. Null when no poller
+   * is running in the process that served this request.
+   */
+  lastCheckedAt: string | null;
+  /** When the newest filing in the feed was disseminated. */
+  latestFiledAt: string | null;
+}
+
 /**
  * Everything the report view renders. Assembled by the backend; the browser
  * treats it as read-only.

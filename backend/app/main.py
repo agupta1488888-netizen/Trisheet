@@ -19,7 +19,7 @@ import logging
 import time
 from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +29,8 @@ from app.config import (
     CHAT_RATE_LIMIT_MAX_TURNS,
     CHAT_RATE_LIMIT_WINDOW_MINUTES,
     DEFAULT_DEPTH,
+    FEED_PAGE_DEFAULT,
+    FEED_PAGE_MAX,
     MAX_RESOLUTION_CANDIDATES,
     METRICS_DEFAULT_WINDOW_HOURS,
     METRICS_MAX_WINDOW_HOURS,
@@ -39,6 +41,8 @@ from app.config import (
     Settings,
     get_settings,
 )
+from app.feed import poller as feed_poller
+from app.feed import store as feed_store
 from app.logging_config import configure_logging
 from app.models import (
     AnalysisDepth,
@@ -48,6 +52,7 @@ from app.models import (
     ChatSuggestions,
     ChatTurn,
     CreateReportRequest,
+    FeedPage,
     HealthResponse,
     Report,
     ReportDocument,
@@ -60,7 +65,7 @@ from app.models import (
 )
 from app.modules import chat_agent, m01_resolver
 from app.pipeline import run as run_pipeline
-from app.services import edgar, llm, metrics, runlog
+from app.services import db, edgar, llm, metrics, runlog
 
 logger = logging.getLogger(__name__)
 
@@ -205,11 +210,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 extra={"setting": "SUPABASE_URL"},
             )
 
+        # The landing page's filing feed. Started here rather than as its own
+        # service so that it shares this process's EDGAR token bucket: a second
+        # process polling SEC would put the global 10 req/s ceiling out of
+        # reach of either one. `start` decides for itself whether it can run
+        # and never raises, because a feed that cannot poll is a quieter
+        # landing page and not a reason to refuse to serve reports.
+        feed_stop = asyncio.Event()
+        feed_task = feed_poller.start(feed_stop)
+
         logger.info(
             "Trisheet backend started",
-            extra={"environment": resolved.environment},
+            extra={
+                "environment": resolved.environment,
+                "feed_polling": feed_task is not None,
+            },
         )
         yield
+
+        if feed_task is not None:
+            feed_stop.set()
+            # The poller wakes on the event rather than sleeping out its
+            # interval, so this returns promptly; the cancel is for a cycle
+            # that is mid-request when shutdown arrives.
+            feed_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await feed_task
+
         await edgar.close_client()
         await llm.close_client()
         logger.info("Trisheet backend stopped")
@@ -312,6 +339,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
                 for entry in matches[:limit]
             )
+        )
+
+    # --- Live filing feed ---------------------------------------------------
+
+    @app.get("/feed", response_model=FeedPage, tags=["feed"])
+    async def feed(
+        limit: int = Query(default=FEED_PAGE_DEFAULT, ge=1, le=FEED_PAGE_MAX),
+        form: str | None = Query(default=None),
+        cik: str | None = Query(default=None),
+    ) -> FeedPage:
+        """Recent filings by the companies the feed tracks, newest first.
+
+        Reads only what the poller already wrote — a request here never touches
+        EDGAR, which is the whole reason the poller exists.
+
+        Returns an empty page rather than an error on any failure. This is the
+        landing page's content: an unconfigured deployment, an unreachable
+        database and a genuinely quiet Sunday must all render as the same
+        honest empty state, and none of them are something the reader can act
+        on.
+        """
+        if not db.is_configured():
+            return FeedPage()
+
+        try:
+            items = feed_store.recent(limit, form=form, cik=cik)
+            latest_filed_at = feed_store.latest_filed_at()
+        except db.DatabaseError:
+            logger.warning("Filing feed unavailable")
+            return FeedPage()
+
+        return FeedPage(
+            items=tuple(items),
+            last_checked_at=feed_poller.last_checked_at(),
+            latest_filed_at=latest_filed_at,
         )
 
     # --- Reports ------------------------------------------------------------
