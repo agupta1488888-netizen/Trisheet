@@ -158,6 +158,19 @@ def _subject_facts() -> list[Fact]:
             period_end=PERIOD_END,
             fiscal_year=2024,
         ),
+        # Enterprise value reads this rather than rebuilding it from the two
+        # facts above, so that one definition of net debt serves the whole
+        # system. 300 − 50, as m07 would have derived it.
+        make_fact(
+            metric="derived.net_debt",
+            label="Net debt",
+            value=250.0,
+            display_value="250",
+            period_end=PERIOD_END,
+            fiscal_year=2024,
+            is_calculated=True,
+            formula="total debt FY2024 − cash and equivalents FY2024",
+        ),
         _market_fact(),
     ]
 
@@ -427,10 +440,14 @@ def test_ev_to_ebitda_computes_enterprise_value_over_ebitda() -> None:
 
 @pytest.mark.parametrize(
     "missing_metric",
-    ["derived.total_debt", "balance.cash_and_equivalents", "derived.ebitda"],
+    ["derived.net_debt", "derived.ebitda"],
 )
 def test_ev_to_ebitda_is_none_without_every_input(missing_metric: str) -> None:
-    """Rather than treating an undisclosed input as zero, and understating it."""
+    """Rather than treating an undisclosed input as zero, and understating it.
+
+    Net debt is the input now, not the debt and cash behind it: enterprise
+    value reads m07's figure so that one definition serves the whole system.
+    """
     facts = [f for f in _subject_facts() if f.metric != missing_metric]
     latest = m08._latest_by_metric(facts)
 
@@ -458,7 +475,7 @@ def test_row_from_facts_degrades_gracefully_when_some_metrics_are_absent() -> No
     facts = [
         f
         for f in _subject_facts()
-        if f.metric not in {"margin.operating", "derived.total_debt"}
+        if f.metric not in {"margin.operating", "derived.net_debt"}
     ]
 
     row = m08._row_from_facts(
@@ -636,12 +653,13 @@ def test_peer_comparison_max_count_is_smaller_than_the_selection_ladder() -> Non
 # value, which is the point of `_enterprise_value_of`.
 
 
-def test_enterprise_value_is_market_cap_plus_debt_less_cash() -> None:
+def test_enterprise_value_is_market_cap_plus_net_debt() -> None:
     latest = m08._latest_by_metric(_subject_facts())
 
     fact = m08._enterprise_value(latest, "NKE")
 
-    # 50,000 market cap + 300 debt - 50 cash
+    # 50,000 market cap + 250 net debt, that net debt being m07's own figure
+    # rather than one rebuilt here from the 300 of debt and 50 of cash.
     assert fact is not None
     assert fact.value == pytest.approx(50_250.0)
     assert fact.tier == SourceTier.MARKET
@@ -664,7 +682,7 @@ def test_ev_to_sales_divides_enterprise_value_by_revenue() -> None:
 
 @pytest.mark.parametrize(
     "missing_metric",
-    ["derived.total_debt", "balance.cash_and_equivalents", "income.revenue"],
+    ["derived.net_debt", "income.revenue"],
 )
 def test_ev_to_sales_is_none_without_every_input(missing_metric: str) -> None:
     """An undisclosed debt balance is not zero, here or anywhere else."""
@@ -725,3 +743,63 @@ def test_dividend_yield_uses_the_magnitude_of_an_outflow() -> None:
 
     assert fact is not None
     assert fact.value == pytest.approx(5.0)
+
+
+# --- The comparison cap -------------------------------------------------------
+
+
+async def test_comparables_past_the_cap_are_named_rather_than_dropped(
+    patched_pipeline: dict[str, list[str]],
+) -> None:
+    """The tail is sliced off before the loop, so nothing recorded its loss.
+
+    A peer selected from the proxy appears in the peers list with its reason
+    for being chosen, and then never reaches the comparison table. That is the
+    silent gap `PeerComparison` promises does not happen — a live AAPL run
+    listed eight comparables, compared five, and said nothing about the other
+    three, which read as three filers that could not be read rather than three
+    the table simply had no room for.
+    """
+    subject = _company("NKE", "0000320187")
+    peer_set = PeerSet(
+        subject_cik=subject.cik,
+        peers=tuple(
+            _peer(cik=str(n), ticker=f"P{n}", name=f"Peer {n}") for n in range(4)
+        ),
+    )
+
+    result = await m08.build_peer_comparison(
+        subject,
+        peer_set,
+        _subject_facts(),
+        cast(EdgarClient, _DummyClient()),
+        max_peers=2,
+    )
+
+    note = " ".join(result.notes)
+    assert "P2" in note
+    assert "P3" in note
+    # And the reason is the cap, not an unreadable filing — the two are
+    # different findings and a reader must not read one as the other.
+    assert "could not read" not in note
+
+
+async def test_no_note_when_every_comparable_fits(
+    patched_pipeline: dict[str, list[str]],
+) -> None:
+    """A cap that was never reached is not worth a sentence in the report."""
+    subject = _company("NKE", "0000320187")
+    peer_set = PeerSet(
+        subject_cik=subject.cik,
+        peers=(_peer(cik="1", ticker="ADS", name="adidas AG"),),
+    )
+
+    result = await m08.build_peer_comparison(
+        subject,
+        peer_set,
+        _subject_facts(),
+        cast(EdgarClient, _DummyClient()),
+        max_peers=5,
+    )
+
+    assert result.notes == ()

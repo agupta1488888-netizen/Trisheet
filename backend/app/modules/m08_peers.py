@@ -1637,12 +1637,27 @@ async def build_peer_comparison(
             continue
         rows.append(row)
 
+    # The slice above drops the tail before the loop ever sees it, so without
+    # this those peers appear in the selection list with their reason for being
+    # chosen and then simply never reach the table — which is exactly the
+    # silent gap this class's docstring promises does not happen.
+    withheld = peer_set.peers[max_peers:]
+    if withheld:
+        notes.append(
+            "Selected but not compared, because a comparison costs a full "
+            f"filing read per company and the table is built for the first "
+            f"{max_peers}: "
+            + ", ".join(peer.ticker for peer in withheld)
+            + "."
+        )
+
     logger.info(
         "Peer comparison built",
         extra={
             "cik": company.cik,
             "rows": len(rows),
             "peers_attempted": min(len(peer_set.peers), max_peers),
+            "peers_withheld": len(withheld),
         },
     )
     return PeerComparison(rows=tuple(rows), notes=tuple(notes))
@@ -1686,6 +1701,14 @@ async def _peer_comparison_row(
     # Market data is optional everywhere in this system; a peer with no quote
     # still gets its financial cells, just no valuation multiple.
     facts.extend(await m05_market.fetch_market_data(peer_company))
+
+    # After the quote, never before it: the capitalisation multiplies a price
+    # by a share count, so deriving it alongside the metrics above — which are
+    # computed from reported facts only — would find no price and yield
+    # nothing, leaving every peer without the multiples the subject has.
+    peer_market_cap = m05_market.derive_market_cap(facts)
+    if peer_market_cap is not None:
+        facts.append(peer_market_cap)
 
     return _row_from_facts(
         ticker=peer.ticker, name=peer.name, is_subject=False, facts=facts
@@ -1866,29 +1889,43 @@ def _price_to_earnings(latest: dict[str, Fact], ticker: str) -> Fact | None:
     )
 
 
+def _ev_formula(market_cap: Fact) -> str:
+    """How enterprise value is stated wherever it appears, worded once."""
+    return (
+        f"market capitalisation as of {market_cap.filed_date.isoformat()} "
+        "+ net debt"
+    )
+
+
 def _enterprise_value_of(
     latest: dict[str, Fact],
 ) -> tuple[float, tuple[Fact, ...]] | None:
     """Enterprise value and the facts behind it, or None if any is missing.
 
-    Market capitalisation plus total debt less cash. Where debt or cash is not
-    disclosed the figure is not computed at all — treating an undisclosed debt
-    balance as zero would understate leverage while looking like a complete
-    answer, which is the same reasoning m07 applies to net debt itself.
+    Market capitalisation plus net debt, where net debt is m07's figure rather
+    than one rebuilt here from total debt and cash. There is one definition of
+    what a filer owes net of what it holds, and holding two of them means they
+    drift the moment either changes — which is what a second definition here
+    did when short-term marketable securities joined the offset and only m07
+    learned about it, leaving every multiple on this table geared against a
+    filer that was not.
 
-    Shared by every figure below it that needs enterprise value, so the four
-    inputs are located once and the definition cannot drift between them.
+    Where net debt is unavailable the figure is not computed at all: treating an
+    undisclosed debt balance as zero would understate leverage while looking
+    like a complete answer.
+
+    Shared by every figure below it that needs enterprise value, so the inputs
+    are located once and the definition cannot drift between them either.
     """
     market_cap = latest.get("market.market_cap")
-    debt = latest.get("derived.total_debt")
-    cash = latest.get("balance.cash_and_equivalents")
-    if market_cap is None or debt is None or cash is None:
+    net_debt = latest.get("derived.net_debt")
+    if market_cap is None or net_debt is None:
         return None
-    if market_cap.value is None or debt.value is None or cash.value is None:
+    if market_cap.value is None or net_debt.value is None:
         return None
 
-    value = market_cap.value + debt.value - cash.value
-    return value, (market_cap, debt, cash)
+    value = market_cap.value + net_debt.value
+    return value, (market_cap, net_debt)
 
 
 def _enterprise_value(latest: dict[str, Fact], ticker: str) -> Fact | None:
@@ -1902,10 +1939,7 @@ def _enterprise_value(latest: dict[str, Fact], ticker: str) -> Fact | None:
         ticker=ticker,
         metric="enterprise_value",
         value=value,
-        formula=(
-            f"market capitalisation as of {market_cap.filed_date.isoformat()} "
-            "+ total debt − cash and equivalents"
-        ),
+        formula=_ev_formula(market_cap),
         sources=sources,
     )
 
@@ -1924,8 +1958,7 @@ def _ev_to_ebitda(latest: dict[str, Fact], ticker: str) -> Fact | None:
         metric="ev_to_ebitda",
         value=_ratio(enterprise_value, ebitda.value),
         formula=(
-            f"(market capitalisation as of {market_cap.filed_date.isoformat()} "
-            "+ total debt − cash and equivalents) ÷ EBITDA FY"
+            f"({_ev_formula(market_cap)}) ÷ EBITDA FY"
             f"{ebitda.fiscal_year or ebitda.period_end.year}"
         ),
         sources=(*sources, ebitda),
@@ -1952,8 +1985,7 @@ def _ev_to_sales(latest: dict[str, Fact], ticker: str) -> Fact | None:
         metric="ev_to_sales",
         value=_ratio(enterprise_value, revenue.value),
         formula=(
-            f"(market capitalisation as of {market_cap.filed_date.isoformat()} "
-            "+ total debt − cash and equivalents) ÷ revenue FY"
+            f"({_ev_formula(market_cap)}) ÷ revenue FY"
             f"{revenue.fiscal_year or revenue.period_end.year}"
         ),
         sources=(*sources, revenue),
