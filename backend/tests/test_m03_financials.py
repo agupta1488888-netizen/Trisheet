@@ -1368,3 +1368,53 @@ async def test_the_general_set_is_unchanged_for_an_operating_company() -> None:
     from app.config import METRIC_SPECS, SectorTemplate, metric_specs_for
 
     assert metric_specs_for(SectorTemplate.GENERAL) == METRIC_SPECS
+
+
+async def test_segments_carry_the_fiscal_year_of_the_period_they_cover(
+    stub_edgar: StubEdgarClient,
+) -> None:
+    """Without it a segment is extracted correctly and then never rendered.
+
+    Found live on Apple: forty-two segment facts — iPhone, Mac, iPad,
+    Wearables, Services, and every geography — extracted from the instance
+    document and dropped by the assembler, which keys its columns by fiscal
+    year and has nowhere to put a fact that carries none. The whole segment
+    table was missing from the report for that one field.
+    """
+    _register_instance(stub_edgar)
+    stub_edgar.register(
+        _facts_url(),
+        company_facts(
+            rows=[
+                annual_row(
+                    start="2023-10-01",
+                    end="2024-09-28",
+                    val=391_035_000_000,
+                    accn=APPLE_ACCESSION,
+                    filed="2024-11-01",
+                    fy=2024,
+                )
+            ]
+        ),
+    )
+
+    facts = await m03.extract_segments(make_company(), [make_filing()])
+
+    assert facts
+    assert {fact.fiscal_year for fact in facts} == {2024}
+
+
+async def test_segments_survive_a_fiscal_calendar_that_cannot_be_read(
+    stub_edgar: StubEdgarClient,
+) -> None:
+    """The map is an enrichment. Losing it must not lose the figures.
+
+    `extract_segments` fetches company facts to build the map, and that fetch
+    can fail independently of the instance document it already has in hand.
+    """
+    _register_instance(stub_edgar)  # No company facts registered.
+
+    facts = await m03.extract_segments(make_company(), [make_filing()])
+
+    assert facts
+    assert all(fact.value is not None for fact in facts)

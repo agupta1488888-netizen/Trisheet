@@ -272,8 +272,20 @@ async def extract_segments(
         )
         return []
 
+    # The filer's own fiscal-year map, so a segment figure lands in the same
+    # column as the consolidated revenue it subdivides. Company facts were
+    # fetched moments ago by `extract_financials` and the cache is permanent,
+    # so this costs a cache read rather than a request.
     try:
-        return await _extract_segments_from_filing(company, annual)
+        payload = await edgar.get_client().get_json(
+            edgar.company_facts_url(company.cik)
+        )
+        fiscal_years = _build_fiscal_year_index(_facts_root(payload))
+    except Exception:  # noqa: BLE001 — a missing map costs the column, not the run
+        fiscal_years = {}
+
+    try:
+        return await _extract_segments_from_filing(company, annual, fiscal_years)
     except Exception as cause:  # noqa: BLE001 — degradation is the whole point
         logger.warning(
             "Segment extraction failed; the report continues without it",
@@ -822,7 +834,9 @@ class _Context:
 
 
 async def _extract_segments_from_filing(
-    company: Company, filing: Filing
+    company: Company,
+    filing: Filing,
+    fiscal_years: Mapping[dt.date, int],
 ) -> list[Fact]:
     """Reads dimensional revenue facts out of one filing's XBRL instance."""
     client = edgar.get_client()
@@ -850,7 +864,9 @@ async def _extract_segments_from_filing(
         )
         return []
 
-    return _parse_segment_facts(company, filing, instance_url, body)
+    return _parse_segment_facts(
+        company, filing, instance_url, body, fiscal_years
+    )
 
 
 async def _find_instance_document(
@@ -902,7 +918,11 @@ async def _find_instance_document(
 
 
 def _parse_segment_facts(
-    company: Company, filing: Filing, instance_url: str, body: bytes
+    company: Company,
+    filing: Filing,
+    instance_url: str,
+    body: bytes,
+    fiscal_years: Mapping[dt.date, int],
 ) -> list[Fact]:
     """Parses segment revenue out of an XBRL instance document."""
     from lxml import etree
@@ -954,7 +974,12 @@ def _parse_segment_facts(
                 unit=units.get(element.get("unitRef") or ""),
                 period_start=context.period_start,
                 period_end=context.period_end,
-                fiscal_year=None,
+                # Without this the fact is extracted correctly and then
+                # dropped at render time: m12 keys its columns by fiscal
+                # year, so a segment carrying none has no column to sit in.
+                fiscal_year=_fiscal_year_for(
+                    context.period_end, fiscal_years
+                ),
                 segment_axis=axis,
                 segment_member=member,
                 segment_label=_humanise_member(member),
