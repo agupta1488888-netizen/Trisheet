@@ -217,3 +217,75 @@ def test_ladder_does_not_match_a_cross_reference_on_its_last_rung() -> None:
         "to the contents on page 3 for where each item begins.\n\n"
     )
     assert _locate_down_ladder(text, _LADDER_SPEC) is None
+
+
+# --- Risk headings -----------------------------------------------------------
+#
+# A live Apple 10-K yielded four headings out of a cap of twelve, from an item
+# that heads roughly thirty risks. The opener list only ever matched a heading
+# that began with "we", "our", "if" and a few others, and filers head risks
+# with their subject at least as often — those were all discarded.
+
+
+def _headings(*paragraphs: str) -> list[str]:
+    from app.modules.m04_narrative import _headings_in
+
+    return _headings_in("\n\n".join(paragraphs))
+
+
+def test_a_heading_that_leads_with_its_subject_is_kept() -> None:
+    """The case that was silently dropping most of a filer's risk list."""
+    kept = _headings(
+        "Cybersecurity incidents could materially harm the Company.",
+        "Regulatory changes may increase the cost of doing business.",
+        "Global economic conditions could adversely affect demand.",
+        "Component shortages would delay shipments of key products.",
+    )
+
+    assert len(kept) == 4
+
+
+def test_the_openers_that_already_worked_still_do() -> None:
+    """The claim markers are added beside the openers, not in place of them."""
+    kept = _headings(
+        "We depend on a concentrated group of manufacturing partners.",
+        "Our business is subject to seasonal fluctuations in demand.",
+        "If we are unable to attract qualified staff, growth will slow.",
+    )
+
+    assert len(kept) == 3
+
+
+def test_body_prose_is_still_not_mistaken_for_a_heading() -> None:
+    """The length ceiling and the one-sentence rule do this work.
+
+    Loosening where a marker may appear widens what reaches those two tests,
+    so they have to keep holding — a paragraph of body text mentioning "could"
+    must not become a risk in the report's list.
+    """
+    body = (
+        "The Company's results could be affected by many factors. Demand may "
+        "shift between quarters for reasons that are not always apparent in "
+        "advance, and the Company may be unable to respond quickly enough to "
+        "avoid a material effect on its results of operations, its financial "
+        "condition and the market price of its stock in any given period."
+    )
+
+    assert _headings(body) == []
+
+
+def test_a_heading_is_never_reported_twice() -> None:
+    heading = "Cybersecurity incidents could materially harm the Company."
+
+    assert _headings(heading, heading) == [heading]
+
+
+def test_the_cap_still_holds() -> None:
+    from app.config import MAX_RISK_ITEMS
+
+    many = [
+        f"Risk number {n} could materially harm the Company's results."
+        for n in range(MAX_RISK_ITEMS + 8)
+    ]
+
+    assert len(_headings(*many)) == MAX_RISK_ITEMS

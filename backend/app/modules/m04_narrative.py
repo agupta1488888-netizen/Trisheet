@@ -42,6 +42,7 @@ from app.config import (
     NARRATIVE_SPECS,
     NARRATIVE_SUMMARY_CHARS,
     NARRATIVE_TRUNCATION_NOTE,
+    RISK_HEADING_CLAIM_MARKERS,
     RISK_HEADING_MARKERS,
     RISK_HEADING_MAX_CHARS,
     RISK_HEADING_MIN_CHARS,
@@ -471,7 +472,12 @@ def _is_heading(candidate: str) -> bool:
     lowered = candidate.lower()
     if lowered.startswith("item "):
         return False
-    return any(lowered.startswith(marker) for marker in RISK_HEADING_MARKERS)
+    # Either the filer opened with one of the usual words, or the line states a
+    # consequence somewhere in it. The second test is what catches a heading
+    # that leads with its subject, which the opener list alone cannot see.
+    return any(
+        lowered.startswith(marker) for marker in RISK_HEADING_MARKERS
+    ) or any(marker in lowered for marker in RISK_HEADING_CLAIM_MARKERS)
 
 
 # --- Fact construction -------------------------------------------------------
