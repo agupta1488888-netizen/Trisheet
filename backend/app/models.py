@@ -1364,3 +1364,174 @@ class ChatSuggestions(WireModel):
     """
 
     suggestions: tuple[str, ...] = ()
+
+
+# --- Valuation ----------------------------------------------------------------
+# The workbench's contract. Everything here is a projection, and none of it is
+# a Fact: `Fact._check_invariants` requires an accession number, and a value
+# computed from a discount rate names no filing. What *is* real travels
+# separately, in `ValuationResponse.inputs`, as the document's own facts — so
+# the interface can cite an input exactly as it cites any other figure, and an
+# output has no source card precisely because there is no source.
+
+
+class ValuationMode(StrEnum):
+    """Which direction the calculation runs."""
+
+    #: Solve for the growth rate today's price implies. Assumes no forecast.
+    REVERSE = "reverse"
+    #: Project forward from assumptions the reader supplied.
+    FORWARD = "forward"
+
+
+class ValuationQuery(WireModel):
+    """Assumptions as they travel in the query string.
+
+    Rates are percentages as a reader would type them — 9 means 9% — because
+    the query string is user-facing and gets pasted into messages. The one
+    conversion to a fraction happens in `as_rates`, at this boundary, and
+    nowhere else.
+
+    Every field is optional and None means "the default", which is what an
+    absent parameter produces. A clean URL is therefore the default view.
+    """
+
+    mode: ValuationMode = ValuationMode.REVERSE
+    discount_rate_pct: float | None = Field(default=None, ge=0.0, le=60.0, alias="r")
+    fcf_growth_rate_pct: float | None = Field(
+        default=None, ge=-50.0, le=100.0, alias="g"
+    )
+    terminal_growth_rate_pct: float | None = Field(
+        default=None, ge=-5.0, le=10.0, alias="tg"
+    )
+    projection_years: int | None = Field(default=None, ge=1, le=15, alias="n")
+
+    def as_rates(self) -> tuple[float | None, float | None, float | None]:
+        """Discount, growth and terminal rates as fractions, or None each."""
+        return (
+            None if self.discount_rate_pct is None else self.discount_rate_pct / 100,
+            None
+            if self.fcf_growth_rate_pct is None
+            else self.fcf_growth_rate_pct / 100,
+            None
+            if self.terminal_growth_rate_pct is None
+            else self.terminal_growth_rate_pct / 100,
+        )
+
+
+class ValuationFigure(WireModel):
+    """A projected number and the text for it.
+
+    Carries `display` because the browser never scales, divides or formats a
+    figure — the same rule the document itself follows.
+    """
+
+    value: float
+    display: str
+    unit: str | None = None
+
+
+class AssumptionOut(WireModel):
+    """One modelling choice, named as the choice it is.
+
+    `source` is "default" for the fixed illustrative constant, "user_supplied"
+    when the reader chose it, and "solved" for the one the reverse calculation
+    worked out from the market's own valuation.
+    """
+
+    name: str
+    value: float
+    display: str
+    source: str
+    note: str
+
+
+class DcfEstimate(WireModel):
+    """A forward projection, and the real facts it rests on."""
+
+    enterprise_value: ValuationFigure | None = None
+    equity_value: ValuationFigure | None = None
+    value_per_share: ValuationFigure | None = None
+    projected_free_cash_flow: tuple[ValuationFigure, ...] = ()
+
+    base_fcf_fact_id: str | None = None
+    net_debt_fact_id: str | None = None
+    shares_fact_id: str | None = None
+
+    discount_rate: AssumptionOut
+    fcf_growth_rate: AssumptionOut
+    terminal_growth_rate: AssumptionOut
+    projection_years: int
+    unavailable_reason: str | None = None
+
+
+class ImpliedGrowth(WireModel):
+    """What the market's own valuation implies, solved rather than assumed."""
+
+    implied_growth_rate: AssumptionOut | None = None
+    market_cap: ValuationFigure | None = None
+
+    market_cap_fact_id: str | None = None
+    base_fcf_fact_id: str | None = None
+    net_debt_fact_id: str | None = None
+
+    discount_rate: AssumptionOut
+    terminal_growth_rate: AssumptionOut
+    projection_years: int
+    iterations: int = 0
+    converged: bool = False
+    #: "lower" or "upper" when the valuation lies outside the search bracket.
+    #: The bound is then reported as a bound, never extrapolated past.
+    bound_hit: str | None = None
+    unavailable_reason: str | None = None
+
+
+class SensitivityCell(WireModel):
+    """One cell of the grid. No fact id, by construction."""
+
+    discount_rate: AssumptionOut
+    fcf_growth_rate: AssumptionOut
+    value_per_share: ValuationFigure | None = None
+    equity_value: ValuationFigure | None = None
+
+
+class SensitivityGrid(WireModel):
+    """Value re-run across discount rate and growth at once.
+
+    Rows are `discount_rates`, columns are `fcf_growth_rates`, and `cells` is
+    row-major over the two. Empty with a reason when the base cell could not
+    be built — a partial grid beside a cell that could not be computed invites
+    a reader to fill the gap themselves.
+    """
+
+    discount_rates: tuple[AssumptionOut, ...] = ()
+    fcf_growth_rates: tuple[AssumptionOut, ...] = ()
+    cells: tuple[SensitivityCell, ...] = ()
+    unavailable_reason: str | None = None
+
+
+class ScenarioCase(WireModel):
+    """One named growth case and the estimate under it."""
+
+    name: str
+    fcf_growth_rate: AssumptionOut
+    estimate: DcfEstimate
+
+
+class ValuationResponse(WireModel):
+    """Everything the workbench renders for one set of assumptions."""
+
+    mode: ValuationMode
+    #: Every real fact the calculation rests on, as the document carries them,
+    #: so the browser can merge them into the provenance rail and cite each
+    #: exactly as it cites a filed figure. Ids are content-addressed, so they
+    #: resolve against an index the page already built.
+    inputs: tuple[DocumentFact, ...] = ()
+    implied: ImpliedGrowth | None = None
+    estimate: DcfEstimate | None = None
+    sensitivity: SensitivityGrid | None = None
+    scenarios: tuple[ScenarioCase, ...] = ()
+    #: Set when nothing could be computed at all, stating what was missing.
+    unavailable_reason: str | None = None
+    #: The standing statements the interface must show beside these figures.
+    notes: tuple[str, ...] = ()

@@ -1570,19 +1570,12 @@ async def _answer_valuation_question(
     cases. Both reuse `project_dcf` itself via `project_dcf_sensitivity` /
     `project_dcf_scenarios` in m07_analysis — no DCF maths lives twice.
     """
-    raw_facts = [fact for fact in all_facts if not fact.is_calculated]
     # `all_facts` may already carry the metrics `project_dcf` needs, computed
-    # once when the report itself was generated — the wider recompute below
-    # only fills in what the filer's own sector template left out, it does
-    # not replace what is already there.
-    wider = (
-        m07_analysis.analyse(
-            raw_facts, sic_code=None, groups=m07_analysis.ALL_METRIC_GROUPS
-        ).facts
-        if raw_facts
-        else ()
-    )
-    combined = [*all_facts, *wider]
+    # once when the report itself was generated. `widen` only fills in what
+    # the filer's own sector template left out; it never replaces what is
+    # already there. The valuation endpoint widens the same way, from the same
+    # function, so the two cannot answer one question differently.
+    combined = m07_analysis.widen(all_facts)
     facts_by_id = {fact.fact_id: fact for fact in combined}
 
     if _is_sensitivity_question(message):

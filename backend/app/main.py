@@ -20,11 +20,13 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
+from typing import Annotated
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app import valuation
 from app.config import (
     CHAT_RATE_LIMIT_MAX_TURNS,
     CHAT_RATE_LIMIT_WINDOW_MINUTES,
@@ -62,6 +64,8 @@ from app.models import (
     ResolveRequest,
     SuggestionsResponse,
     TickerSuggestion,
+    ValuationQuery,
+    ValuationResponse,
 )
 from app.modules import chat_agent, m01_resolver
 from app.pipeline import run as run_pipeline
@@ -545,6 +549,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return ChatSuggestions(
             suggestions=tuple(await chat_agent.suggest_questions(report_id))
         )
+
+    @app.get(
+        "/reports/{report_id}/valuation",
+        response_model=None,
+        tags=["reports"],
+    )
+    async def report_valuation(
+        report_id: str,
+        query: Annotated[ValuationQuery, Query()],
+    ) -> Response | ValuationResponse:
+        """Recomputes this report's valuation under one set of assumptions.
+
+        A GET, and deliberately so: it is idempotent, it is pure arithmetic
+        over facts already stored, and it lets the browser's query string and
+        this endpoint's query string be one schema — so a shared link and an
+        API call say the same thing without a second serialiser between them.
+
+        No rate limit. It reaches no model and no filing, and costs one
+        indexed read; the client debounces rather than the server throttling.
+        Nothing it returns is written back — a projection is not a fact, and
+        this report's compliance was settled before the question was asked.
+        """
+        report = runlog.get_report(report_id)
+        if report is None:
+            return _unknown_report()
+
+        if report.status is not ReportStatus.COMPLETE:
+            return _error(
+                409,
+                "valuation_unavailable",
+                "This report is still being generated. A valuation can be "
+                "built once it is complete.",
+                detail=str(report.status),
+            )
+
+        try:
+            return await valuation.build(report_id, query)
+        except valuation.FactsUnavailableError:
+            return _error(
+                410,
+                "facts_unavailable",
+                "This report's figures are no longer available to read, so "
+                "no valuation can be built from them.",
+            )
 
     @app.get("/reports/{report_id}/artifacts/{kind}", tags=["reports"])
     async def fetch_artifact(report_id: str, kind: ArtifactKind) -> Response:

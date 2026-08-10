@@ -2892,6 +2892,35 @@ DCF_REVERSE_VALUE_TOLERANCE = 1e-9
 #: reached — it exists so a solve cannot loop forever on a pathological input.
 DCF_REVERSE_MAX_ITERATIONS = 100
 
+# --- What the interface says beside a projection ------------------------------
+# Held here rather than in either consumer so that the assistant and the
+# workbench cannot word the same caveat two different ways. A reader who meets
+# the same figure in both places must meet the same statement about it.
+
+#: Shown under the workbench heading, always, and never dismissible.
+VALUATION_PROJECTION_NOTE = (
+    "Every figure in this section is a projection. The inputs it rests on are "
+    "filed figures, cited and sourced like the rest of this report. The "
+    "outputs are not: they carry no accession number, no filing date and no "
+    "source card, they are not counted toward this report's citation "
+    "coverage, and they change with the assumptions stated beside them."
+)
+
+#: Shown with the solved growth rate, which is the default view.
+VALUATION_REVERSE_NOTE = (
+    "Solved backwards from the market's own valuation: the free cash flow "
+    "growth rate at which a discounted cash flow equals today's market "
+    "capitalisation. It is not a forecast, and it is not assumption-free — a "
+    "discount rate and a terminal growth rate are still chosen, and both are "
+    "stated below."
+)
+
+#: States what this report does and does not do. The assistant says the same.
+VALUATION_NO_RECOMMENDATION_NOTE = (
+    "This is an estimate, not a recommendation — the report does not judge "
+    "whether the company is worth investing in."
+)
+
 # --- Company-website fetch (webfetch) -----------------------------------------
 # The one place besides edgar.py (sec.gov), m05_market.py (the configured
 # market provider), llm.py (Anthropic) and db.py (Supabase) that opens an

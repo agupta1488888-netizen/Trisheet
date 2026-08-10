@@ -360,6 +360,44 @@ def compute_derived_metrics(
     return list(analyse(facts, sic_code=sic_code).facts)
 
 
+def widen(facts: Sequence[Fact]) -> list[Fact]:
+    """The given facts plus every metric group's, not only this sector's.
+
+    A report is generated against its filer's sector template, which gates
+    some groups out. A caller answering a question afterwards may need one of
+    those — a discounted cash flow needs free cash flow whether or not the
+    template asked for it — so this recomputes the full set from the reported
+    facts and adds what was missing.
+
+    Additive, never replacing: what the report already derived stays, and is
+    listed first, so a figure the reader has already seen keeps its identity.
+
+    Pure. The caller does the loading; this only does the arithmetic.
+    """
+    reported = [fact for fact in facts if not fact.is_calculated]
+    if not reported:
+        return list(facts)
+    wider = analyse(reported, sic_code=None, groups=ALL_METRIC_GROUPS).facts
+    return [*facts, *wider]
+
+
+def render_amount(
+    value: float, currency: str | None
+) -> tuple[float, str, str | None]:
+    """An amount as this module renders every other amount.
+
+    Public so that a caller crossing the HTTP boundary renders a figure the
+    same way the document does. The browser never scales, divides or formats
+    a number; it receives one already rendered.
+    """
+    return _render(_Kind.CURRENCY, value, currency)
+
+
+def render_rate(value: float) -> tuple[float, str, str | None]:
+    """A rate held as a fraction, rendered as the percentage a reader reads."""
+    return _render(_Kind.PERCENT, value * PERCENT_SCALE, None)
+
+
 # --- Discounted cash flow ----------------------------------------------------
 # A scenario, not a fact. `Fact` cannot exist without provenance (models.py's
 # `_check_invariants`), and a discount rate or a growth assumption names no
