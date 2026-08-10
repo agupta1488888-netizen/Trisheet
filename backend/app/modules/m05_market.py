@@ -60,6 +60,7 @@ from app.config import (
     MARKET_ACCESSION_TEMPLATE,
     MARKET_CACHE_TTL_SECONDS,
     MARKET_CAP_LABEL,
+    MARKET_CAP_MAX_SHARE_COUNT_AGE_DAYS,
     MARKET_CAP_METRIC,
     MARKET_CAP_PRICE_METRIC,
     MARKET_CAP_SHARE_COUNT_METRICS,
@@ -481,17 +482,37 @@ def derive_market_cap(facts: Sequence[Fact]) -> Fact | None:
     if _latest(facts, MARKET_CAP_METRIC) is not None or price is None:
         return None
 
-    shares = next(
-        (
-            found
-            for metric in MARKET_CAP_SHARE_COUNT_METRICS
-            if (found := _latest(facts, metric)) is not None
-        ),
-        None,
-    )
-    if shares is None or price.value is None or shares.value is None:
+    # Most recent first, preference only breaking a tie. See the note on
+    # MARKET_CAP_SHARE_COUNT_METRICS: order alone picked a 2010 count for a
+    # dual-class filer whose current counts are tagged per class.
+    candidates = [
+        (found, rank)
+        for rank, metric in enumerate(MARKET_CAP_SHARE_COUNT_METRICS)
+        if (found := _latest(facts, metric)) is not None
+    ]
+    if not candidates or price.value is None:
         return None
-    if shares.value <= 0:
+    shares = min(
+        candidates,
+        key=lambda pair: (-pair[0].period_end.toordinal(), pair[1]),
+    )[0]
+
+    if shares.value is None or shares.value <= 0:
+        return None
+
+    # A count that predates the quote by years describes a different company.
+    # The multiplication still works; the answer is not a capitalisation.
+    age_days = (price.period_end - shares.period_end).days
+    if age_days > MARKET_CAP_MAX_SHARE_COUNT_AGE_DAYS:
+        logger.info(
+            "Market capitalisation not derived: the share count is too old to "
+            "multiply by this price",
+            extra={
+                "share_count_date": shares.period_end.isoformat(),
+                "quote_date": price.period_end.isoformat(),
+                "age_days": age_days,
+            },
+        )
         return None
 
     # A quote in one currency against a share count from accounts kept in

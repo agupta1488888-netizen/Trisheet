@@ -273,3 +273,64 @@ def test_a_share_count_alone_does_not_look_like_a_currency() -> None:
     derived = m05_market.derive_market_cap([price_fact(), share_fact()])
 
     assert derived is not None
+
+
+def test_the_most_recent_share_count_wins_over_the_preferred_one() -> None:
+    """Found live on Mastercard and Comcast, both badly wrong.
+
+    A dual-class filer tags its current cover-page counts per share class, so
+    the undimensioned bucket company facts serves keeps only the values from
+    before the classes existed. Mastercard's is dated 2010 and Comcast's 2009.
+    Preferring the cover count unconditionally multiplied a fifteen-year-old
+    count by a live quote and produced a capitalisation seven times too small —
+    the exact failure the preference was introduced to avoid, inverted.
+    """
+    stale_cover = share_fact(value=122_530_193.0, period_end=dt.date(2010, 10, 27))
+    current = share_fact(
+        metric="income.shares_diluted",
+        value=906_000_000.0,
+        period_end=dt.date(2025, 12, 31),
+    )
+
+    derived = m05_market.derive_market_cap(
+        [price_fact(value=561.0), stale_cover, current]
+    )
+
+    assert derived is not None
+    assert derived.value == 561.0 * 906_000_000.0
+
+
+def test_preference_still_settles_a_tie_on_the_same_date() -> None:
+    """Recency decides first; the order decides only when dates match.
+
+    A point-in-time count is the right figure to multiply by a price, so where
+    both are current the cover count still wins over the weighted average.
+    """
+    same_day = dt.date(2025, 12, 31)
+    cover = share_fact(value=1_000.0, period_end=same_day)
+    diluted = share_fact(
+        metric="income.shares_diluted", value=2_000.0, period_end=same_day
+    )
+
+    derived = m05_market.derive_market_cap([price_fact(), diluted, cover])
+
+    assert derived is not None
+    assert derived.value == 309.38 * 1_000.0
+
+
+def test_a_share_count_older_than_the_ceiling_is_refused() -> None:
+    """The multiplication still works. The answer is not a capitalisation."""
+    ancient = share_fact(period_end=dt.date(2009, 12, 31))
+
+    assert m05_market.derive_market_cap([price_fact(), ancient]) is None
+
+
+def test_a_count_from_the_last_annual_filing_is_still_current_enough() -> None:
+    """An annual filer's count is the best available until the next one."""
+    a_year_ago = dt.date(AS_OF.year - 1, AS_OF.month, AS_OF.day)
+
+    derived = m05_market.derive_market_cap(
+        [price_fact(), share_fact(period_end=a_year_ago)]
+    )
+
+    assert derived is not None

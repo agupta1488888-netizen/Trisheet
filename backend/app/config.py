@@ -2299,13 +2299,35 @@ MARKET_CAP_LABEL = "Market capitalisation"
 #: unavailable.
 MARKET_CAP_PRICE_METRIC = "market.price"
 
-#: Share counts tried in order, most current first. The cover page states its
-#: count as at the filing date and the balance sheet as at period end, so the
-#: cover count is the closer match for a figure multiplied by today's price.
+#: Share counts a capitalisation may be built from, in preference order — but
+#: preference only settles a tie. The count actually used is whichever is most
+#: recent, because the figure it multiplies is today's price.
+#:
+#: The order alone is not safe. A dual-class filer tags its current cover-page
+#: counts per share class, so the undimensioned bucket company facts serves
+#: keeps only the values from before the classes existed: Mastercard's is dated
+#: 2010 and Comcast's 2009. Preferring the cover count unconditionally took a
+#: fifteen-year-old count and multiplied it by a live quote, which is the very
+#: failure the preference was introduced to avoid, inverted.
+#:
+#: The diluted average is last and is a compromise: it is a weighted average
+#: over a period rather than a count on a date, so it misstates a filer that
+#: moved its share count during the year. It earns its place because for a
+#: dual-class filer it is often the only current count there is, and a figure a
+#: few per cent out beats no valuation at all. The formula names which count
+#: was used and when, so the compromise is visible rather than hidden.
 MARKET_CAP_SHARE_COUNT_METRICS = (
     "balance.shares_outstanding_cover",
     "balance.shares_outstanding",
+    "income.shares_diluted",
 )
+
+#: How stale a share count may be before it stops describing the company whose
+#: price it is multiplied by. A year plus filing lag: an annual filer's count is
+#: current at its year end and stays the best available until the next one.
+#: Beyond this the arithmetic still works and the answer is not a market
+#: capitalisation.
+MARKET_CAP_MAX_SHARE_COUNT_AGE_DAYS = 400
 
 # --- Prose generation (m10) -------------------------------------------------
 # The model receives Fact objects and nothing else. No raw filing text, no web
