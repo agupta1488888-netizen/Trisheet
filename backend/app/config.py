@@ -90,6 +90,11 @@ EDGAR_CACHE_DIR_NAME = ".edgar_cache"
 #: Tried in order. Foreign private issuers fall through to IFRS.
 XBRL_TAXONOMY_PREFERENCE = ("us-gaap", "ifrs-full")
 
+#: The cover page taxonomy, tried after the statement taxonomies above and kept
+#: out of `XBRL_TAXONOMY_PREFERENCE` deliberately: `dei` carries entity facts,
+#: not financial ones, so it must not be walked when indexing fiscal periods.
+XBRL_COVER_PAGE_TAXONOMY = "dei"
+
 #: Monetary concepts tried, in order, to discover a filer's reporting currency
 #: from its XBRL unit keys. Assets is used because virtually every filer in
 #: either taxonomy reports it.
@@ -254,10 +259,15 @@ def sector_template_for_sic(sic_code: str | None) -> SectorTemplate:
 class MetricSpec:
     """One extractable figure and every tag that might carry it.
 
-    `us_gaap_tags` and `ifrs_tags` are ordered fallback lists: the first tag
-    that resolves wins and is recorded on the resulting Fact. A tag is never
-    inlined at a call site, so adding a filer's preferred tag is a change here
-    and nowhere else.
+    `us_gaap_tags`, `ifrs_tags` and `dei_tags` are ordered fallback lists: the
+    first tag that resolves wins and is recorded on the resulting Fact. A tag is
+    never inlined at a call site, so adding a filer's preferred tag is a change
+    here and nowhere else.
+
+    `dei_tags` names the cover page rather than the statements. Almost no metric
+    has one — a cover page carries entity facts, not financial ones — but where
+    it does, it is often the more current figure, because the cover is dated at
+    filing while the balance sheet is dated at period end.
     """
 
     metric: str
@@ -266,9 +276,15 @@ class MetricSpec:
     period_type: Literal["duration", "instant"]
     us_gaap_tags: tuple[str, ...]
     ifrs_tags: tuple[str, ...] = ()
+    dei_tags: tuple[str, ...] = ()
     #: True when a filer may legitimately not report it, so its absence is
     #: expected rather than a gap worth flagging.
     optional: bool = False
+    #: True for an instant measured at the filing date rather than at a period
+    #: end — a cover page count, not a balance sheet one. Such a figure is
+    #: exempt from the fiscal-year-end filter, which would otherwise discard it
+    #: for the very reason it is useful: it is not dated at a year end.
+    at_filing_date: bool = False
     #: Templates this metric is extracted for. Empty means every filer. A
     #: software company is never searched for a combined ratio, so the absence
     #: of one is never reported as a gap.
@@ -280,6 +296,8 @@ class MetricSpec:
             return self.us_gaap_tags
         if taxonomy == "ifrs-full":
             return self.ifrs_tags
+        if taxonomy == XBRL_COVER_PAGE_TAXONOMY:
+            return self.dei_tags
         return ()
 
     def applies_to(self, template: SectorTemplate) -> bool:
@@ -459,6 +477,33 @@ METRIC_SPECS: tuple[MetricSpec, ...] = (
         ifrs_tags=("CashAndCashEquivalents",),
     ),
     MetricSpec(
+        metric="balance.marketable_securities_current",
+        label="Short-term marketable securities",
+        period_type="instant",
+        us_gaap_tags=(
+            "MarketableSecuritiesCurrent",
+            "ShortTermInvestments",
+            "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+            "OtherShortTermInvestments",
+        ),
+        # IFRS has no single settled equivalent — the nearest concepts fold in
+        # holdings a US filer would report elsewhere. A tag that is nearly right
+        # is worse than a gap, because the gap is visible and the near miss is
+        # not.
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.marketable_securities_noncurrent",
+        label="Long-term marketable securities",
+        period_type="instant",
+        us_gaap_tags=(
+            "MarketableSecuritiesNoncurrent",
+            "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
+            "LongTermInvestments",
+        ),
+        optional=True,
+    ),
+    MetricSpec(
         metric="balance.inventory",
         label="Inventory",
         period_type="instant",
@@ -574,6 +619,20 @@ METRIC_SPECS: tuple[MetricSpec, ...] = (
         optional=True,
     ),
     MetricSpec(
+        metric="balance.shares_outstanding_cover",
+        label="Shares outstanding, cover page",
+        period_type="instant",
+        # Deliberately a separate metric rather than a rung on the one above.
+        # The cover page states the count as at the filing date; the balance
+        # sheet states it as at period end. They are two measurements on two
+        # dates, and collapsing them into one ladder would let the cover date —
+        # always the more recent — evict the entire multi-year series.
+        us_gaap_tags=(),
+        dei_tags=("EntityCommonStockSharesOutstanding",),
+        at_filing_date=True,
+        optional=True,
+    ),
+    MetricSpec(
         metric="cashflow.operating",
         label="Net cash from operating activities",
         period_type="duration",
@@ -636,6 +695,204 @@ METRIC_SPECS: tuple[MetricSpec, ...] = (
             "PaymentsForRepurchaseOfEquity",
         ),
         ifrs_tags=("PaymentsToAcquireOrRedeemEntitysShares",),
+        optional=True,
+    ),
+    # --- Balance sheet, beyond the face of the statement ---------------------
+    # Everything below is optional: a filer that holds no goodwill is not
+    # withholding one. What they have in common is that a reader assessing
+    # financial position asks for them and the statements above cannot answer
+    # — an asset base with no property, plant or equipment in it says nothing
+    # about how capital-intensive a business is.
+    MetricSpec(
+        metric="balance.ppe_net",
+        label="Property, plant and equipment, net",
+        period_type="instant",
+        us_gaap_tags=(
+            "PropertyPlantAndEquipmentNet",
+            "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization",
+        ),
+        ifrs_tags=("PropertyPlantAndEquipment",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.goodwill",
+        label="Goodwill",
+        period_type="instant",
+        us_gaap_tags=("Goodwill",),
+        ifrs_tags=("Goodwill",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.intangibles",
+        label="Intangible assets",
+        period_type="instant",
+        us_gaap_tags=(
+            "IntangibleAssetsNetExcludingGoodwill",
+            "FiniteLivedIntangibleAssetsNet",
+        ),
+        ifrs_tags=("IntangibleAssetsOtherThanGoodwill",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.deferred_revenue",
+        label="Deferred revenue",
+        period_type="instant",
+        us_gaap_tags=(
+            "ContractWithCustomerLiabilityCurrent",
+            "DeferredRevenueCurrent",
+        ),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.commercial_paper",
+        label="Commercial paper",
+        period_type="instant",
+        # Split out from short-term debt because it is the part that has to be
+        # rolled continuously, which is a different exposure from a term loan
+        # of the same size.
+        us_gaap_tags=("CommercialPaper", "CommercialPaperAtCarryingValue"),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.lease_liability_current",
+        label="Operating lease liabilities, current",
+        period_type="instant",
+        us_gaap_tags=("OperatingLeaseLiabilityCurrent",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.lease_liability_noncurrent",
+        label="Operating lease liabilities, non-current",
+        period_type="instant",
+        us_gaap_tags=("OperatingLeaseLiabilityNoncurrent",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.rou_asset",
+        label="Operating lease right-of-use assets",
+        period_type="instant",
+        us_gaap_tags=("OperatingLeaseRightOfUseAsset",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.retained_earnings",
+        label="Retained earnings",
+        period_type="instant",
+        us_gaap_tags=("RetainedEarningsAccumulatedDeficit",),
+        ifrs_tags=("RetainedEarnings",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.treasury_stock",
+        label="Treasury stock",
+        period_type="instant",
+        us_gaap_tags=("TreasuryStockValue", "TreasuryStockCommonValue"),
+        ifrs_tags=("TreasuryShares",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.aoci",
+        label="Accumulated other comprehensive income",
+        period_type="instant",
+        us_gaap_tags=("AccumulatedOtherComprehensiveIncomeLossNetOfTax",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.minority_interest",
+        label="Non-controlling interests",
+        period_type="instant",
+        us_gaap_tags=("MinorityInterest",),
+        ifrs_tags=("NoncontrollingInterests",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.preferred_stock",
+        label="Preferred stock",
+        period_type="instant",
+        us_gaap_tags=("PreferredStockValue",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="balance.unrecognised_tax_benefits",
+        label="Unrecognised tax benefits",
+        period_type="instant",
+        us_gaap_tags=("UnrecognizedTaxBenefits",),
+        optional=True,
+    ),
+    # --- Cash flow reconciliation --------------------------------------------
+    # The bridge from net income to cash from operations. Without it a reader
+    # can see that the two differ and not why, which is the whole of the
+    # earnings-quality question.
+    MetricSpec(
+        metric="cashflow.stock_based_compensation",
+        label="Stock-based compensation",
+        period_type="duration",
+        us_gaap_tags=("ShareBasedCompensation",),
+        ifrs_tags=("AdjustmentsForSharebasedPayments",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="cashflow.deferred_taxes",
+        label="Deferred income taxes",
+        period_type="duration",
+        us_gaap_tags=("DeferredIncomeTaxExpenseBenefit",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="cashflow.acquisitions",
+        label="Acquisitions, net of cash acquired",
+        period_type="duration",
+        us_gaap_tags=(
+            "PaymentsToAcquireBusinessesNetOfCashAcquired",
+            "PaymentsToAcquireBusinessesAndInterestInAffiliatesNetOfCashAcquired",
+        ),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="cashflow.securities_purchased",
+        label="Purchases of marketable securities",
+        period_type="duration",
+        us_gaap_tags=(
+            "PaymentsToAcquireAvailableForSaleSecuritiesDebt",
+            "PaymentsToAcquireInvestments",
+        ),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="cashflow.securities_matured",
+        label="Maturities and sales of marketable securities",
+        period_type="duration",
+        us_gaap_tags=(
+            "ProceedsFromMaturitiesPrepaymentsAndCallsOfAvailableForSaleSecurities",
+            "ProceedsFromSaleMaturityAndCollectionsOfInvestments",
+        ),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="cashflow.debt_issued",
+        label="Debt issued",
+        period_type="duration",
+        us_gaap_tags=("ProceedsFromIssuanceOfLongTermDebt",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="cashflow.debt_repaid",
+        label="Debt repaid",
+        period_type="duration",
+        us_gaap_tags=("RepaymentsOfLongTermDebt",),
+        optional=True,
+    ),
+    MetricSpec(
+        metric="income.other_income_expense",
+        label="Other income and expense, net",
+        period_type="duration",
+        # Closes the gap a reader can otherwise see but not explain: operating
+        # income and income before tax differ, and nothing on the statement
+        # above says by what.
+        us_gaap_tags=(
+            "NonoperatingIncomeExpense",
+            "OtherNonoperatingIncomeExpense",
+        ),
         optional=True,
     ),
 )
@@ -1736,6 +1993,28 @@ RISK_HEADING_MARKERS = (
     "risks",
 )
 
+#: Recognised anywhere in the line rather than only at its start.
+#:
+#: Filers routinely head a risk with its subject — "Cybersecurity incidents
+#: could materially harm the Company" — which opens with none of the words
+#: above and was therefore dropped, taking most of a filer's risk list with it.
+#: What such a heading always carries is the consequence: a modal verb and a
+#: word for the damage. Paired with the length ceiling and the one-sentence
+#: rule, that identifies a heading without admitting the body prose beneath it,
+#: which is longer and rarely stops at a single clause.
+RISK_HEADING_CLAIM_MARKERS = (
+    "could",
+    "may ",
+    "might",
+    "would",
+    "adversely",
+    "materially",
+    "harm",
+    "unable to",
+    "fail",
+    "risk",
+)
+
 #: Exhibits searched for a narrative item when the primary document did not
 #: contain it. A 40-F wraps its annual information form as an exhibit, and
 #: some 10-K filers carry Item 1 the same way. Bounded because each exhibit
@@ -1890,6 +2169,26 @@ MARKET_METRIC_PREFIXES = ("market.", "valuation.")
 #: filing behind it, and the field is required — so it names the provider and
 #: the moment the figure was read, which is the whole of its provenance.
 MARKET_ACCESSION_TEMPLATE = "MARKET-{provider}-{as_of}"
+
+#: The capitalisation metric, named once so the module that reads a provider's
+#: figure and the function that derives one cannot disagree about either.
+MARKET_CAP_METRIC = "market.market_cap"
+MARKET_CAP_LABEL = "Market capitalisation"
+
+#: What a derived capitalisation multiplies. Neither endpoint in
+#: `MARKET_PROVIDER_CHAIN` returns a capitalisation — Yahoo's chart metadata
+#: carries none and Stooq's quote CSV has no such column — so without this the
+#: metric is never populated at all, and every multiple built on it is silently
+#: unavailable.
+MARKET_CAP_PRICE_METRIC = "market.price"
+
+#: Share counts tried in order, most current first. The cover page states its
+#: count as at the filing date and the balance sheet as at period end, so the
+#: cover count is the closer match for a figure multiplied by today's price.
+MARKET_CAP_SHARE_COUNT_METRICS = (
+    "balance.shares_outstanding_cover",
+    "balance.shares_outstanding",
+)
 
 # --- Prose generation (m10) -------------------------------------------------
 # The model receives Fact objects and nothing else. No raw filing text, no web
@@ -2102,6 +2401,12 @@ PROSE_YEAR_MAX = 2100
 #: Every figure in the report must resolve to a fact. Coverage below this fails
 #: the gate. It is 1.0 because "most figures are sourced" is not the product.
 REQUIRED_CITATION_COVERAGE = 1.0
+
+#: Shown in place of a percentage when there were no prose figures to check.
+#: Coverage is measured over written passages, so a report generated without
+#: them has nothing to measure — and "100%" would be a score claimed for work
+#: that was never done, which is the one thing this gate exists to prevent.
+COVERAGE_NOT_MEASURED_TEXT = "not measured"
 
 
 @dataclass(frozen=True, slots=True)
@@ -2447,6 +2752,39 @@ DCF_SCENARIO_FCF_GROWTH_DELTAS: dict[str, float] = {
     "bull": 0.02,
 }
 
+#: Free-cash-flow growth offsets for the second axis of a two-dimensional
+#: sensitivity grid, alongside `DCF_SENSITIVITY_DISCOUNT_RATE_STEPS`. Same
+#: reasoning: fixed, illustrative, never fitted to the filer.
+DCF_SENSITIVITY_FCF_GROWTH_STEPS: tuple[float, ...] = (-0.02, -0.01, 0.0, 0.01, 0.02)
+
+# --- The implied-growth solver ------------------------------------------------
+# The reverse of the projection above: instead of assuming a growth rate and
+# reporting a value, it takes the market's own valuation as given and reports
+# the growth rate that would justify it. That removes the least defensible
+# assumption in a discounted cash flow — the one about the future — and leaves
+# a statement about the present: this is what the price implies.
+#
+# It removes one assumption, not all of them. A discount rate and a terminal
+# growth rate are still chosen, and both are still labelled as choices.
+
+#: Search bracket for the solve. Wide enough to bracket any valuation a real
+#: filer trades at, and closed on both sides so that a price outside it is
+#: reported as outside it rather than extrapolated to a number no reader
+#: should act on.
+DCF_REVERSE_GROWTH_MIN = -0.50
+DCF_REVERSE_GROWTH_MAX = 0.60
+
+#: The bisection stops when the bracket is narrower than this. 1e-6 on a rate
+#: is four decimal places of a percentage — finer than any rendered figure.
+DCF_REVERSE_RATE_TOLERANCE = 1e-6
+
+#: Or earlier, when the equity value is this close, relatively, to the market's.
+DCF_REVERSE_VALUE_TOLERANCE = 1e-9
+
+#: log2(1.10 / 1e-6) is about 20, so this is a ceiling that should never be
+#: reached — it exists so a solve cannot loop forever on a pathological input.
+DCF_REVERSE_MAX_ITERATIONS = 100
+
 # --- Company-website fetch (webfetch) -----------------------------------------
 # The one place besides edgar.py (sec.gov), m05_market.py (the configured
 # market provider), llm.py (Anthropic) and db.py (Supabase) that opens an
@@ -2510,6 +2848,104 @@ CHAT_RATE_LIMIT_MAX_TURNS = 50
 
 #: The rolling window `CHAT_RATE_LIMIT_MAX_TURNS` applies over.
 CHAT_RATE_LIMIT_WINDOW_MINUTES = 10
+
+# --- Live filing feed ---------------------------------------------------------
+# The landing page's feed of recent filings, kept warm by a background poller
+# so that a visitor costs no EDGAR requests at all.
+#
+# The obvious implementation — poll each tracked company's submissions document
+# — costs one request per company per cycle, which would consume the entire SEC
+# budget and starve the report pipeline. Two cheaper lanes are used instead, and
+# neither scales with the size of the tracked universe:
+#
+#   Fast lane      EDGAR's current-events feed returns the newest filings across
+#                  every filer in one request per form. Filtering to the tracked
+#                  universe happens in memory, after the response arrives.
+#   Reconciliation The daily form index is one file covering an entire day, and
+#                  catches anything that scrolled off the fast lane's window
+#                  during a burst of filings.
+#
+# Both lanes share the EDGAR token bucket with the report pipeline, so the
+# global 10 req/s ceiling holds without any change to the client.
+
+#: Forms the feed tracks. A subset of `PERMITTED_FORMS`: the forms that report
+#: something a reader would want to hear about, minus the ones that are only
+#: meaningful inside a full report (DEF 14A).
+FEED_FORMS: tuple[str, ...] = ("8-K", "10-Q", "10-K", "6-K")
+
+#: What each tracked form is, in plain language, for a filing whose own item
+#: numbers do not describe it. A 10-Q says nothing about itself beyond being a
+#: 10-Q, so this is the whole headline for one; an 8-K carries items, and those
+#: are used in preference to this.
+FEED_FORM_LABELS: dict[str, str] = {
+    "8-K": "Current report",
+    "10-Q": "Quarterly report",
+    "10-K": "Annual report",
+    "6-K": "Report of a foreign private issuer",
+}
+
+#: Appended to a headline when the filing amends an earlier one. A restatement
+#: is not the same event as the original and must not read as one.
+FEED_AMENDMENT_SUFFIX = " (amended)"
+
+#: EDGAR's current-events feed, newest filings first across all filers.
+#: `output=atom` yields the same parseable XML the SIC browser returns.
+SEC_CURRENT_EVENTS_URL_TEMPLATE = (
+    "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={form}"
+    "&company=&dateb=&owner=include&count={count}&output=atom"
+)
+
+#: Entries requested per form. EDGAR's own ceiling for this endpoint is 100.
+FEED_CURRENT_EVENTS_COUNT = 100
+
+#: One fixed-width text file listing every filing accepted on a given day.
+SEC_DAILY_INDEX_URL_TEMPLATE = (
+    "https://www.sec.gov/Archives/edgar/daily-index/{year}/QTR{quarter}/"
+    "form.{date}.idx"
+)
+
+#: Between fast-lane cycles while EDGAR is publishing. Short enough that a
+#: hundred-entry window cannot fill before it is read again on a normal day.
+FEED_POLL_INTERVAL_SECONDS = 90.0
+
+#: Between reconciliation sweeps of the daily index.
+FEED_RECONCILE_INTERVAL_SECONDS = 1_800.0
+
+#: Between cycles outside EDGAR's publishing hours. Nothing is filed then, so
+#: polling at the fast interval would spend the SEC budget on an unchanged feed.
+FEED_IDLE_INTERVAL_SECONDS = 900.0
+
+#: EDGAR accepts and disseminates filings on business days between these hours,
+#: Eastern time. Outside them the poller drops to `FEED_IDLE_INTERVAL_SECONDS`.
+FEED_EDGAR_OPEN_HOUR_ET = 6
+FEED_EDGAR_CLOSE_HOUR_ET = 22
+
+#: EDGAR publishes on Eastern time regardless of where this process runs, so
+#: the schedule above is evaluated against this zone and never against local
+#: time — a Railway container in UTC would otherwise idle through the entire
+#: American filing day.
+FEED_TIMEZONE = "America/New_York"
+
+#: Press releases read per cycle. Each costs two requests (the filing index and
+#: the exhibit), so this is the feed's real claim on the EDGAR budget. Kept low
+#: deliberately: enrichment upgrades an item that is already visible, so
+#: spreading a burst of earnings 8-Ks over several cycles costs nothing a reader
+#: would notice, while a burst fetched all at once would delay a user's report.
+FEED_ENRICHMENT_MAX_PER_CYCLE = 4
+
+#: Items older than this are dropped on the reconciliation sweep. The feed is a
+#: recency surface; a filing from last quarter belongs in a report, not here.
+FEED_RETENTION_DAYS = 30
+
+#: Ceiling on `GET /feed?limit=`, so a caller cannot ask for the whole table.
+FEED_PAGE_MAX = 50
+
+#: Returned by `GET /feed` when the caller names no limit.
+FEED_PAGE_DEFAULT = 12
+
+#: Consecutive failed cycles before the poller stops logging each one at
+#: warning. A sustained EDGAR outage should say so once, not every 90 seconds.
+FEED_FAILURE_LOG_CEILING = 3
 
 # --- Report creation rate limiting --------------------------------------------
 # `POST /reports` has no auth either, and a report costs far more than a chat
@@ -2594,6 +3030,13 @@ class Settings(BaseSettings):
     #: attempt to JSON-decode it, which is a common source of startup failure.
     cors_allowed_origins: str = "http://localhost:3000"
 
+    #: Whether the background filing poller runs. On by default, because a
+    #: deployed landing page with a permanently empty feed is worse than no
+    #: feed at all — but switchable per environment so a developer working on
+    #: something else is not making SEC requests every 90 seconds, and so a
+    #: production incident can stop the polling without a code deploy.
+    feed_enabled: bool = True
+
     @property
     def cors_origins(self) -> list[str]:
         """Allowed browser origins, parsed from the comma-separated setting."""
@@ -2614,6 +3057,21 @@ class Settings(BaseSettings):
     def edgar_configured(self) -> bool:
         """EDGAR is the only hard dependency; startup checks this."""
         return bool(self.edgar_contact_email)
+
+    @property
+    def feed_configured(self) -> bool:
+        """Whether the poller has everything it needs to run.
+
+        Both conditions are real: without a contact email SEC refuses every
+        request, and without a database there is nowhere to put what comes
+        back. Unlike a report — which can run against EDGAR alone and hold its
+        run record in memory — a feed that cannot persist has no purpose, since
+        nothing would survive to be read by the next request.
+        """
+        return self.feed_enabled and self.edgar_configured and bool(
+            self.supabase_url.strip()
+            and self.supabase_service_role_key.get_secret_value().strip()
+        )
 
 
 @lru_cache(maxsize=1)
