@@ -37,6 +37,7 @@ Degradation
 Public interface
     fetch_market_data(company) -> list[Fact]
     fetch_quote(ticker) -> MarketQuote | None
+    derive_market_cap(facts) -> Fact | None
     clear_cache() -> None
 """
 
@@ -48,7 +49,7 @@ import datetime as dt
 import io
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -57,6 +58,10 @@ import httpx
 from app.config import (
     MARKET_ACCESSION_TEMPLATE,
     MARKET_CACHE_TTL_SECONDS,
+    MARKET_CAP_LABEL,
+    MARKET_CAP_METRIC,
+    MARKET_CAP_PRICE_METRIC,
+    MARKET_CAP_SHARE_COUNT_METRICS,
     MARKET_MAX_ATTEMPTS_PER_PROVIDER,
     MARKET_METRIC_PREFIXES,
     MARKET_PROVIDER_CHAIN,
@@ -136,9 +141,7 @@ _MARKET_METRICS: tuple[_MetricSpec, ...] = (
         "fifty_two_week_low",
         "currency",
     ),
-    _MetricSpec(
-        "market.market_cap", "Market capitalisation", "market_cap", "currency"
-    ),
+    _MetricSpec(MARKET_CAP_METRIC, MARKET_CAP_LABEL, "market_cap", "currency"),
     _MetricSpec("market.volume", "Volume", "volume", "count"),
 )
 
@@ -449,6 +452,91 @@ async def fetch_market_data(company: Company) -> list[Fact]:
         },
     )
     return facts
+
+
+def derive_market_cap(facts: Sequence[Fact]) -> Fact | None:
+    """Market capitalisation, for the usual case where no provider reports one.
+
+    Share price times shares outstanding. Neither endpoint in the provider
+    chain returns a capitalisation of its own — Yahoo's chart metadata carries
+    none, Stooq's quote CSV has no such column — so in practice this is how the
+    metric comes to exist at all, and every multiple built on it depends on it.
+
+    Tier 3, because a derived figure is no more trustworthy than its least
+    trustworthy input, and dated at the quote rather than at the balance sheet:
+    a capitalisation is "as of" a price, and the share count is the standing
+    figure that price multiplies.
+
+    Pure. Takes facts, returns a fact, touches no provider and no network — it
+    lives here rather than in m07 because the `market.` namespace, its
+    rendering and the wall that keeps it out of section 3 all belong to this
+    module, and a second renderer would put the same metric on two scales.
+
+    Returns None when a provider did report one — a figure read from a source
+    beats one assembled from two — and when either input is missing or the
+    share count is not positive. A share count is never estimated.
+    """
+    price = _latest(facts, MARKET_CAP_PRICE_METRIC)
+    if _latest(facts, MARKET_CAP_METRIC) is not None or price is None:
+        return None
+
+    shares = next(
+        (
+            found
+            for metric in MARKET_CAP_SHARE_COUNT_METRICS
+            if (found := _latest(facts, metric)) is not None
+        ),
+        None,
+    )
+    if shares is None or price.value is None or shares.value is None:
+        return None
+    if shares.value <= 0:
+        return None
+
+    if not _is_market_metric(MARKET_CAP_METRIC):
+        logger.error(
+            "Refusing to emit a non-market metric from the market module",
+            extra={"metric": MARKET_CAP_METRIC},
+        )
+        return None
+
+    return Fact(
+        metric=MARKET_CAP_METRIC,
+        label=MARKET_CAP_LABEL,
+        value=price.value * shares.value,
+        display_value=_format(price.value * shares.value, "currency", price.unit),
+        unit=price.unit,
+        period_start=None,
+        period_end=price.period_end,
+        # No fiscal year. A capitalisation belongs to the day it was priced,
+        # not to a reporting period, and giving it one would file it in a
+        # column of figures that all came from a filing.
+        fiscal_year=None,
+        tier=SourceTier(max(int(price.tier), int(shares.tier))),
+        # Anchored on the quote, not the filing: the price is what dates this
+        # figure, and it is the input a reader should distrust first.
+        source_type=price.source_type,
+        source_url=str(price.source_url),
+        accession_no=price.accession_no,
+        filed_date=price.filed_date,
+        extraction_method=ExtractionMethod.CALCULATED,
+        confidence=min(price.confidence, shares.confidence),
+        is_calculated=True,
+        formula=(
+            f"share price {price.display_value} × {shares.value:,.0f} "
+            f"shares outstanding as at {shares.period_end.isoformat()}"
+        ),
+    )
+
+
+def _latest(facts: Sequence[Fact], metric: str) -> Fact | None:
+    """The most recent valued fact for a metric, or None when there is none."""
+    candidates = [
+        fact for fact in facts if fact.metric == metric and fact.value is not None
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda fact: fact.period_end)
 
 
 def _is_market_metric(metric: str) -> bool:
