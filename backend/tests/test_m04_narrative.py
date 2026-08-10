@@ -16,6 +16,8 @@ minimum-length check.
 
 from __future__ import annotations
 
+import pytest
+
 from app.config import (
     NARRATIVE_MIN_SECTION_CHARS,
     NarrativeFallback,
@@ -289,3 +291,87 @@ def test_the_cap_still_holds() -> None:
     ]
 
     assert len(_headings(*many)) == MAX_RISK_ITEMS
+
+
+# --- The items that were never extracted --------------------------------------
+#
+# Item 1A states hazards without quantifying them, and Item 7A is where the
+# filer quantifies the market ones — currency, interest rates, hedging. Item 3
+# is where a live claim against the company appears and Item 5 carries the
+# buyback authorisation and the dividend record. None of the three was
+# extracted, so a reader asking what the company is exposed to, what is being
+# claimed against it, or what it has been buying back got nothing.
+
+
+def _tenk_spec(metric: str) -> NarrativeSpec:
+    from app.config import NARRATIVE_SPECS
+
+    return next(
+        spec
+        for spec in NARRATIVE_SPECS
+        if spec.metric == metric and "10-K" in spec.forms
+    )
+
+
+def _tenk_body() -> str:
+    """A 10-K shaped the way the items actually sit in one, with a contents page."""
+    long = NARRATIVE_MIN_SECTION_CHARS + 200
+    return (
+        # The table of contents names every item before any of them appear.
+        "Item 1. Business 3\n\nItem 1A. Risk Factors 12\n\n"
+        "Item 3. Legal Proceedings 40\n\nItem 5. Market for Registrant's "
+        "Common Equity 44\n\nItem 7A. Quantitative and Qualitative "
+        "Disclosures About Market Risk 60\n\nItem 8. Financial Statements 62\n\n"
+        "Item 3. Legal Proceedings\n\n"
+        + _pad("The Company is subject to various legal proceedings.", long)
+        + "\n\nItem 4. Mine Safety Disclosures\n\nNot applicable.\n\n"
+        "Item 5. Market for Registrant's Common Equity\n\n"
+        + _pad("The Company's common stock is traded on the Nasdaq.", long)
+        + "\n\nItem 6. Reserved\n\n"
+        "Item 7A. Quantitative and Qualitative Disclosures About Market Risk\n\n"
+        + _pad("The Company is exposed to interest rate and currency risk.", long)
+        + "\n\nItem 8. Financial Statements and Supplementary Data\n\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("metric", "opening"),
+    [
+        ("risk.legal_proceedings", "subject to various legal proceedings"),
+        ("business.equity_market", "traded on the Nasdaq"),
+        ("risk.market_risk", "interest rate and currency risk"),
+    ],
+)
+def test_each_new_item_is_located_past_its_contents_entry(
+    metric: str, opening: str
+) -> None:
+    located = _locate(_tenk_body(), _tenk_spec(metric))
+
+    assert located is not None
+    assert opening in located
+
+
+def test_the_new_items_route_to_a_section_that_exists() -> None:
+    """And never to the market namespace, which is reserved for tier 3.
+
+    "Item 5. Market for the registrant's common equity" is narrative from a
+    filing; `market.` maps to section 5 and carries the market-data tier rule
+    with it, so naming it `market.something` would have put a tier 1 filing
+    excerpt behind a wall built for share prices.
+    """
+    from app.config import MARKET_METRIC_PREFIXES, SECTION_METRIC_PREFIXES
+
+    routed = {
+        prefix: section
+        for section, prefixes in SECTION_METRIC_PREFIXES.items()
+        for prefix in prefixes
+    }
+    for metric in (
+        "risk.legal_proceedings",
+        "business.equity_market",
+        "risk.market_risk",
+    ):
+        assert any(metric.startswith(prefix) for prefix in routed)
+        assert not any(
+            metric.startswith(prefix) for prefix in MARKET_METRIC_PREFIXES
+        )

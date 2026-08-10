@@ -959,6 +959,9 @@ def _business_section(
         labels = {
             "business.description": "From item 1. Business",
             "business.mdna": "From item 7. Management's discussion and analysis",
+            "business.equity_market": (
+                "From item 5. Market for the registrant's common equity"
+            ),
         }
         for metric, label in labels.items():
             fact = index.latest.get(metric)
@@ -1493,7 +1496,32 @@ def _risks_section(
             for position, heading in enumerate(headings, start=1)
         )
 
-    prose = _prose_blocks(inputs, SectionId.RISKS, cited)
+    prose = list(_prose_blocks(inputs, SectionId.RISKS, cited))
+
+    # Item 1A states hazards without quantifying them. Item 7A is where the
+    # filer quantifies the market ones, and item 3 is where a live claim
+    # against the company appears — both belong beside the headings above
+    # rather than in a section of their own, and both are the filer's words.
+    for metric, label in (
+        (
+            "risk.market_risk",
+            "From item 7a. Quantitative and qualitative disclosures about "
+            "market risk",
+        ),
+        ("risk.legal_proceedings", "From item 3. Legal proceedings"),
+    ):
+        fact = index.latest.get(metric)
+        if fact is None:
+            continue
+        cited.append(fact.fact_id)
+        prose.append(
+            ProseBlock(
+                id=f"risks-{metric.rsplit('.', 1)[-1]}",
+                text=m04_narrative.summary_of(fact),
+                fact_ids=(fact.fact_id,),
+                label=label,
+            )
+        )
 
     tables: tuple[FigureTable, ...] = ()
     if risks:

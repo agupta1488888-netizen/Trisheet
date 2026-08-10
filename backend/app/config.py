@@ -1834,6 +1834,101 @@ NARRATIVE_SPECS: tuple[NarrativeSpec, ...] = (
             ),
         ),
     ),
+    # Three items a reader assessing a company asks for and the three above
+    # cannot answer. Item 1A states hazards without quantifying them; Item 7A
+    # is where the filer quantifies the market ones. Item 3 is where a live
+    # claim against the company appears, and Item 5 is where the buyback
+    # authorisation and the dividend record are.
+    NarrativeSpec(
+        metric="risk.legal_proceedings",
+        label="Legal proceedings",
+        headings=(
+            "item 3. legal proceedings",
+            "item 3 - legal proceedings",
+            "item 3.",
+        ),
+        terminators=("item 4.", "mine safety disclosures", "item 5."),
+        forms=frozenset({"10-K"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=(
+                    "item 3 — legal proceedings",
+                    "item 3: legal proceedings",
+                    "item 3 legal proceedings",
+                ),
+                terminators=("item 4.", "mine safety disclosures", "item 5."),
+                reason="item 3 under a punctuation variant",
+            ),
+            NarrativeFallback(
+                headings=("legal proceedings",),
+                terminators=("item 4.", "mine safety disclosures", "item 5."),
+                reason="the legal proceedings heading without its item number",
+            ),
+        ),
+    ),
+    NarrativeSpec(
+        metric="business.equity_market",
+        label="Market for the registrant's common equity",
+        headings=(
+            "item 5. market for registrant",
+            "item 5. market for the registrant",
+            "item 5 - market for registrant",
+            "item 5.",
+        ),
+        terminators=("item 6.", "item 7."),
+        forms=frozenset({"10-K"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=(
+                    "item 5 — market for registrant",
+                    "item 5: market for registrant",
+                    "item 5 market for registrant",
+                ),
+                terminators=("item 6.", "item 7."),
+                reason="item 5 under a punctuation variant",
+            ),
+            NarrativeFallback(
+                headings=("market for registrant's common equity",),
+                terminators=("item 6.", "item 7.", "selected financial data"),
+                reason="the item 5 heading without its item number",
+            ),
+        ),
+    ),
+    NarrativeSpec(
+        metric="risk.market_risk",
+        label="Quantitative and qualitative disclosures about market risk",
+        headings=(
+            "item 7a. quantitative and qualitative",
+            "item 7a - quantitative and qualitative",
+            "item 7a.",
+        ),
+        terminators=("item 8.", "financial statements and supplementary data"),
+        forms=frozenset({"10-K"}),
+        fallbacks=(
+            NarrativeFallback(
+                headings=(
+                    "item 7a — quantitative and qualitative",
+                    "item 7a: quantitative and qualitative",
+                    "item 7a quantitative and qualitative",
+                ),
+                terminators=(
+                    "item 8.",
+                    "financial statements and supplementary data",
+                ),
+                reason="item 7a under a punctuation variant",
+            ),
+            NarrativeFallback(
+                headings=(
+                    "quantitative and qualitative disclosures about market risk",
+                ),
+                terminators=(
+                    "item 8.",
+                    "financial statements and supplementary data",
+                ),
+                reason="the item 7a heading without its item number",
+            ),
+        ),
+    ),
     # A foreign private issuer files a 20-F, whose items are numbered to its
     # own schedule. Item 4 is the business, Item 3.D the risk factors, Item 5
     # the operating and financial review.
