@@ -55,11 +55,14 @@ from app.config import (
     SEGMENT_METRIC_LABEL,
     SEGMENT_NEUTRAL_QUALIFIERS,
     SEGMENT_SOURCE_METRIC,
+    XBRL_COVER_PAGE_TAXONOMY,
     XBRL_LINKBASE_SUFFIXES,
     XBRL_TAXONOMY_PREFERENCE,
     XBRLDI_NAMESPACE,
     XBRLI_NAMESPACE,
     MetricSpec,
+    metric_specs_for,
+    sector_template_for_sic,
 )
 from app.models import (
     Company,
@@ -151,9 +154,15 @@ async def extract_financials(
 ) -> list[Fact]:
     """Extracts reported figures as facts.
 
-    Fetches company facts once and resolves every metric in `METRIC_SPECS`
-    against it. A metric that no tag answers for yields a NOT_DISCLOSED marker
-    so the gap is stated rather than silently dropped.
+    Fetches company facts once and resolves every metric the filer's sector
+    template calls for against it. A metric that no tag answers for yields a
+    NOT_DISCLOSED marker so the gap is stated rather than silently dropped.
+
+    The template matters: a bank has no gross profit and no inventory, but it
+    does have net interest income and a loan book, and m07 has computers for
+    those standing ready. Extracting only the general set would leave them
+    permanently without inputs, so a bank's report would carry the shape of an
+    operating company's and none of the figures that describe a bank.
 
     Args:
         company: The filer, whose type decides which taxonomy is tried first.
@@ -178,8 +187,11 @@ async def extract_financials(
     filings_by_accession = {filing.accession_no: filing for filing in manifest}
     fiscal_years = _build_fiscal_year_index(facts_by_taxonomy)
 
+    template = sector_template_for_sic(company.sic_code)
+    specs = metric_specs_for(template)
+
     facts: list[Fact] = []
-    for spec in METRIC_SPECS:
+    for spec in specs:
         resolution = _resolve_metric(
             spec, facts_by_taxonomy, taxonomies, company.reporting_currency
         )
@@ -232,7 +244,8 @@ async def extract_financials(
             "cik": company.cik,
             "ticker": company.ticker,
             "facts": len(facts),
-            "metrics": len(METRIC_SPECS),
+            "metrics": len(specs),
+            "sector_template": template.value,
         },
     )
     return facts
@@ -277,10 +290,15 @@ async def extract_segments(
 
 
 def _taxonomy_order(filer_type: FilerType) -> tuple[str, ...]:
-    """Taxonomies to try, most likely first for this filer type."""
+    """Taxonomies to try, most likely first for this filer type.
+
+    The cover page taxonomy is tried last, after both statement taxonomies.
+    Almost every metric declares no `dei` tags at all, so for those the rung
+    costs one dictionary lookup and yields nothing.
+    """
     preferred = _PREFERRED_TAXONOMY.get(filer_type, "us-gaap")
     rest = tuple(t for t in XBRL_TAXONOMY_PREFERENCE if t != preferred)
-    return (preferred, *rest)
+    return (preferred, *rest, XBRL_COVER_PAGE_TAXONOMY)
 
 
 def _facts_root(payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -557,7 +575,7 @@ def _select_periods(
             by_period[observation.period_key] = observation
 
     selected = list(by_period.values())
-    if spec.period_type == "instant" and fiscal_year_ends:
+    if spec.period_type == "instant" and not spec.at_filing_date and fiscal_year_ends:
         # Only filter when the filer's own year ends are known. An unknown
         # calendar is a reason to show every date, not to drop them all.
         selected = [

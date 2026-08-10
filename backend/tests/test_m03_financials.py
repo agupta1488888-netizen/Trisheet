@@ -25,6 +25,7 @@ from app.models import (
 from app.modules import m03_financials as m03
 from app.services import edgar
 from tests.conftest import (
+    APPLE_ACCESSION,
     APPLE_CIK,
     StubEdgarClient,
     annual_row,
@@ -310,6 +311,130 @@ async def test_instant_metrics_survive_an_unknown_fiscal_calendar(
 
     assert len(facts) == 1
     assert facts[0].value == 364_980_000_000
+
+
+def _with_cover_share_count(
+    payload: dict[str, Any],
+    *,
+    end: str = "2024-10-18",
+    val: float = 15_115_823_000,
+) -> dict[str, Any]:
+    """Adds the cover page share count, in the `dei` taxonomy EDGAR files it under."""
+    payload["facts"]["dei"] = {
+        "EntityCommonStockSharesOutstanding": {
+            "units": {
+                "shares": [
+                    {
+                        "end": end,
+                        "val": val,
+                        "accn": "0000320193-24-000123",
+                        "form": "10-K",
+                        "filed": "2024-11-01",
+                        "fy": 2024,
+                        "fp": "FY",
+                    }
+                ]
+            }
+        }
+    }
+    return payload
+
+
+async def test_the_cover_page_share_count_survives_the_year_end_filter(
+    stub_edgar: StubEdgarClient,
+) -> None:
+    """A cover page count is dated at filing, which is never a fiscal year end.
+
+    The instant filter exists to keep quarter-end balance dates out of the
+    annual column, and it would discard this figure for the very reason it is
+    wanted: it is more recent than the balance sheet. `at_filing_date` exempts
+    it. Without the exemption the metric resolves and then yields nothing,
+    which is the failure that leaves a market capitalisation underivable.
+    """
+    payload = _with_cover_share_count(
+        company_facts(
+            tag="Assets",
+            rows=[
+                annual_row(
+                    start="2023-10-01",
+                    end="2024-09-28",
+                    val=391_035_000_000,
+                    accn="0000320193-24-000123",
+                    filed="2024-11-01",
+                    fy=2024,
+                ),
+            ],
+        )
+    )
+
+    facts = [
+        fact
+        for fact in await _extract(stub_edgar, payload)
+        if fact.metric == "balance.shares_outstanding_cover"
+    ]
+
+    assert [fact.period_end for fact in facts] == [dt.date(2024, 10, 18)]
+    assert facts[0].value == 15_115_823_000
+    assert facts[0].taxonomy is Taxonomy.DEI
+
+
+async def test_the_cover_page_count_does_not_evict_the_balance_sheet_series(
+    stub_edgar: StubEdgarClient,
+) -> None:
+    """Two dates, two metrics — never one ladder.
+
+    The ladder prefers whichever rung reaches the most recent period, and a
+    cover page date always beats a balance sheet date. Were these one metric,
+    the cover rung would win and the multi-year series behind book value per
+    share would vanish with it.
+    """
+    payload = company_facts(
+        tag="CommonStockSharesOutstanding",
+        unit="shares",
+        rows=[
+            {
+                "end": "2024-09-28",
+                "val": 15_408_095_000,
+                "accn": "0000320193-24-000123",
+                "form": "10-K",
+                "filed": "2024-11-01",
+                "fy": 2024,
+                "fp": "FY",
+            },
+        ],
+        extra={
+            "Assets": {
+                "units": {
+                    "USD": [
+                        annual_row(
+                            start="2023-10-01",
+                            end="2024-09-28",
+                            val=391_035_000_000,
+                            accn="0000320193-24-000123",
+                            filed="2024-11-01",
+                            fy=2024,
+                        )
+                    ]
+                }
+            }
+        },
+    )
+
+    facts = await _extract(stub_edgar, _with_cover_share_count(payload))
+    by_metric = {
+        metric: [f for f in facts if f.metric == metric and f.value is not None]
+        for metric in (
+            "balance.shares_outstanding",
+            "balance.shares_outstanding_cover",
+        )
+    }
+
+    assert [f.value for f in by_metric["balance.shares_outstanding"]] == [
+        15_408_095_000
+    ]
+    assert [f.value for f in by_metric["balance.shares_outstanding_cover"]] == [
+        15_115_823_000
+    ]
 
 
 async def test_foreign_filer_resolves_against_ifrs_first(
@@ -1161,3 +1286,85 @@ def test_per_share_figures_are_not_scaled_to_millions() -> None:
     """
     assert m03._format_value(3.75, "USD/shares") == "3.75"
     assert m03._format_value(1_610_800_000, "shares") == "1,610,800,000"
+
+
+# --- Sector metrics -----------------------------------------------------------
+#
+# `SECTOR_METRIC_SPECS` and `metric_specs_for` existed, were correct, and were
+# called by nothing: m03 iterated the bare general set. m07 has computers for
+# net interest margin, the efficiency ratio, FFO and the combined ratio that
+# read metrics no one was extracting, so they could never fire. A bank's report
+# came out with the shape of an operating company's and none of the figures
+# that describe a bank.
+
+
+def _bank_company() -> Company:
+    return Company(
+        cik=APPLE_CIK,
+        ticker="BANK",
+        name="Test Bank Corp",
+        filer_type=FilerType.DOMESTIC,
+        sic_code="6021",  # National commercial banks.
+        sector="National commercial banks",
+        fiscal_year_end="1231",
+        reporting_currency="USD",
+    )
+
+
+async def test_a_bank_is_extracted_for_its_own_metrics(
+    stub_edgar: StubEdgarClient,
+) -> None:
+    payload = company_facts(
+        tag="InterestIncomeExpenseNet",
+        rows=[
+            annual_row(
+                start="2024-01-01",
+                end="2024-12-31",
+                val=54_000_000_000,
+                accn=APPLE_ACCESSION,
+                filed="2025-02-14",
+                fy=2024,
+            )
+        ],
+    )
+
+    facts = await _extract(stub_edgar, payload, company=_bank_company())
+    resolved = {
+        fact.metric for fact in facts if fact.value is not None
+    }
+
+    assert "bank.net_interest_income" in resolved
+
+
+async def test_an_operating_company_is_not_searched_for_bank_metrics(
+    stub_edgar: StubEdgarClient,
+) -> None:
+    """So a software filer's report never reports a missing loan book.
+
+    A metric the filer could not have is not a gap, and listing it as one
+    would be this system inventing a disclosure obligation.
+    """
+    payload = company_facts(
+        rows=[
+            annual_row(
+                start="2023-10-01",
+                end="2024-09-28",
+                val=391_035_000_000,
+                accn=APPLE_ACCESSION,
+                filed="2024-11-01",
+                fy=2024,
+            )
+        ],
+    )
+
+    facts = await _extract(stub_edgar, payload)
+
+    assert not any(fact.metric.startswith("bank.") for fact in facts)
+    assert not any(fact.metric.startswith("reit.") for fact in facts)
+
+
+async def test_the_general_set_is_unchanged_for_an_operating_company() -> None:
+    """The sector switch is additive: no ordinary filer loses a metric to it."""
+    from app.config import METRIC_SPECS, SectorTemplate, metric_specs_for
+
+    assert metric_specs_for(SectorTemplate.GENERAL) == METRIC_SPECS
