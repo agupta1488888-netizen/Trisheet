@@ -522,6 +522,12 @@ async def _extract(
         derived = m07_analysis.compute_derived_metrics(
             list(work.facts), sic_code=company.sic_code
         )
+        # No provider in the chain returns a capitalisation, so it is derived
+        # once the quote and the share count are both in hand. Every multiple
+        # in the valuation table hangs off this one figure.
+        market_cap = m05_market.derive_market_cap([*work.facts, *derived])
+        if market_cap is not None:
+            derived.append(market_cap)
         work.facts.extend(derived)
         outcome.done(len(derived))
 
