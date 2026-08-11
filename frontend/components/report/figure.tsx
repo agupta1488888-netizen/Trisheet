@@ -14,7 +14,11 @@
 import { cn } from "@/lib/utils";
 import { NOT_DISCLOSED } from "@/lib/constants";
 import { formatAccession, formatFilingDate } from "@/lib/format";
-import { SOURCE_TYPE_LABEL, type SourceCard } from "@/lib/provenance";
+import {
+  SOURCE_TYPE_LABEL,
+  sourceUrlFor,
+  type SourceCard,
+} from "@/lib/provenance";
 import {
   sourceAnchorId,
   useProvenance,
@@ -32,9 +36,13 @@ export function tierClassName(tier: number): string {
   return "text-certified";
 }
 
+/** How a source names itself: its form when filed, else its kind. */
+function cardName(card: SourceCard): string {
+  return card.form ?? SOURCE_TYPE_LABEL[card.sourceType];
+}
+
 function cardDescription(card: SourceCard): string {
-  const name = card.form ?? SOURCE_TYPE_LABEL[card.sourceType];
-  return `Source ${card.marker}: ${name}, filed ${formatFilingDate(card.filedDate)}, accession ${formatAccession(card.accessionNo)}`;
+  return `Source ${card.marker}: ${cardName(card)}, filed ${formatFilingDate(card.filedDate)}, accession ${formatAccession(card.accessionNo)}`;
 }
 
 /** The superscript reference marker. Rendered on its own for prose citations. */
@@ -98,6 +106,9 @@ export function Figure({
   }
 
   const isMissing = fact.value === null && fact.displayValue === NOT_DISCLOSED;
+  // A missing figure has no position in a filing to open, whatever URL its
+  // filing resolves to.
+  const sourceUrl = isMissing ? null : sourceUrlFor(index, factId);
 
   return (
     <span
@@ -117,14 +128,32 @@ export function Figure({
       }
       {...handlers}
     >
-      <span
-        className={cn(
-          "tabular-nums",
-          isMissing && "font-sans text-sm text-muted-foreground",
-        )}
-      >
-        {fact.displayValue}
-      </span>
+      {/*
+        The figure opens the filing at its own position; the marker beside it
+        raises the reference card. Two destinations because a reader wanting
+        the source and a reader wanting to see it in the filing are asking
+        different questions, and the number is what they reach for.
+      */}
+      {sourceUrl === null ? (
+        <span
+          className={cn(
+            "tabular-nums",
+            isMissing && "font-sans text-sm text-muted-foreground",
+          )}
+        >
+          {fact.displayValue}
+        </span>
+      ) : (
+        <a
+          href={sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`${fact.label}: ${fact.displayValue}. Open in ${cardName(card)}.`}
+          className="tabular-nums text-inherit no-underline decoration-rule underline-offset-4 hover:underline focus-visible:underline"
+        >
+          {fact.displayValue}
+        </a>
+      )}
       <SourceMarker card={card} />
     </span>
   );

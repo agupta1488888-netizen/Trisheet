@@ -440,6 +440,12 @@ async def _extract(
         reported.extend(
             await m03_financials.extract_quarterly(company, filings)
         )
+        # Point each figure at its own position in the filing rather than at
+        # page one of it. Done here, once, so every filing is opened a single
+        # time no matter how many of the three extractions cited it.
+        reported = await m03_financials.attach_anchors(
+            company, reported, filings
+        )
         work.facts.extend(reported)
         outcome.done(len(reported))
 

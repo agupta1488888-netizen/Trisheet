@@ -70,7 +70,7 @@ _FACT_COLUMNS = (
     "metric,label,value,display_value,unit,"
     "period_start,period_end,fiscal_year,"
     "segment_axis,segment_member,segment_label,"
-    "tier,source_type,source_url,accession_no,filed_date,"
+    "tier,source_type,source_url,anchor_url,accession_no,filed_date,"
     "extraction_method,confidence,resolved_tag,taxonomy,is_calculated,formula"
 )
 
@@ -381,6 +381,9 @@ def _to_row(report_id: str, fact: Fact) -> dict[str, Any]:
         "tier": int(fact.tier),
         "source_type": str(fact.source_type),
         "source_url": str(fact.source_url),
+        "anchor_url": (
+            str(fact.anchor_url) if fact.anchor_url is not None else None
+        ),
         "accession_no": fact.accession_no,
         "filed_date": _date_str(fact.filed_date),
         "extraction_method": str(fact.extraction_method),

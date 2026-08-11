@@ -24,10 +24,11 @@ import {
   YAxis,
 } from "recharts";
 
-import { formatSeriesValue } from "@/lib/format";
+import { formatAxisValue, formatSeriesValue } from "@/lib/format";
 import type { ReportCharts } from "@/lib/types";
 import {
   AXIS_TICK,
+  BarValueLabel,
   CERTIFIED,
   CHART_MARGIN,
   ChartFrame,
@@ -111,6 +112,7 @@ export function CashFlowChart({ series }: { series: Series }) {
             name="Cash from operations"
             fill={CERTIFIED}
             maxBarSize={44}
+            label={<BarValueLabel formatter={formatAxisValue} />}
             {...NO_ANIMATION}
           />
           <Bar
@@ -118,6 +120,7 @@ export function CashFlowChart({ series }: { series: Series }) {
             name="Capital expenditure"
             fill={INK_MUTED}
             maxBarSize={44}
+            label={<BarValueLabel formatter={formatAxisValue} />}
             {...NO_ANIMATION}
           />
           <Line

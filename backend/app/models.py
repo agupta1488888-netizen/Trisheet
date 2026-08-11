@@ -178,6 +178,19 @@ class Fact(BaseModel):
     accession_no: str
     filed_date: dt.date
 
+    #: `source_url` with a fragment addressing this figure's own position in
+    #: the rendered filing, so a reader lands on the number rather than on page
+    #: one of a hundred-page document.
+    #:
+    #: Nullable on purpose, and deliberately *not* part of the provenance block
+    #: above. This is extra precision, not provenance: a fact without it is
+    #: still fully sourced and still renders, so rule 2 stays a statement about
+    #: `source_url` and its four companions. Anchors are absent for market data
+    #: (no filing to point into), for pre-inline-XBRL filings (whose ids appear
+    #: in no rendered document) and wherever the figure could not be matched to
+    #: exactly one tagged element. Consumers fall back to `source_url`.
+    anchor_url: HttpUrl | None = None
+
     # --- Extraction trail --------------------------------------------------
     extraction_method: ExtractionMethod = Field(
         description="How the figure was obtained. Required — never inferred."

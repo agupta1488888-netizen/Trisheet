@@ -239,6 +239,14 @@ create table if not exists facts (
   -- hit on the metric's preferred tag; a NOT_DISCLOSED marker carries 0.
   confidence        numeric           not null,
 
+  -- source_url with a fragment addressing this figure's own position in the
+  -- rendered filing, e.g. ".../aapl-20240928.htm#f-60". Nullable, and
+  -- deliberately outside the provenance block above: it is extra precision,
+  -- not provenance. Null for market data, for filings predating inline XBRL,
+  -- and wherever the figure matched no single tagged element. Readers fall
+  -- back to source_url, which is never null.
+  anchor_url     text,
+
   -- Extraction trail.
   resolved_tag   text,
   taxonomy       taxonomy,
@@ -255,6 +263,10 @@ create table if not exists facts (
   -- Never blank. A missing figure reads "Not disclosed".
   constraint facts_display_value_not_blank check (length(trim(display_value)) > 0),
   constraint facts_source_url_not_blank check (length(trim(source_url)) > 0),
+  -- An anchor is a URL or it is absent. A blank one would read as "anchored"
+  -- to every consumer and resolve nowhere.
+  constraint facts_anchor_url_not_blank
+    check (anchor_url is null or length(trim(anchor_url)) > 0),
   constraint facts_accession_no_not_blank check (length(trim(accession_no)) > 0),
   -- A member without its axis is unattributable.
   constraint facts_segment_axis_and_member

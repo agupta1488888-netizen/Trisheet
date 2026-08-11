@@ -129,6 +129,10 @@ export function makeFact(reportId: string, seed: FactSeed): Fact {
     tier: seed.source.tier,
     sourceType: seed.source.sourceType,
     sourceUrl: seed.source.documentUrl,
+    // Fixtures carry no anchor. A placeholder fragment would point at a real
+    // EDGAR document and scroll to nothing, which is worse than the fallback
+    // these figures get for free.
+    anchorUrl: null,
     accessionNo: seed.source.accessionNo,
     filedDate: seed.source.filedDate,
     extractionMethod,

@@ -27,6 +27,7 @@ import { formatMultiple } from "@/lib/format";
 import type { ReportCharts } from "@/lib/types";
 import {
   AXIS_TICK,
+  BarValueLabel,
   CHART_MARGIN,
   ChartFrame,
   ChartLegend,
@@ -100,6 +101,7 @@ export function PeerValuationChart({ series }: { series: Series }) {
             dataKey="priceToEarnings"
             name="Price / earnings"
             maxBarSize={14}
+            label={<BarValueLabel formatter={formatMultiple} />}
             {...NO_ANIMATION}
           >
             {series.points.map((point) => (
@@ -113,6 +115,7 @@ export function PeerValuationChart({ series }: { series: Series }) {
             dataKey="evToEbitda"
             name="EV / EBITDA"
             maxBarSize={14}
+            label={<BarValueLabel formatter={formatMultiple} />}
             {...NO_ANIMATION}
           >
             {series.points.map((point) => (

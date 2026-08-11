@@ -175,6 +175,37 @@ def filing_document_url(cik: str | int, accession_no: str, document: str) -> str
     )
 
 
+def filing_anchor_url(
+    cik: str | int, accession_no: str, document: str, element_id: str
+) -> str:
+    """A link to one tagged figure's position inside a rendered filing.
+
+    The single place the anchored-URL form is decided. Two forms work and this
+    picks the plain document deliberately:
+
+      - `…/aapl-20240928.htm#f-60` loads immediately and depends on nothing but
+        the fragment, which is how it degrades well.
+      - `…/ix?doc=/Archives/…/aapl-20240928.htm#f-60` opens EDGAR's inline
+        viewer, which honours the same id and additionally outlines every
+        tagged fact, at the cost of several seconds booting a JavaScript
+        application.
+
+    Both were checked against a real filing. Swapping to the viewer is a change
+    to this function and nothing else, which is why the choice is centralised
+    here rather than spelled out at each call site.
+
+    Raises:
+        ValueError: `element_id` is empty. An anchor with no fragment is the
+            unanchored URL wearing a misleading name, and the caller's fallback
+            chain is there precisely so this never has to be faked.
+    """
+    fragment = element_id.strip().lstrip("#")
+    if not fragment:
+        message = f"Anchor element id is empty: {element_id!r}"
+        raise ValueError(message)
+    return f"{filing_document_url(cik, accession_no, document)}#{fragment}"
+
+
 # --- Rate limiting ----------------------------------------------------------
 
 

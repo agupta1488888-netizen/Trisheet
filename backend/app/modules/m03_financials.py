@@ -24,12 +24,21 @@ Public interface
     extract_financials(company, manifest) -> list[Fact]
     extract_segments(company, manifest) -> list[Fact]
     extract_quarterly(company, manifest) -> list[Fact]
+    attach_anchors(company, facts, manifest) -> list[Fact]
+
+Why anchoring is a separate call
+    It reads each cited filing's instance document, which the extract functions
+    have no reason to do. Kept separate, the pipeline pays that cost once for
+    every fact it has gathered, and callers that only want figures — peer
+    comparison in m08 — do not pay it at all.
 """
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
+import math
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -37,6 +46,7 @@ from typing import Any, TypeAlias
 
 from app.config import (
     AMENDMENT_FORM_SUFFIX,
+    ANCHOR_MAX_FILINGS,
     ANNUAL_PERIOD_MAX_DAYS,
     ANNUAL_PERIOD_MIN_DAYS,
     CONFIDENCE_EXACT,
@@ -61,6 +71,8 @@ from app.config import (
     SEGMENT_NEUTRAL_QUALIFIERS,
     SEGMENT_SOURCE_METRIC,
     XBRL_COVER_PAGE_TAXONOMY,
+    XBRL_INLINE_DOCUMENT_SUFFIX,
+    XBRL_INLINE_INSTANCE_SUFFIX,
     XBRL_LINKBASE_SUFFIXES,
     XBRL_TAXONOMY_PREFERENCE,
     XBRLDI_NAMESPACE,
@@ -1248,3 +1260,328 @@ def _humanise_member(member: str) -> str:
     local = local.removesuffix("Member").removesuffix("Segment")
     spaced = _CAMEL_BOUNDARY.sub(" ", local).strip()
     return spaced or local or member
+
+
+# --- Anchoring: a figure's own position in the filing ------------------------
+# `source_url` names the document a figure came from. That still lands a reader
+# at the top of a hundred-page 10-K holding a thousand numbers. Inline XBRL
+# gives each tagged figure an element id, and EDGAR's extracted instance keeps
+# those ids, so a figure can address the exact number it is:
+#
+#   instance   <us-gaap:Revenue… id="f-60" contextRef="c-13">294866000000</…>
+#   rendered   <ix:nonFraction … id="f-60">294,866</ix:nonFraction>
+#   link       …/aapl-20240928.htm#f-60
+#
+# The join is (tag, period, segment) plus an equality check on the value, and
+# an anchor is emitted only when that identifies exactly one element. A figure
+# that cannot be pinned down keeps its document URL: pointing confidently at
+# the wrong number would discredit every other citation on the page, so a
+# missing anchor is always preferred to a guessed one.
+
+#: What identifies one tagged figure within an instance: the tag's local name,
+#: the period it covers, and the segment it is broken down by (empty for a
+#: consolidated figure).
+_AnchorKey: TypeAlias = tuple[
+    str, dt.date | None, dt.date, tuple[tuple[str, str], ...]
+]
+
+#: One filing's anchors: the rendered document, and each key's element id
+#: alongside the value tagged there. The value travels with the id because the
+#: key alone is a claim about which element a fact came from, and the value is
+#: what checks it.
+_AnchorIndex: TypeAlias = tuple[str, dict[_AnchorKey, tuple[str, float]]]
+
+
+async def attach_anchors(
+    company: Company, facts: Sequence[Fact], manifest: Sequence[Filing]
+) -> list[Fact]:
+    """Returns `facts` with `anchor_url` set wherever one could be established.
+
+    Reads the XBRL instance of each cited filing — the most recently filed
+    `ANCHOR_MAX_FILINGS` of them — and matches each fact to the tagged element
+    it was extracted from.
+
+    Never raises, and never returns fewer facts than it was given. Anchors are
+    precision on top of provenance that is already complete, so every failure
+    here — EDGAR refusing the fetch, an instance that will not parse, a filing
+    predating inline XBRL, a figure appearing twice with different values —
+    costs the reader a scroll and nothing else. Per rule 6 that is a
+    degradation, not a failure.
+
+    Args:
+        company: The filer, for the CIK the archive paths are built from.
+        facts: Every extracted fact. Returned in the same order.
+        manifest: Filings from m02, used to find the filing behind an
+            accession. Facts whose accession is not in the manifest keep their
+            document URL.
+    """
+    anchorable = [fact for fact in facts if _is_anchorable(fact)]
+    if not anchorable:
+        return list(facts)
+
+    filings_by_accession = {filing.accession_no: filing for filing in manifest}
+    cited = {
+        filing
+        for fact in anchorable
+        if (filing := filings_by_accession.get(fact.accession_no)) is not None
+    }
+    # Most recent first: a reader checks this year's figures far more often
+    # than the comparatives, so the budget is spent where it will be clicked.
+    selected = sorted(
+        cited, key=lambda f: (f.filed_date, f.accession_no), reverse=True
+    )[:ANCHOR_MAX_FILINGS]
+    if not selected:
+        return list(facts)
+
+    # Independent filings, so concurrent; `return_exceptions` because one
+    # unreadable instance must not cost the others their anchors.
+    results = await asyncio.gather(
+        *(_anchor_index_for(company, filing) for filing in selected),
+        return_exceptions=True,
+    )
+
+    indexes: dict[str, _AnchorIndex] = {}
+    for filing, result in zip(selected, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning(
+                "Anchor index could not be built",
+                extra={
+                    "cik": company.cik,
+                    "accession_no": filing.accession_no,
+                },
+                exc_info=result,
+            )
+            continue
+        if result is not None:
+            indexes[filing.accession_no] = result
+
+    anchored = [_with_anchor(company, fact, indexes) for fact in facts]
+    logger.info(
+        "Anchoring complete",
+        extra={
+            "cik": company.cik,
+            "filings_read": len(indexes),
+            "facts_anchored": sum(
+                1 for fact in anchored if fact.anchor_url is not None
+            ),
+            "facts_anchorable": len(anchorable),
+        },
+    )
+    return anchored
+
+
+def _is_anchorable(fact: Fact) -> bool:
+    """Whether this fact could name a tagged element in a filing.
+
+    A calculated figure was produced by m07 and appears in no filing; a
+    NOT_DISCLOSED marker has no value to find; a figure with no resolved tag
+    was not read out of XBRL at all. None of the three has a position to
+    address, and asking for one would only cost a fetch.
+    """
+    return (
+        fact.value is not None
+        and not fact.is_calculated
+        and fact.resolved_tag is not None
+        and fact.source_type is SourceType.SEC_XBRL
+    )
+
+
+def _fact_anchor_key(fact: Fact) -> _AnchorKey | None:
+    """The instance element this fact would have come from."""
+    if fact.resolved_tag is None:
+        return None
+    segment: tuple[tuple[str, str], ...] = ()
+    if fact.segment_axis is not None and fact.segment_member is not None:
+        segment = ((fact.segment_axis, fact.segment_member),)
+    return (
+        fact.resolved_tag,
+        fact.period_start,
+        fact.period_end,
+        segment,
+    )
+
+
+def _with_anchor(
+    company: Company,
+    fact: Fact,
+    indexes: Mapping[str, _AnchorIndex],
+) -> Fact:
+    """Sets `anchor_url` when this fact matches exactly one tagged element."""
+    if not _is_anchorable(fact) or fact.value is None:
+        return fact
+
+    entry = indexes.get(fact.accession_no)
+    if entry is None:
+        return fact
+
+    document, index = entry
+    key = _fact_anchor_key(fact)
+    if key is None:
+        return fact
+
+    match = index.get(key)
+    if match is None:
+        return fact
+
+    element_id, tagged_value = match
+    if not _same_value(fact.value, tagged_value):
+        # The key says these are the same figure and the filing says they are
+        # not. Trust the filing: a link is a promise about what the reader
+        # will find, and this one cannot be kept.
+        logger.info(
+            "Figure does not match the element it keys to; left unanchored",
+            extra={
+                "cik": company.cik,
+                "accession_no": fact.accession_no,
+                "metric": fact.metric,
+                "resolved_tag": fact.resolved_tag,
+            },
+        )
+        return fact
+
+    try:
+        url = edgar.filing_anchor_url(
+            company.cik, fact.accession_no, document, element_id
+        )
+    except ValueError:
+        return fact
+    return fact.model_copy(update={"anchor_url": url})
+
+
+async def _anchor_index_for(
+    company: Company, filing: Filing
+) -> _AnchorIndex | None:
+    """Builds one filing's `(rendered document, key -> element id)` index.
+
+    Returns None when the filing cannot be anchored at all: no instance, or an
+    instance EDGAR did not extract from an inline document — a standalone
+    pre-2019 instance carries ids that appear in nothing a reader can open, so
+    a link built from one would scroll nowhere.
+    """
+    client = edgar.get_client()
+
+    instance_name = await _find_instance_document(client, company, filing)
+    if instance_name is None:
+        return None
+
+    if not instance_name.endswith(XBRL_INLINE_INSTANCE_SUFFIX):
+        logger.info(
+            "Filing predates inline XBRL; figures keep their document URL",
+            extra={
+                "cik": company.cik,
+                "accession_no": filing.accession_no,
+                "instance": instance_name,
+            },
+        )
+        return None
+
+    document = (
+        instance_name[: -len(XBRL_INLINE_INSTANCE_SUFFIX)]
+        + XBRL_INLINE_DOCUMENT_SUFFIX
+    )
+
+    instance_url = edgar.filing_document_url(
+        company.cik, filing.accession_no, instance_name
+    )
+    body = await client.get_bytes(instance_url)
+    if len(body) > MAX_INSTANCE_DOCUMENT_BYTES:
+        logger.warning(
+            "XBRL instance document is larger than the parse ceiling",
+            extra={
+                "cik": company.cik,
+                "accession_no": filing.accession_no,
+                "bytes": len(body),
+            },
+        )
+        return None
+
+    return document, _parse_anchor_index(body)
+
+
+def _parse_anchor_index(body: bytes) -> dict[_AnchorKey, tuple[str, float]]:
+    """Maps each uniquely identified figure in an instance to its element id.
+
+    A figure tagged in two places — the statement and again in a note — is
+    reported at the same value in both, and either position answers "where does
+    this number appear". The first in document order is taken. Two elements
+    that share a key and disagree on the value are a different matter: nothing
+    here can tell which one a company-facts row came from, so that key is
+    dropped and those facts keep their document URL.
+    """
+    from lxml import etree
+
+    parser = etree.XMLParser(
+        resolve_entities=False, no_network=True, huge_tree=False
+    )
+    root = etree.fromstring(body, parser=parser)
+    contexts = _read_contexts(root)
+
+    # Element id and value of the first occurrence; the flag records that a
+    # later occurrence disagreed, which disqualifies the key.
+    seen: dict[_AnchorKey, tuple[str, float, bool]] = {}
+
+    for element in root.iter():
+        element_id = element.get("id")
+        if not element_id:
+            continue
+
+        context = contexts.get(element.get("contextRef") or "")
+        if context is None:
+            continue
+
+        segment = _anchor_segment_of(context)
+        if segment is None:
+            continue
+
+        value = _parse_decimal(element.text)
+        if value is None:
+            continue
+
+        key: _AnchorKey = (
+            _local_name(str(element.tag)),
+            context.period_start,
+            context.period_end,
+            segment,
+        )
+
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = (str(element_id), value, False)
+            continue
+        if not _same_value(existing[1], value):
+            seen[key] = (existing[0], existing[1], True)
+
+    return {
+        key: (element_id, value)
+        for key, (element_id, value, conflicted) in seen.items()
+        if not conflicted
+    }
+
+
+def _anchor_segment_of(
+    context: _Context,
+) -> tuple[tuple[str, str], ...] | None:
+    """The segment key for a context, or None when it cannot carry a fact.
+
+    An undimensioned context is the consolidated figure and keys as `()`.
+    A dimensioned one keys as its single segment axis and member, reusing
+    `_segment_of` so this agrees with how segment facts were built in the
+    first place — a context it rejects (a cross-tab, a non-segment breakdown)
+    describes something no `Fact` in the store represents, and matching one to
+    a fact would be matching it to the wrong number.
+    """
+    if not context.dimensions:
+        return ()
+    segment = _segment_of(context)
+    if segment is None:
+        return None
+    return (segment,)
+
+
+def _same_value(left: float, right: float) -> bool:
+    """Whether two parses of the same reported figure agree.
+
+    Both sides originate as decimal strings in EDGAR's own data, so this is a
+    float-representation tolerance, not a tolerance for figures that differ.
+    """
+    return math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-6)

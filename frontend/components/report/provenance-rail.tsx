@@ -85,14 +85,35 @@ function ReferenceCard({ card }: { card: SourceCard }) {
         </span>
       </div>
 
-      <a
-        href={card.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="ref mt-1 inline-block text-[0.7rem] text-muted-foreground underline-offset-2 hover:text-ink hover:underline focus-visible:text-ink focus-visible:underline"
-      >
-        {formatAccession(card.accessionNo)}
-      </a>
+      {/*
+        The accession opens the filing document. "All files" opens EDGAR's
+        listing for the same accession — the exhibits and the XBRL instance
+        live there, so it stays reachable, just not as the default.
+      */}
+      <p className="ref mt-1 text-[0.7rem] text-muted-foreground">
+        <a
+          href={card.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline-offset-2 hover:text-ink hover:underline focus-visible:text-ink focus-visible:underline"
+        >
+          {formatAccession(card.accessionNo)}
+        </a>
+        {card.indexUrl !== null && (
+          <>
+            <span aria-hidden="true"> · </span>
+            <a
+              href={card.indexUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`All files filed under accession ${formatAccession(card.accessionNo)}`}
+              className="underline-offset-2 hover:text-ink hover:underline focus-visible:text-ink focus-visible:underline"
+            >
+              All files
+            </a>
+          </>
+        )}
+      </p>
 
       <div className="mt-1.5 flex items-baseline justify-between gap-2">
         <span className={cn("text-[0.68rem]", tierTextClass(card.tier))}>

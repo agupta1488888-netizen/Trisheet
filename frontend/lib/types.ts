@@ -89,6 +89,17 @@ export interface Fact {
   tier: SourceTier;
   sourceType: SourceType;
   sourceUrl: string;
+  /**
+   * `sourceUrl` with a fragment addressing this figure's own position in the
+   * rendered filing, e.g. ".../aapl-20240928.htm#f-60".
+   *
+   * Null is ordinary, not a defect: market data points into no filing, filings
+   * predating inline XBRL carry no addressable ids, and a figure matching more
+   * than one tagged element is left unanchored rather than pointed at a guess.
+   * Resolve it through `sourceUrlFor` in `lib/provenance`, never directly, so
+   * the fallback to `sourceUrl` is applied everywhere it should be.
+   */
+  anchorUrl: string | null;
   accessionNo: string;
   filedDate: string;
   extractionMethod: ExtractionMethod;

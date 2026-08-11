@@ -27,6 +27,8 @@ from app.modules.m07_analysis import (
     analyse,
     compute_derived_metrics,
     fact_id,
+    render_amount,
+    render_per_share,
 )
 
 GEOGRAPHIC_AXIS = "srt:StatementGeographicalAxis"
@@ -521,6 +523,30 @@ def test_a_derived_currency_figure_displays_in_millions() -> None:
     fcf = _find(result, "cashflow.free_cash_flow", 2025)
     assert fcf.value == 17_000.0
     assert fcf.display_value == "0.02"
+
+
+def test_render_amount_scales_a_balance_sheet_aggregate_to_millions() -> None:
+    value, display, unit = render_amount(1_811_736.11, "USD")
+
+    assert value == 1_811_736.11
+    assert display == "2"
+    assert unit == "USD"
+
+
+def test_render_per_share_is_exempt_from_the_millions_scale() -> None:
+    """The boundary a discounted cash flow's value per share crosses.
+
+    `render_amount` divides by the same million-scale divisor as every other
+    currency figure, which is correct for an equity or enterprise value but
+    would print a $120.78 share price as "0.00". `render_per_share` is the
+    per-share counterpart every other per-share fact (EPS, book value, FFO)
+    already renders through.
+    """
+    value, display, unit = render_per_share(120.78, "USD")
+
+    assert value == 120.78
+    assert display == "120.78"
+    assert unit == "USD/share"
 
 
 def test_free_cash_flow_to_the_firm_takes_out_the_working_capital_build() -> None:

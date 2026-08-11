@@ -18,6 +18,7 @@ from app.services.edgar import (
     EdgarUnavailableError,
     ResponseCache,
     TokenBucket,
+    filing_anchor_url,
     filing_index_url,
     pad_cik,
     submissions_url,
@@ -69,6 +70,33 @@ def test_filing_index_url_uses_integer_cik_and_both_accession_forms() -> None:
 def test_filing_index_url_rejects_malformed_accession() -> None:
     with pytest.raises(ValueError, match="Malformed accession"):
         filing_index_url(320187, "123")
+
+
+def test_filing_anchor_url_addresses_the_element_inside_the_document() -> None:
+    url = filing_anchor_url(
+        "0000320193", "0000320193-24-000123", "aapl-20240928.htm", "f-60"
+    )
+    assert url == (
+        "https://www.sec.gov/Archives/edgar/data/320193/"
+        "000032019324000123/aapl-20240928.htm#f-60"
+    )
+
+
+def test_filing_anchor_url_tolerates_an_id_written_as_a_fragment() -> None:
+    """One "#" either way must not produce "…htm##f-60", which resolves to
+    nothing."""
+    assert filing_anchor_url(
+        320193, "0000320193-24-000123", "aapl-20240928.htm", "#f-60"
+    ).endswith("aapl-20240928.htm#f-60")
+
+
+def test_filing_anchor_url_refuses_an_empty_element_id() -> None:
+    """Without a fragment this is the unanchored URL under a name that says
+    otherwise; callers have a fallback and must use it."""
+    with pytest.raises(ValueError, match="Anchor element id is empty"):
+        filing_anchor_url(
+            320193, "0000320193-24-000123", "aapl-20240928.htm", "  "
+        )
 
 
 # --- Headers ----------------------------------------------------------------
