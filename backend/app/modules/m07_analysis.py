@@ -104,6 +104,7 @@ from app.config import (
     UNIT_RATIO,
     UNIT_TIMES,
     SectorTemplate,
+    quarterly_metric,
     sector_template_for_sic,
 )
 from app.models import ExtractionMethod, Fact, SourceTier
@@ -3478,7 +3479,13 @@ def _compute_ttm(
         return
 
     for metric in TTM_METRICS:
-        periods = _duration_facts(facts, metric)
+        # Both namespaces, because the two routes want different periods: four
+        # quarters come from the interim facts, and the year-to-date bridge
+        # needs the annual figure to subtract from as well.
+        periods = [
+            *_duration_facts(facts, quarterly_metric(metric)),
+            *_duration_facts(facts, metric),
+        ]
         if not periods:
             continue
 

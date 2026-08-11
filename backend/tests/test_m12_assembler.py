@@ -460,3 +460,68 @@ def test_the_statements_stay_reported_only() -> None:
     # statement's own terms, and already carried its DERIVED emphasis before
     # this table was widened.
     assert "cashflow.free_cash_flow" in statement_metrics
+
+
+def test_the_trailing_twelve_months_renders_as_its_own_column() -> None:
+    """Not as a fiscal year, because it is not one.
+
+    The window ends at the filer's most recent quarter, which is the whole
+    reason a reader wants it: an annual column can be ten months old while the
+    price beside it is today's.
+    """
+    import datetime as dt
+
+    from app.models import Fact as PlainFact
+    from app.modules import m12_assembler as m12
+    from tests.conftest import make_fact
+
+    ttm: list[PlainFact] = [
+        make_fact(
+            metric="ttm.income.revenue",
+            label="Revenue",
+            value=451_442_000_000.0,
+            display_value="451,442",
+            period_start=dt.date(2025, 3, 30),
+            period_end=dt.date(2026, 3, 28),
+            fiscal_year=None,
+            is_calculated=True,
+            formula="the four quarters ended 2026-03-28",
+        )
+    ]
+    index = _build_index(ttm)
+
+    table = m12._ttm_table(index, [])
+
+    assert table is not None
+    assert table.periods == ("12 months to 2026-03-28",)
+    assert len(table.rows) == 1
+    assert table.rows[0].label == "Revenue"
+
+
+def test_no_trailing_twelve_months_column_when_there_is_nothing_to_add() -> None:
+    """A filer that has just closed its year already reports twelve months."""
+    from app.modules import m12_assembler as m12
+
+    assert m12._ttm_table(_analysed_index(), []) is None
+
+
+def test_an_interim_figure_cannot_occupy_an_annual_column() -> None:
+    """The reason interim facts carry their own metric prefix.
+
+    m12 keys a cell by (metric, fiscal year), so an interim revenue sharing the
+    annual metric name would collide with the full-year figure and silently
+    overwrite it in the financial statements.
+    """
+    from app.config import QUARTERLY_METRIC_PREFIX, quarterly_metric
+    from app.modules import m12_assembler as m12
+
+    statement_metrics = {
+        row.metric
+        for rows in (m12._INCOME_ROWS, m12._BALANCE_ROWS, m12._CASHFLOW_ROWS)
+        for row in rows
+    }
+
+    assert quarterly_metric("income.revenue") == "quarterly.income.revenue"
+    assert not any(
+        metric.startswith(QUARTERLY_METRIC_PREFIX) for metric in statement_metrics
+    )

@@ -23,6 +23,7 @@ What the numbers mean
 Public interface
     extract_financials(company, manifest) -> list[Fact]
     extract_segments(company, manifest) -> list[Fact]
+    extract_quarterly(company, manifest) -> list[Fact]
 """
 
 from __future__ import annotations
@@ -44,11 +45,15 @@ from app.config import (
     CONFIDENCE_PENALTY_PER_TAG_FALLBACK,
     CONFIDENCE_PENALTY_TAXONOMY_FALLBACK,
     DISPLAY_SCALE_DIVISOR,
+    INTERIM_PERIOD_MAX_DAYS,
+    INTERIM_PERIOD_MIN_DAYS,
     MAX_ANNUAL_PERIODS,
     MAX_INSTANCE_DOCUMENT_BYTES,
+    MAX_INTERIM_PERIODS,
     METRIC_SPECS,
     NON_CURRENCY_UNIT_KEYS,
     NOT_DISCLOSED_TEXT,
+    QUARTERLY_METRIC_SPECS,
     SEGMENT_AXES,
     SEGMENT_EXCLUDED_MEMBERS,
     SEGMENT_METRIC,
@@ -298,6 +303,75 @@ async def extract_segments(
         return []
 
 
+async def extract_quarterly(company: Company, manifest: list[Filing]) -> list[Fact]:
+    """Extracts the interim figures a trailing twelve months is built from.
+
+    Separate from `extract_financials` because these are a different kind of
+    figure with a different consumer. They are emitted under their own metric
+    prefix so an interim period can never occupy an annual column, and only for
+    the metrics m07 computes a trailing twelve months from — every extra fact
+    is a row in the model's prompt, and nothing else reads these.
+
+    A filer that reports only annually simply yields none. Absence is the
+    normal case for a foreign private issuer, so unlike the annual pass this
+    writes no "not disclosed" markers: there is no gap to report.
+
+    Degrades to an empty list on any failure. A report without a trailing
+    twelve months is a smaller report.
+    """
+    try:
+        client = edgar.get_client()
+        payload = await client.get_json(edgar.company_facts_url(company.cik))
+    except Exception as cause:  # noqa: BLE001 — degradation is the point
+        logger.warning(
+            "Interim extraction could not read company facts",
+            extra={"cik": company.cik, "error": str(cause)},
+        )
+        return []
+
+    taxonomies = _taxonomy_order(company.filer_type)
+    facts_by_taxonomy = _facts_root(payload)
+    fiscal_years = _build_fiscal_year_index(facts_by_taxonomy)
+    filings_by_accession = {filing.accession_no: filing for filing in manifest}
+
+    facts: list[Fact] = []
+    for spec in QUARTERLY_METRIC_SPECS:
+        resolution = _resolve_metric(
+            spec, facts_by_taxonomy, taxonomies, company.reporting_currency
+        )
+        if resolution is None:
+            continue
+
+        selected = _select_periods(
+            resolution.observations,
+            spec,
+            fiscal_years.keys(),
+            MAX_INTERIM_PERIODS,
+        )
+        facts.extend(
+            _build_fact(
+                spec=spec,
+                company=company,
+                observation=observation,
+                resolution=resolution,
+                fiscal_years=fiscal_years,
+                filings_by_accession=filings_by_accession,
+            )
+            for observation in selected
+        )
+
+    logger.info(
+        "Interim extraction complete",
+        extra={
+            "cik": company.cik,
+            "ticker": company.ticker,
+            "facts": len(facts),
+            "metrics": len(QUARTERLY_METRIC_SPECS),
+        },
+    )
+    return facts
+
+
 # --- Metric resolution ------------------------------------------------------
 
 
@@ -500,7 +574,11 @@ def _read_observation(
     if spec.period_type == "duration":
         if period_start is None:
             return None
-        if not _is_annual(period_start, period_end):
+        # An interim spec wants exactly what an annual one rejects.
+        if spec.interim:
+            if not _is_interim(period_start, period_end):
+                return None
+        elif not _is_annual(period_start, period_end):
             return None
     elif period_start is not None:
         # An instant metric reported against a duration is a different concept.
@@ -546,6 +624,17 @@ def _is_annual(start: dt.date, end: dt.date) -> bool:
     """
     days = (end - start).days
     return ANNUAL_PERIOD_MIN_DAYS <= days <= ANNUAL_PERIOD_MAX_DAYS
+
+
+def _is_interim(start: dt.date, end: dt.date) -> bool:
+    """True for a period shorter than a year but longer than a month.
+
+    Deliberately wider than a quarter. A trailing twelve months is built either
+    from four quarters or from a year-to-date bridge, and the bridge needs the
+    half-year and nine-month periods a quarterly band would throw away.
+    """
+    days = (end - start).days
+    return INTERIM_PERIOD_MIN_DAYS <= days <= INTERIM_PERIOD_MAX_DAYS
 
 
 # --- Deduplication and period selection -------------------------------------

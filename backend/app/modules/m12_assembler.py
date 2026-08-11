@@ -431,6 +431,20 @@ def _common_size_rows(metrics: Sequence[str]) -> tuple[_Row, ...]:
 _COMMON_SIZE_INCOME_ROWS = _common_size_rows(COMMON_SIZE_INCOME_METRICS)
 _COMMON_SIZE_BALANCE_ROWS = _common_size_rows(COMMON_SIZE_BALANCE_METRICS)
 
+#: The trailing twelve months. Rendered as its own single column because it is
+#: not a fiscal year and must not sit in one — its window ends at the filer's
+#: most recent quarter, which is the entire reason a reader wants it.
+_TTM_ROWS: tuple[_Row, ...] = (
+    _Row("ttm.income.revenue", "Revenue", FigureEmphasis.TOTAL),
+    _Row("ttm.income.gross_profit", "Gross profit"),
+    _Row(
+        "ttm.income.operating_income", "Operating income", FigureEmphasis.TOTAL
+    ),
+    _Row("ttm.income.net_income", "Net income", FigureEmphasis.TOTAL),
+    _Row("ttm.cashflow.operating", "Net cash from operating activities"),
+    _Row("ttm.cashflow.capital_expenditure", "Capital expenditure"),
+)
+
 _MARKET_ROWS: tuple[_Row, ...] = (
     _Row("market.price", "Price"),
     _Row("market.market_cap", "Market capitalisation"),
@@ -827,6 +841,49 @@ def _table(
     )
 
 
+def _ttm_table(index: _Index, cited: list[str]) -> FigureTable | None:
+    """The trailing twelve months, as one column headed by its own window.
+
+    Absent for a filer whose newest annual report is already its newest data —
+    a company that has just filed its year end has nothing to add to it, and
+    the annual column is the trailing twelve months. It earns its place on the
+    filer whose year ended months ago and who has reported quarters since,
+    which is the case where an annual column is being read beside a price that
+    is nearly a year newer than it.
+    """
+    found = [
+        (row, fact)
+        for row in _TTM_ROWS
+        if (fact := index.latest.get(row.metric)) is not None
+    ]
+    if not found:
+        return None
+
+    window_end = max(fact.period_end for _, fact in found)
+    rows: list[FigureRow] = []
+    for row, fact in found:
+        cited.append(fact.fact_id)
+        rows.append(
+            FigureRow(
+                label=row.label,
+                fact_ids=(fact.fact_id,),
+                emphasis=row.emphasis,
+            )
+        )
+
+    return FigureTable(
+        id="analysis-ttm",
+        caption="Trailing twelve months",
+        periods=(f"12 months to {window_end.isoformat()}",),
+        rows=tuple(rows),
+        unit_note=(
+            "Twelve months ending at the filer's most recent reported period, "
+            "built from its own quarters rather than annualised from a part "
+            "year. Each figure carries the periods it was assembled from."
+        ),
+    )
+
+
 def _currency_note(index: _Index) -> str:
     return DISPLAY_SCALE_NOTE.format(currency=index.currency or "Reporting")
 
@@ -1175,6 +1232,10 @@ def _analysis_section(
         )
         if sector_table is not None:
             tables.append(sector_table)
+
+    trailing = _ttm_table(index, cited)
+    if trailing is not None:
+        tables.append(trailing)
 
     segments = _segment_table(index, cited)
     if segments is not None:

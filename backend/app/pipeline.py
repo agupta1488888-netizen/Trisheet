@@ -434,6 +434,12 @@ async def _extract(
             reported.extend(
                 await m03_financials.extract_segments(company, filings)
             )
+        # The interim figures a trailing twelve months is built from. A filer
+        # that reports only annually yields none, and the report is simply
+        # without that column.
+        reported.extend(
+            await m03_financials.extract_quarterly(company, filings)
+        )
         work.facts.extend(reported)
         outcome.done(len(reported))
 

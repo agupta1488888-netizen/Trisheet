@@ -9,7 +9,7 @@ logged — `SecretStr` is used so that an accidental repr does not leak them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -213,6 +213,14 @@ NOT_DISCLOSED_TEXT = "Not disclosed"
 ANNUAL_PERIOD_MIN_DAYS = 300
 ANNUAL_PERIOD_MAX_DAYS = 400
 
+#: What counts as an interim period when extracting one. Wider than a
+#: quarter on purpose: a trailing twelve months is built either from four
+#: quarters or from a year-to-date bridge, and the bridge needs the half-year
+#: and nine-month periods a quarterly band would reject. m07 narrows this to
+#: true quarters itself where it needs to.
+INTERIM_PERIOD_MIN_DAYS = 60
+INTERIM_PERIOD_MAX_DAYS = 300
+
 QUARTERLY_PERIOD_MIN_DAYS = 60
 QUARTERLY_PERIOD_MAX_DAYS = 120
 
@@ -318,6 +326,11 @@ class MetricSpec:
     #: True when a filer may legitimately not report it, so its absence is
     #: expected rather than a gap worth flagging.
     optional: bool = False
+    #: True when this spec collects interim durations — a quarter, a half or
+    #: a year to date — instead of annual ones. Only a trailing-twelve-months
+    #: calculation wants these, and they are emitted under their own metric
+    #: name so an interim figure can never land in an annual column.
+    interim: bool = False
     #: True for an instant measured at the filing date rather than at a period
     #: end — a cover page count, not a balance sheet one. Such a figure is
     #: exempt from the fiscal-year-end filter, which would otherwise discard it
@@ -1292,6 +1305,7 @@ SECTION_METRIC_PREFIXES: dict[int, tuple[str, ...]] = {
         "growth.",
         "common_size.",
         "ttm.",
+        "quarterly.",
         "bridge.",
         "attribution.",
         # Sector-specific, from m07.
@@ -1444,6 +1458,47 @@ TTM_METRICS = (
     "income.net_income",
     "cashflow.operating",
     "cashflow.capital_expenditure",
+)
+
+#: Interim figures live under their own prefix, and must.
+#:
+#: m12 keys a table cell by (metric, fiscal year). An interim figure carries
+#: the same fiscal year as the annual one it sits inside, so sharing a metric
+#: name would put a third-quarter revenue and a full-year revenue on the same
+#: key — one would silently overwrite the other in the financial statements.
+#: The prefix is what makes that impossible rather than merely unlikely.
+QUARTERLY_METRIC_PREFIX = "quarterly."
+
+
+def quarterly_metric(metric: str) -> str:
+    """The interim counterpart of a metric name."""
+    return f"{QUARTERLY_METRIC_PREFIX}{metric}"
+
+
+#: Interim periods kept per metric.
+#:
+#: Four quarters make a trailing twelve months directly, but many filers tag
+#: only one standalone quarter a year and report the rest as year to date —
+#: Microsoft files Q1, then a half year, then nine months. The bridge that
+#: handles them needs the prior year's matching year-to-date period to
+#: subtract, so the window has to reach back far enough to hold two years of
+#: overlapping periods rather than one year of clean quarters.
+MAX_INTERIM_PERIODS = 14
+
+#: The specs used to extract them, derived from the annual ones so a tag ladder
+#: is maintained in exactly one place. Only the metrics a trailing twelve
+#: months is built from: every extra interim figure is a row in m10's prompt
+#: table, and nothing else reads them.
+QUARTERLY_METRIC_SPECS: tuple[MetricSpec, ...] = tuple(
+    replace(
+        spec,
+        metric=quarterly_metric(spec.metric),
+        label=f"{spec.label}, interim",
+        interim=True,
+        optional=True,
+    )
+    for spec in METRIC_SPECS
+    if spec.metric in TTM_METRICS and spec.period_type == "duration"
 )
 
 
