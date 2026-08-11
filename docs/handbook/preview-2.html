@@ -1,0 +1,447 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Trisheet — How It Works, End to End</title><style>@page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Segoe UI", -apple-system, Helvetica, Arial, sans-serif;
+  font-size: 10.2pt;
+  line-height: 1.55;
+  color: #14201C;
+  background: #fff;
+  margin: 0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+h1, h2, h3, h4 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; color: #14201C; }
+
+h1 { font-size: 26pt; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 {
+  font-size: 15pt; margin: 26px 0 10px; padding-bottom: 5px;
+  border-bottom: 1.5px solid #14201C; page-break-after: avoid;
+}
+h3 { font-size: 11.6pt; margin: 18px 0 6px; page-break-after: avoid; }
+h4 { font-size: 10.4pt; margin: 14px 0 4px; page-break-after: avoid; }
+
+p { margin: 0 0 9px; }
+ul, ol { margin: 0 0 10px; padding-left: 18px; }
+li { margin-bottom: 4px; }
+
+code, .mono {
+  font-family: "Consolas", "IBM Plex Mono", monospace;
+  font-size: 9pt;
+  background: #F4F2EC;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+pre {
+  font-family: "Consolas", monospace; font-size: 8.6pt; line-height: 1.45;
+  background: #FBFAF7; border: 1px solid #E2DED4; border-left: 3px solid #1F4D3D;
+  padding: 10px 12px; overflow: visible; white-space: pre-wrap;
+  page-break-inside: avoid; margin: 0 0 12px; border-radius: 2px;
+}
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 14px; font-size: 9.2pt; page-break-inside: auto; }
+th {
+  text-align: left; font-weight: 600; border-bottom: 1.5px solid #14201C;
+  padding: 6px 7px; background: #FBFAF7; font-size: 8.8pt;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+td { padding: 6px 7px; border-bottom: 1px solid #E2DED4; vertical-align: top; }
+tr { page-break-inside: avoid; }
+td.file { font-family: Consolas, monospace; font-size: 8.5pt; white-space: nowrap; color: #1F4D3D; font-weight: 600; }
+td.num { text-align: right; font-family: Consolas, monospace; font-variant-numeric: tabular-nums; color: #6B6B60; font-size: 8.5pt; }
+
+.cover { padding-top: 46mm; page-break-after: always; }
+.cover .eyebrow { font-family: Consolas, monospace; font-size: 9pt; letter-spacing: 0.16em; text-transform: uppercase; color: #1F4D3D; margin-bottom: 14px; }
+.cover .sub { font-size: 13pt; color: #4A5B54; margin: 10px 0 26px; font-family: Georgia, serif; font-style: italic; }
+.cover .meta { border-top: 1.5px solid #14201C; padding-top: 12px; font-size: 9.4pt; color: #4A5B54; }
+.cover .meta div { margin-bottom: 3px; }
+
+.lede { font-size: 11pt; color: #37463F; border-left: 3px solid #1F4D3D; padding-left: 12px; margin: 0 0 18px; }
+
+.note {
+  background: #FBFAF7; border: 1px solid #E2DED4; border-left: 3px solid #3E5C7A;
+  padding: 9px 12px; margin: 0 0 13px; font-size: 9.4pt; page-break-inside: avoid;
+}
+.note strong { color: #3E5C7A; }
+
+.rule-box {
+  background: #F7F4EC; border: 1px solid #D8D2C2; border-left: 3px solid #9E3B26;
+  padding: 9px 12px; margin: 0 0 13px; font-size: 9.4pt; page-break-inside: avoid;
+}
+.rule-box strong { color: #9E3B26; }
+
+.tier1 { color: #1F4D3D; font-weight: 600; }
+.tier3 { color: #3E5C7A; font-weight: 600; }
+.flag  { color: #9E3B26; font-weight: 600; }
+
+.toc { page-break-after: always; }
+.toc ol { padding-left: 20px; }
+.toc li { margin-bottom: 5px; font-size: 10.4pt; }
+.toc ul { margin-top: 4px; }
+.toc ul li { font-size: 9.4pt; color: #4A5B54; margin-bottom: 2px; list-style: none; }
+
+.step {
+  border: 1px solid #E2DED4; border-radius: 3px; padding: 11px 13px;
+  margin: 0 0 11px; page-break-inside: avoid; background: #FEFDFB;
+}
+.step .hd { font-family: Georgia, serif; font-weight: 600; font-size: 11pt; margin-bottom: 5px; }
+.step .tag {
+  font-family: Consolas, monospace; font-size: 8pt; background: #1F4D3D; color: #fff;
+  padding: 1.5px 6px; border-radius: 2px; margin-right: 7px; letter-spacing: 0.04em;
+}
+.step .tag.opt { background: #6B7B74; }
+.step .tag.gate { background: #9E3B26; }
+
+.pagebreak { page-break-before: always; }
+.avoid { page-break-inside: avoid; }
+.small { font-size: 9pt; color: #5A6862; }
+.footer-note { margin-top: 26px; padding-top: 10px; border-top: 1px solid #E2DED4; font-size: 8.6pt; color: #6B6B60; }
+</style></head><body><div class="cover">
+  <div class="eyebrow">Trisheet · Document 2 of 3</div>
+  <h1>How It Works, End to End</h1>
+  <div class="sub">What actually happens between typing a ticker and reading a report</div>
+  <div class="meta">
+    <div><strong>Follows</strong> — one complete journey, from keystroke to finished document</div>
+    <div><strong>Covers</strong> — 13 modules, 8 database tables, 3 output formats</div>
+    <div><strong>Typical run</strong> — 60 to 180 seconds, 40 to 90 sourced facts</div>
+    <div><strong>Date</strong> — 5 August 2026</div>
+  </div>
+</div>
+
+<h2>The shape of the system</h2>
+
+<p class="lede">Two programs run in different places. The browser draws screens. The backend does
+all the work. They never blur — the browser cannot reach the SEC, the language model or the
+database's write path, and that restriction is what makes the project's guarantees enforceable
+rather than aspirational.</p>
+
+<pre>     YOUR BROWSER                    THE BACKEND                  THE OUTSIDE WORLD
+  ┌──────────────────┐          ┌──────────────────┐          ┌────────────────────┐
+  │  Next.js site    │  HTTP    │  FastAPI engine  │          │  SEC EDGAR         │
+  │  (Vercel)        │ ───────► │  (Railway)       │ ───────► │  Market data       │
+  │                  │ ◄─────── │                  │ ◄─────── │  Anthropic (Claude)│
+  └──────────────────┘          └──────────────────┘          └────────────────────┘
+          │                              │
+          │      live progress           │
+          └──────────  Supabase  ────────┘
+                    (database + realtime)</pre>
+
+<div class="note">
+<strong>Why the split matters.</strong> If the browser could call the SEC directly, or write
+facts to the database directly, then every rule about provenance would be a rule the browser
+could skip. Routing everything through the backend means the write gate is unavoidable.
+</div>
+
+<h2>The journey, in eleven stages</h2>
+
+<p>What follows traces one real request: a user types <code>AAPL</code> and reads the finished
+profile.</p>
+
+<h3>Stage 1 — Typing</h3>
+<p>As the user types, the browser asks the backend <code>GET /resolve/suggest</code> for matching
+companies. The backend searches the SEC's official ticker index. A dropdown appears showing
+company names and tickers.</p>
+<p class="small">Files involved: <code>ticker-combobox.tsx</code> → <code>lib/api.ts</code> →
+<code>main.py</code> → <code>m01_resolver.py</code> → <code>services/edgar.py</code></p>
+
+<h3>Stage 2 — Confirming which company</h3>
+<p>On submit, the browser calls <code>POST /resolve</code>. The backend turns the input into a
+confirmed identity:</p>
+<ul>
+  <li><strong>CIK</strong> — the SEC's permanent ID for the company, padded to ten digits.</li>
+  <li><strong>Filer type</strong> — decided by looking at the annual form the company most
+  recently filed. A US filer files a 10-K; a foreign one files a 20-F or 40-F. Everything
+  downstream depends on this, so it is never assumed.</li>
+  <li><strong>Industry code, financial year end, reporting currency</strong> — read from the
+  company's own data, not guessed.</li>
+</ul>
+<div class="note">
+<strong>If the input matches several companies</strong>, the backend returns the candidates and
+chooses none. The user picks. Guessing would produce a correct-looking report about the wrong
+business — the worst possible failure for this product.
+</div>
+
+<h3>Stage 3 — Starting the job</h3>
+<p>The browser calls <code>POST /reports</code> with the CIK and the chosen depth. Here is the
+key design decision:</p>
+<div class="rule-box">
+<strong>The request does not wait for the report.</strong> Generating one means reading dozens of
+documents and writing prose about them — minutes, not seconds. Far longer than a browser will
+hold a connection open. So the backend registers the job, immediately answers with a job ID, and
+does the work in the background.
+</div>
+<p>The browser is redirected to <code>/r/&lt;id&gt;</code> and starts watching progress. A rate
+limit caps how many reports one caller may start in a window.</p>
+
+<h3 class="pagebreak">Stage 4 — Extraction: gathering the raw material</h3>
+
+<p>The pipeline now runs its modules in a fixed order. Each records what it produced and how long
+it took.</p>
+
+<div class="step">
+<div class="hd"><span class="tag">m01</span>Load the company</div>
+Confirms the identity again from the authoritative source and loads the full profile.
+<strong>Required</strong> — if this fails, the report fails.
+</div>
+
+<div class="step">
+<div class="hd"><span class="tag">m02</span>Build the filing manifest</div>
+Takes the company's entire filing history and narrows it to what this report may use. Drops
+irrelevant forms. Applies amendment precedence, so a restated figure wins over the original it
+replaced. Attaches full URLs and accession numbers.
+<strong>Required.</strong>
+</div>
+
+<div class="step">
+<div class="hd"><span class="tag">m03</span>Extract the financial figures</div>
+Pulls reported numbers from the SEC's structured XBRL data — revenue, operating income, assets,
+cash flow, and segment breakdowns. For each metric it tries an ordered list of tags rather than
+one, because companies tag the same concept differently. It tries the US taxonomy first and falls
+back to the international one for foreign filers. Duplicates are removed keeping the latest
+filing. Anything not found becomes a "not disclosed" marker — never an estimate.
+<strong>Required.</strong>
+</div>
+
+<div class="step">
+<div class="hd"><span class="tag opt">m04</span>Extract the narrative sections</div>
+The business description, risk factors and management discussion, as written. No summarising, no
+ranking, no interpretation. <strong>Optional</strong> — if parsing fails, the report still
+generates from the figures alone.
+</div>
+
+<div class="step">
+<div class="hd"><span class="tag opt">m05</span>Fetch market data</div>
+Share price, market capitalisation, trading multiples. The only module allowed to touch a market
+provider. Everything it produces is marked Tier 3.
+<strong>Optional</strong> — if the provider is down, the report generates without the valuation
+table.
+</div>
+
+<div class="step">
+<div class="hd"><span class="tag opt">m13</span>Read any attached links</div>
+If the reader attached a URL, it is fetched and quoted. These become <code>SourceNote</code>
+objects, which by their type <em>cannot</em> become facts — so a company web page can never enter
+the financial highlights table. <strong>Optional.</strong>
+</div>
+
+<h3>Stage 5 — Analysis: all the arithmetic</h3>
+
+<div class="step">
+<div class="hd"><span class="tag">m07</span>Compute every derived figure</div>
+Growth rates, margins, ratios, bridges, discounted cash flow, sensitivity and scenario tables —
+computed in Python with pandas and numpy. Pure functions: same input, byte-identical output, every
+time. Each derived value carries the formula that produced it so the interface can show its
+working.
+</div>
+
+<div class="rule-box">
+<strong>This is the single most important rule in the project.</strong> The language model never
+performs arithmetic. It never recalls, estimates or derives a number. Every figure is computed
+here, in Python, and handed to the model already calculated. The model's only job is to write
+sentences about numbers it was given.
+</div>
+
+<div class="step">
+<div class="hd"><span class="tag opt">m08</span>Select comparable companies</div>
+Uses a ladder of decreasing authority and records which rung answered: first the compensation peer
+group named in the proxy statement (a pay committee has stated on the record who it considers
+peers), then the competition section of the annual report, then industry-code match.
+<strong>Optional.</strong>
+</div>
+
+<div class="step">
+<div class="hd"><span class="tag opt">m09</span>Build the developments timeline</div>
+Dated entries from current-report filings — 8-K for US companies, 6-K for foreign ones — filtered
+by the filing's own item numbers so only material events appear. <strong>Optional.</strong>
+</div>
+
+<h3 class="pagebreak">Stage 6 — The write gate</h3>
+
+<div class="step">
+<div class="hd"><span class="tag gate">m06</span>Store the facts — and refuse the bad ones</div>
+Everything gathered so far is now offered to the fact store. This is the wall.
+</div>
+
+<p>Two refusals happen here, each logged rather than silently swallowed:</p>
+
+<table>
+  <tr><th style="width:32%">Refusal</th><th>Why</th></tr>
+  <tr><td><strong>Missing provenance</strong></td>
+  <td>A fact lacking its tier, source type, source URL, accession number or filing date is
+  discarded. It is never stored blank and never rendered with a gap.</td></tr>
+  <tr><td><strong>Wrong tier for the section</strong></td>
+  <td>A Tier 3 or Tier 4 value offered for a financial-highlights metric is hard-blocked. Market
+  data and news can never enter the financial statements section.</td></tr>
+</table>
+
+<h4>The four source tiers</h4>
+<table>
+  <tr><th style="width:14%">Tier</th><th style="width:34%">What it is</th><th>Where it may appear</th></tr>
+  <tr><td class="tier1">Tier 1</td><td>SEC filings — 10-K, 10-Q, 8-K, DEF 14A, 20-F, 40-F, 6-K</td><td>Anywhere, including financial highlights</td></tr>
+  <tr><td>Tier 2</td><td>Company website, investor presentations, press releases</td><td>Anywhere, including financial highlights</td></tr>
+  <tr><td class="tier3">Tier 3</td><td>Market data — price, market cap, multiples</td><td><span class="flag">Blocked</span> from financial highlights</td></tr>
+  <tr><td>Tier 4</td><td>News and general web</td><td><span class="flag">Blocked</span> from financial highlights</td></tr>
+</table>
+
+<h3>Stage 7 — Writing the prose</h3>
+
+<div class="step">
+<div class="hd"><span class="tag">m10</span>The language model writes</div>
+The model receives the already-computed facts and writes the narrative around them. What reaches
+the prompt is fact objects and nothing else — every one has already passed the write gate. No raw
+web text, no filing HTML and no market payload is ever placed into a prompt here. The model's
+answer is constrained to a fixed JSON shape so it can be checked rather than trusted.
+</div>
+
+<h3>Stage 8 — Verification: the blocking gate</h3>
+
+<div class="step">
+<div class="hd"><span class="tag gate">m11</span>Verify the prose against the facts</div>
+<strong>This is the audit, not a control.</strong> Findings are graded: blocking findings mark the
+report as having failed verification and are shown beside the figures they concern; advisory
+findings are noted without failing the report.
+</div>
+
+<p>It checks:</p>
+<ul>
+  <li><strong>Every number in the prose exists in the fact store.</strong> A figure matching
+  nothing is a fabrication, whatever produced it.</li>
+  <li><strong>Every figure carries a citation</strong> traceable to the filing it came from.</li>
+  <li><strong>Segment figures sum to the consolidated total</strong> within tolerance.</li>
+  <li><strong>Assets equal liabilities plus equity.</strong></li>
+</ul>
+
+<p>The results of these checks become the compliance strip the reader sees at the top of the
+report — fact count, tier distribution, citation coverage, pass or fail.</p>
+
+<h3>Stage 9 — Assembly</h3>
+
+<div class="step">
+<div class="hd"><span class="tag">m12</span>Build the outputs</div>
+The verified report is turned into three forms: the JSON document the browser renders, a PDF
+styled as an analyst tearsheet, and an Excel workbook whose ratios are live formulas over the
+reported figures rather than pasted values. All three are rendered from one canonical document, so
+a figure cannot appear in the PDF having failed verification for the screen.
+</div>
+
+<h3 class="pagebreak">Stage 10 — Watching it happen</h3>
+
+<p>While all of the above runs, the browser is not idle. Each step writes a record as it starts
+and settles, and those records stream to the browser live through Supabase Realtime.</p>
+
+<p>The reader sees each step appear with what it produced — "extracted 47 figures", "selected 6
+peers", "verification passed". If the live connection is unavailable, the browser falls back to
+polling the API instead, so the progress screen works either way.</p>
+
+<h4>What happens when something fails</h4>
+<p>The failure policy is stated once, in the pipeline, and applies everywhere:</p>
+<table>
+  <tr><th style="width:30%">If this fails…</th><th>…then</th></tr>
+  <tr><td><strong>SEC EDGAR</strong> (resolution, discovery, XBRL)</td>
+  <td>The report fails, and says why in plain language. Without filings there is nothing to
+  report.</td></tr>
+  <tr><td><strong>Narrative parsing</strong></td><td>The report generates from the figures alone.</td></tr>
+  <tr><td><strong>Market data</strong></td><td>The report generates without the valuation table.</td></tr>
+  <tr><td><strong>Peer selection</strong></td><td>The report generates without the comparison.</td></tr>
+  <tr><td><strong>PDF or Excel upload</strong></td><td>A complete report with a missing download link, and the interface says so.</td></tr>
+</table>
+<p>In every optional case the step settles as skipped or failed with a reason the reader can act
+on. Nothing renders a blank screen or a stack trace.</p>
+
+<h3>Stage 11 — Reading the report</h3>
+
+<p>When the run completes, the page renders the finished document.</p>
+
+<h4>The provenance rail — the product's identity</h4>
+<p>Down the right side of the report sits a persistent column of source cards. Each shows the form
+type, the accession number, the filing date and a link to the document on the SEC's site.</p>
+<p>Every figure in the report carries a small superscript number. That number names a card in the
+rail. Hovering a figure highlights its source. The rail is never collapsed into a footer — it
+stays visible, because the sourcing <em>is</em> the product.</p>
+
+<pre>  Revenue, FY2025    416,161 ³        │  ③  10-K          Oct 31, 2025
+  Operating income   134,410 ³        │      0000320193-25-000073
+  Free cash flow     117,160 ³        │      Tier 1 · filing · 23 figures
+         calculated                   │</pre>
+
+<h4>Asking the assistant a question</h4>
+<p>The reader can ask questions about the report. The assistant answers only from facts that
+already carry provenance, working in tiers and stopping at the first that has an answer:</p>
+<ol>
+  <li><strong>Facts already stored for this report.</strong> Matching is done by plain Python word
+  overlap between the question and each fact's label — a search problem, deliberately not
+  something the language model is asked to decide.</li>
+  <li><strong>Metrics derivable from those facts</strong>, computed in Python.</li>
+</ol>
+<p>Questions asking whether to buy or sell are redirected rather than answered. The system does
+not give investment advice.</p>
+
+<h4>Downloads</h4>
+<p>The PDF and the Excel workbook are offered from the same verified document. Source references
+travel with both — the provenance rail is not a screen-only feature.</p>
+
+<h2 class="pagebreak">The whole flow on one page</h2>
+
+<pre>  USER TYPES "AAPL"
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ RESOLVE      m01   ticker → CIK, filer type, sector, currency   │
+  │              m02   which filings this report may use            │
+  └─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ EXTRACT      m03   XBRL figures          (required)             │
+  │              m04   narrative text        (optional)             │
+  │              m05   market data           (optional, Tier 3)     │
+  │              m13   attached links        (optional, not facts)  │
+  └─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ ANALYSE      m07   ALL arithmetic, pure Python                  │
+  │              m08   peer selection ladder (optional)             │
+  │              m09   8-K / 6-K timeline    (optional)             │
+  └─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ GATE         m06   no provenance → discarded + logged           │
+  │                    Tier 3/4 in section 3 → blocked + logged     │
+  └─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ WRITE        m10   model writes prose about computed figures    │
+  └─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ VERIFY       m11   BLOCKING. every number must exist in facts   │
+  │                    every figure must carry a citation           │
+  └─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ ASSEMBLE     m12   JSON document + PDF + XLSX from one source   │
+  └─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  REPORT + PROVENANCE RAIL  →  reader can ask questions, download both files</pre>
+
+<div class="note">
+<strong>Read the order again and notice what it guarantees.</strong> The model writes at step m10.
+The gate closes at m06, before it. The audit runs at m11, after it. The model is enclosed on both
+sides — it cannot introduce a figure, and anything it wrote that does not trace to a stored fact
+stops the report from rendering at all.
+</div>
+
+<div class="footer-note">
+Document 2 of 3 · Trisheet workflow · Module order verified against
+<code>backend/app/pipeline.py</code> on 5 August 2026.
+</div>
+</body></html>

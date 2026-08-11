@@ -1,0 +1,371 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Trisheet — What It Does, and Why</title><style>@page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Segoe UI", -apple-system, Helvetica, Arial, sans-serif;
+  font-size: 10.2pt;
+  line-height: 1.55;
+  color: #14201C;
+  background: #fff;
+  margin: 0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+h1, h2, h3, h4 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; color: #14201C; }
+
+h1 { font-size: 26pt; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 {
+  font-size: 15pt; margin: 26px 0 10px; padding-bottom: 5px;
+  border-bottom: 1.5px solid #14201C; page-break-after: avoid;
+}
+h3 { font-size: 11.6pt; margin: 18px 0 6px; page-break-after: avoid; }
+h4 { font-size: 10.4pt; margin: 14px 0 4px; page-break-after: avoid; }
+
+p { margin: 0 0 9px; }
+ul, ol { margin: 0 0 10px; padding-left: 18px; }
+li { margin-bottom: 4px; }
+
+code, .mono {
+  font-family: "Consolas", "IBM Plex Mono", monospace;
+  font-size: 9pt;
+  background: #F4F2EC;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+pre {
+  font-family: "Consolas", monospace; font-size: 8.6pt; line-height: 1.45;
+  background: #FBFAF7; border: 1px solid #E2DED4; border-left: 3px solid #1F4D3D;
+  padding: 10px 12px; overflow: visible; white-space: pre-wrap;
+  page-break-inside: avoid; margin: 0 0 12px; border-radius: 2px;
+}
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 14px; font-size: 9.2pt; page-break-inside: auto; }
+th {
+  text-align: left; font-weight: 600; border-bottom: 1.5px solid #14201C;
+  padding: 6px 7px; background: #FBFAF7; font-size: 8.8pt;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+td { padding: 6px 7px; border-bottom: 1px solid #E2DED4; vertical-align: top; }
+tr { page-break-inside: avoid; }
+td.file { font-family: Consolas, monospace; font-size: 8.5pt; white-space: nowrap; color: #1F4D3D; font-weight: 600; }
+td.num { text-align: right; font-family: Consolas, monospace; font-variant-numeric: tabular-nums; color: #6B6B60; font-size: 8.5pt; }
+
+.cover { padding-top: 46mm; page-break-after: always; }
+.cover .eyebrow { font-family: Consolas, monospace; font-size: 9pt; letter-spacing: 0.16em; text-transform: uppercase; color: #1F4D3D; margin-bottom: 14px; }
+.cover .sub { font-size: 13pt; color: #4A5B54; margin: 10px 0 26px; font-family: Georgia, serif; font-style: italic; }
+.cover .meta { border-top: 1.5px solid #14201C; padding-top: 12px; font-size: 9.4pt; color: #4A5B54; }
+.cover .meta div { margin-bottom: 3px; }
+
+.lede { font-size: 11pt; color: #37463F; border-left: 3px solid #1F4D3D; padding-left: 12px; margin: 0 0 18px; }
+
+.note {
+  background: #FBFAF7; border: 1px solid #E2DED4; border-left: 3px solid #3E5C7A;
+  padding: 9px 12px; margin: 0 0 13px; font-size: 9.4pt; page-break-inside: avoid;
+}
+.note strong { color: #3E5C7A; }
+
+.rule-box {
+  background: #F7F4EC; border: 1px solid #D8D2C2; border-left: 3px solid #9E3B26;
+  padding: 9px 12px; margin: 0 0 13px; font-size: 9.4pt; page-break-inside: avoid;
+}
+.rule-box strong { color: #9E3B26; }
+
+.tier1 { color: #1F4D3D; font-weight: 600; }
+.tier3 { color: #3E5C7A; font-weight: 600; }
+.flag  { color: #9E3B26; font-weight: 600; }
+
+.toc { page-break-after: always; }
+.toc ol { padding-left: 20px; }
+.toc li { margin-bottom: 5px; font-size: 10.4pt; }
+.toc ul { margin-top: 4px; }
+.toc ul li { font-size: 9.4pt; color: #4A5B54; margin-bottom: 2px; list-style: none; }
+
+.step {
+  border: 1px solid #E2DED4; border-radius: 3px; padding: 11px 13px;
+  margin: 0 0 11px; page-break-inside: avoid; background: #FEFDFB;
+}
+.step .hd { font-family: Georgia, serif; font-weight: 600; font-size: 11pt; margin-bottom: 5px; }
+.step .tag {
+  font-family: Consolas, monospace; font-size: 8pt; background: #1F4D3D; color: #fff;
+  padding: 1.5px 6px; border-radius: 2px; margin-right: 7px; letter-spacing: 0.04em;
+}
+.step .tag.opt { background: #6B7B74; }
+.step .tag.gate { background: #9E3B26; }
+
+.pagebreak { page-break-before: always; }
+.avoid { page-break-inside: avoid; }
+.small { font-size: 9pt; color: #5A6862; }
+.footer-note { margin-top: 26px; padding-top: 10px; border-top: 1px solid #E2DED4; font-size: 8.6pt; color: #6B6B60; }
+</style></head><body><div class="cover">
+  <div class="eyebrow">Trisheet · Document 3 of 3</div>
+  <h1>What It Does, and Why</h1>
+  <div class="sub">Features, design decisions, and how every requirement is met</div>
+  <div class="meta">
+    <div><strong>Product</strong> — Trisheet: equity-research-grade company profiles for US-listed companies</div>
+    <div><strong>Core claim</strong> — every financial figure traces back to an SEC filing</div>
+    <div><strong>Requirements of record</strong> — the seven non-negotiable rules in <code>CLAUDE.md</code></div>
+    <div><strong>Date</strong> — 5 August 2026</div>
+  </div>
+</div>
+
+<h2>What the product is</h2>
+
+<p class="lede">Trisheet takes a US-listed ticker and produces a company profile of the kind an
+equity research analyst would write — except that every single number in it can be traced, in one
+click, to the exact government filing it came from.</p>
+
+<p>The problem it solves is a real one. Financial summaries are easy to generate and hard to
+trust. A language model asked about a company's revenue will produce a confident, plausible,
+well-formatted number — and no way to check it. For anything involving money, a figure you cannot
+verify is worse than no figure at all, because it invites a decision it cannot support.</p>
+
+<div class="rule-box">
+<strong>The product's value is provenance, not automation.</strong> That sentence is the first
+line of the project's rules, and every architectural decision follows from it. Speed and polish
+are secondary. If a figure cannot name its source, it does not appear.
+</div>
+
+<h2>Why it is designed this way</h2>
+
+<h3>The central problem: a model that sounds right</h3>
+
+<p>A language model is very good at writing and very bad at remembering numbers precisely. Asked
+for a company's operating margin it will produce something that looks correct, is formatted
+correctly, and may be wrong by a wide margin. It cannot tell you which it is.</p>
+
+<p>The design response is to give the model no opportunity to be wrong about numbers at all:</p>
+
+<table>
+  <tr><th style="width:38%">The model is never asked to…</th><th>Instead</th></tr>
+  <tr><td>Calculate anything</td><td>All arithmetic happens in Python, in one file, using pandas and numpy</td></tr>
+  <tr><td>Recall a figure</td><td>Figures are extracted from the SEC's structured data and handed to it</td></tr>
+  <tr><td>Estimate a missing value</td><td>Missing data renders as "Not disclosed"</td></tr>
+  <tr><td>Decide what is trustworthy</td><td>Source tiers are enforced in code, before the model is called</td></tr>
+  <tr><td>Be trusted on output</td><td>Everything it writes is checked against the fact store afterwards</td></tr>
+</table>
+
+<p>The model is enclosed on both sides. The gate closes before it runs; the audit runs after. Its
+job is reduced to the one thing it is genuinely good at — writing clear sentences about figures
+it was given.</p>
+
+<h3>Why provenance is a type, not a policy</h3>
+
+<p>Most systems that promise sourcing implement it as a convention: remember to attach the source.
+Conventions decay. So here, the central data structure — <code>Fact</code> — declares its five
+provenance fields with no default values. A fact that cannot name its source cannot be
+constructed. The rule is enforced by the shape of the data, not by anyone's diligence.</p>
+
+<p>The database then declares the same five columns NOT NULL, so the rule holds a second time one
+layer further down, even if the code above were bypassed entirely.</p>
+
+<h3>Why exactly one file may touch market data</h3>
+
+<p>The rule that market prices must never appear in the audited financial statements section could
+have been a guideline. Instead it is physical: exactly one module in the codebase is permitted to
+import a market data provider. If any other file did, that is a bug, findable by search.</p>
+
+<p>That single choke point makes the tier rule checkable in seconds rather than argued about in
+review. Three independent walls then stop a market figure reaching the financial highlights: the
+module tags its output, the write gate blocks the tier, and the verification gate checks again.</p>
+
+<h3>Why the report looks like paper</h3>
+
+<p>The report deliberately does not look like a dashboard. Financial documents are read on white
+paper: figures right-aligned in a monospaced typeface with tabular numerals so digits line up
+between rows, hairline rules instead of cards, no gradients, no shadows, no glow. The word "AI"
+appears nowhere in the interface — the reader is looking at sourced filings, and the machinery
+that assembled them is not the point.</p>
+
+<p>The landing page is a deliberate exception. It is colourful and modern, because a first-time
+visitor needs an invitation before they need austerity. The split is intentional and documented,
+not an inconsistency.</p>
+
+<h2 class="pagebreak">What it can do — the feature list</h2>
+
+<h3>Input and resolution</h3>
+<ul>
+  <li>Search by ticker or by company name, with live suggestions from the SEC's official index.</li>
+  <li>Ambiguous searches return candidates rather than a guess — the user chooses.</li>
+  <li>Automatic detection of US versus foreign filers, decided from the annual form the company
+  actually filed, never assumed.</li>
+  <li>Four analysis depths, controlling how many years are examined. Depth never relaxes a
+  provenance rule.</li>
+  <li>A reader may attach their own links — an investor relations page, a press release — which
+  are quoted separately and can never become financial facts.</li>
+</ul>
+
+<h3>Data extraction</h3>
+<ul>
+  <li>Structured financial figures pulled from the SEC's XBRL data, with ordered tag fallbacks per
+  metric because companies tag the same concept differently.</li>
+  <li>US accounting taxonomy tried first, international taxonomy as fallback for foreign
+  filers.</li>
+  <li>Amendment precedence — a restated figure wins over the original it replaced.</li>
+  <li>Segment breakdowns by business line.</li>
+  <li>Narrative sections extracted as written: business description, risk factors, management
+  discussion.</li>
+  <li>Share price, market capitalisation and trading multiples, clearly marked as market data.</li>
+  <li>A dated timeline of material recent filings.</li>
+</ul>
+
+<h3>Analysis</h3>
+<ul>
+  <li>Growth rates, margins and financial ratios across multiple years.</li>
+  <li>Margin bridges showing what moved between periods.</li>
+  <li>Discounted cash flow valuation, with sensitivity and scenario tables.</li>
+  <li>Peer selection by a ladder of decreasing authority, recording which rung answered.</li>
+  <li>Every derived value carries the formula that produced it and is labelled "calculated".</li>
+</ul>
+
+<h3>The report</h3>
+<ul>
+  <li>Seven sections: snapshot, business, financials, analysis, peers, developments, risks.</li>
+  <li><strong>The provenance rail</strong> — a persistent column of source cards showing form
+  type, accession number, filing date and a direct link. Never collapsed into a footer.</li>
+  <li>Every figure carries a superscript marker naming its source card. Hovering highlights it.</li>
+  <li>A compliance strip showing fact count, tier distribution, citation coverage, and whether
+  verification passed.</li>
+  <li>Reconciliation statements — segments summing to consolidated revenue, assets equalling
+  liabilities plus equity.</li>
+  <li>Four charts: revenue and margin, cash flow, segment mix, peer valuation.</li>
+  <li>Live progress feed while the report generates, showing each step and what it produced.</li>
+</ul>
+
+<h3>After the report</h3>
+<ul>
+  <li>A question-answering assistant that responds only from facts already carrying provenance,
+  and redirects requests for investment advice rather than answering them.</li>
+  <li>PDF export styled as an analyst tearsheet, with sources included.</li>
+  <li>Excel export whose ratios are live formulas over the reported figures, not pasted values —
+  so the reader can audit the arithmetic themselves.</li>
+</ul>
+
+<h2 class="pagebreak">How every requirement is met</h2>
+
+<p>The requirements of record for this project are the seven non-negotiable rules stated in
+<code>CLAUDE.md</code>. They are described there as architectural constraints, not preferences:
+violating any one is a defect regardless of whether tests pass. Each is addressed below with the
+mechanism that enforces it and the evidence that it holds.</p>
+
+<h3>Rule 1 — The model never performs arithmetic</h3>
+<p><strong>Mechanism.</strong> All calculation lives in a single analysis module, written in pure
+functions with pandas and numpy — no file access, no global state, no side effects. The prose
+module builds its prompt from already-computed fact objects only.</p>
+<p><strong>Evidence.</strong> The analysis module is one of two carrying mandatory unit test
+coverage. Its purity means identical input yields byte-identical output, which is what makes a
+report reproducible.</p>
+
+<h3>Rule 2 — No fact exists without provenance</h3>
+<p><strong>Mechanism.</strong> The <code>Fact</code> type declares tier, source type, source URL,
+accession number and filing date with no defaults. The write gate additionally rejects
+whitespace-only values that would satisfy the type while naming no source. The database declares
+all five columns NOT NULL.</p>
+<p><strong>Evidence.</strong> Verified in the source: all five fields present and required; the
+gate's blank-field check confirmed; every rejection logged rather than swallowed.</p>
+
+<h3>Rule 3 — Source tier enforcement is code, not prompting</h3>
+<p><strong>Mechanism.</strong> The permitted tiers for the financial highlights section are a
+named constant. The write gate compares each fact's tier against it and refuses non-conforming
+facts with a typed rejection code and a logged reason.</p>
+<p><strong>Evidence.</strong> Confirmed in the source: the constant is set to Tiers 1 and 2 only,
+and the gate raises a section-blocked rejection for anything else. Enforced again independently at
+the verification gate.</p>
+
+<h3>Rule 4 — Exactly one module may import a market data provider</h3>
+<p><strong>Mechanism.</strong> A single named module is the sole permitted importer. The rule is
+stated in that file's own header as a constraint on the rest of the codebase.</p>
+<p><strong>Evidence.</strong> A search across the entire backend for market provider imports
+returns matches in that module and nowhere else. <span class="tier1">Verified clean.</span></p>
+
+<h3>Rule 5 — Never fabricate, never estimate</h3>
+<p><strong>Mechanism.</strong> A metric that resolves nowhere produces an explicit
+"not disclosed" marker rather than a gap or a zero. Derived values render with a "calculated"
+label and their formula. The verification gate rejects any number in the prose that does not exist
+in the fact store.</p>
+<p><strong>Evidence.</strong> The interface contains no occurrence of "N/A"; "Not disclosed" is
+used throughout. The "calculated" label was confirmed rendering on derived figures.</p>
+
+<h3>Rule 6 — Only SEC EDGAR is a hard dependency</h3>
+<p><strong>Mechanism.</strong> The failure policy is stated once in the pipeline. Resolution,
+discovery and XBRL extraction may fail the report; every other step is allowed to produce nothing
+and settles as skipped or failed with a reason. Nothing raises a stack trace to the interface.</p>
+<p><strong>Evidence.</strong> Requesting a report ID that does not exist renders: <em>"No report
+with that id. It may have been generated by a server that has since restarted."</em> — what
+happened and what to do, in the interface's voice.</p>
+
+<h3>Rule 7 — Nothing is hardcoded to a single company</h3>
+<p><strong>Mechanism.</strong> Filer type is detected from the most recent annual form; sector
+from the SEC's industry code; reporting currency from the units the company's own data uses;
+metric templates switch on sector. Every interface literal lives in one constants file.</p>
+<p><strong>Evidence.</strong> Live-tested against four tickers, including a foreign filer:</p>
+
+<table>
+  <tr><th>Ticker</th><th>Company</th><th>Filer type</th><th>Currency</th><th>Year end</th><th>Sector from code</th></tr>
+  <tr><td class="file">AAPL</td><td>Apple Inc.</td><td>domestic</td><td>USD</td><td class="num">26 Sep</td><td>Electronic computers</td></tr>
+  <tr><td class="file">MSFT</td><td>Microsoft Corp</td><td>domestic</td><td>USD</td><td class="num">30 Jun</td><td>Prepackaged software</td></tr>
+  <tr><td class="file">SHOP</td><td>Shopify Inc.</td><td>domestic</td><td>USD</td><td class="num">31 Dec</td><td>Prepackaged software</td></tr>
+  <tr><td class="file">TSM</td><td>Taiwan Semiconductor</td><td class="flag">foreign</td><td class="flag">TWD</td><td class="num">31 Dec</td><td>Semiconductors</td></tr>
+</table>
+
+<p>Three different financial year ends, two currencies, both filer types, four industry
+classifications — all detected, none hardcoded.</p>
+
+<h2 class="pagebreak">Engineering standards</h2>
+
+<p>The project sets explicit code standards. Their status as of 5 August 2026:</p>
+
+<table>
+  <tr><th style="width:46%">Standard</th><th style="width:18%">Status</th><th>Detail</th></tr>
+  <tr><td>Python fully type-hinted, type checker clean</td><td class="tier1">Pass</td><td>31 source files, no errors</td></tr>
+  <tr><td>Python linting clean</td><td class="tier1">Pass</td><td>All checks passed</td></tr>
+  <tr><td>TypeScript strict mode, no <code>any</code></td><td class="tier1">Pass</td><td>Compiles with no errors</td></tr>
+  <tr><td>Frontend linting clean</td><td class="tier1">Pass</td><td>No warnings</td></tr>
+  <tr><td>Production build succeeds</td><td class="tier1">Pass</td><td>12 of 12 pages generated</td></tr>
+  <tr><td>Unit tests on analysis and verification modules</td><td class="tier1">Pass</td><td>457 tests, all passing</td></tr>
+  <tr><td>Runs against 3+ tickers including a foreign filer</td><td class="tier1">Pass</td><td>4 tested, 1 foreign</td></tr>
+  <tr><td>Errors handled, nothing crashes</td><td class="tier1">Pass</td><td>Unknown IDs render a stated message</td></tr>
+  <tr><td>No magic numbers — constants in config</td><td class="tier1">Pass</td><td>217 named constants in one file</td></tr>
+  <tr><td>Structured JSON logging, correlated by report</td><td class="tier1">Pass</td><td>Confirmed in running server output</td></tr>
+  <tr><td>Secrets from environment only, never logged</td><td class="tier1">Pass</td><td>Wrapped so an accidental log cannot leak them</td></tr>
+  <tr><td>Conventional commit messages, one change each</td><td class="tier1">Pass</td><td>Consistent across history</td></tr>
+</table>
+
+<h3>Deployment</h3>
+<table>
+  <tr><th style="width:26%">Component</th><th>Where it runs</th></tr>
+  <tr><td>Website</td><td>Vercel, deployed automatically from the main branch</td></tr>
+  <tr><td>Backend</td><td>Railway, deployed automatically from the main branch</td></tr>
+  <tr><td>Database and file storage</td><td>Supabase</td></tr>
+</table>
+<p>Both halves are live and verified responding. The backend correctly restricts which web origins
+may call it, and the deployed website is on that list.</p>
+
+<h2>What the product deliberately does not do</h2>
+
+<p>The refusals are as much a part of the design as the features, and each is a decision rather
+than a gap:</p>
+
+<table>
+  <tr><th style="width:38%">It will not…</th><th>Because</th></tr>
+  <tr><td>Give investment advice</td><td>The system reports what companies filed. It does not recommend, and the assistant redirects such questions.</td></tr>
+  <tr><td>Estimate a missing figure</td><td>An estimate presented beside sourced figures borrows their credibility without earning it.</td></tr>
+  <tr><td>Read headcount out of prose</td><td>A number parsed from a sentence is not a reported figure. Most companies never tag headcount, so it correctly shows "Not disclosed".</td></tr>
+  <tr><td>Guess which company you meant</td><td>A correct-looking report about the wrong business is the worst failure available to this product.</td></tr>
+  <tr><td>Let a web page become a financial fact</td><td>Attached links are quoted separately, marked "supplied" and "not verified", and cannot enter the financial highlights.</td></tr>
+  <tr><td>Hide that a figure failed verification</td><td>Blocking findings mark the report as failed and are shown beside the figures they concern. The reader is told, rather than shown a clean page.</td></tr>
+</table>
+
+<div class="note">
+<strong>The one sentence that summarises the whole project.</strong> Everything here is arranged so
+that the interesting claim — <em>every figure traces to a filing</em> — is true because it cannot
+be false, rather than true because everyone was careful.
+</div>
+
+<div class="footer-note">
+Document 3 of 3 · Trisheet features and requirements · All verification results stated above were
+produced by running the project's own check suite and inspecting its source on 5 August 2026.
+</div>
+</body></html>

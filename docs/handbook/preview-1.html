@@ -1,0 +1,519 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Trisheet — The Codebase, File by File</title><style>@page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Segoe UI", -apple-system, Helvetica, Arial, sans-serif;
+  font-size: 10.2pt;
+  line-height: 1.55;
+  color: #14201C;
+  background: #fff;
+  margin: 0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+h1, h2, h3, h4 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; color: #14201C; }
+
+h1 { font-size: 26pt; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 {
+  font-size: 15pt; margin: 26px 0 10px; padding-bottom: 5px;
+  border-bottom: 1.5px solid #14201C; page-break-after: avoid;
+}
+h3 { font-size: 11.6pt; margin: 18px 0 6px; page-break-after: avoid; }
+h4 { font-size: 10.4pt; margin: 14px 0 4px; page-break-after: avoid; }
+
+p { margin: 0 0 9px; }
+ul, ol { margin: 0 0 10px; padding-left: 18px; }
+li { margin-bottom: 4px; }
+
+code, .mono {
+  font-family: "Consolas", "IBM Plex Mono", monospace;
+  font-size: 9pt;
+  background: #F4F2EC;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+pre {
+  font-family: "Consolas", monospace; font-size: 8.6pt; line-height: 1.45;
+  background: #FBFAF7; border: 1px solid #E2DED4; border-left: 3px solid #1F4D3D;
+  padding: 10px 12px; overflow: visible; white-space: pre-wrap;
+  page-break-inside: avoid; margin: 0 0 12px; border-radius: 2px;
+}
+
+table { width: 100%; border-collapse: collapse; margin: 0 0 14px; font-size: 9.2pt; page-break-inside: auto; }
+th {
+  text-align: left; font-weight: 600; border-bottom: 1.5px solid #14201C;
+  padding: 6px 7px; background: #FBFAF7; font-size: 8.8pt;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+td { padding: 6px 7px; border-bottom: 1px solid #E2DED4; vertical-align: top; }
+tr { page-break-inside: avoid; }
+td.file { font-family: Consolas, monospace; font-size: 8.5pt; white-space: nowrap; color: #1F4D3D; font-weight: 600; }
+td.num { text-align: right; font-family: Consolas, monospace; font-variant-numeric: tabular-nums; color: #6B6B60; font-size: 8.5pt; }
+
+.cover { padding-top: 46mm; page-break-after: always; }
+.cover .eyebrow { font-family: Consolas, monospace; font-size: 9pt; letter-spacing: 0.16em; text-transform: uppercase; color: #1F4D3D; margin-bottom: 14px; }
+.cover .sub { font-size: 13pt; color: #4A5B54; margin: 10px 0 26px; font-family: Georgia, serif; font-style: italic; }
+.cover .meta { border-top: 1.5px solid #14201C; padding-top: 12px; font-size: 9.4pt; color: #4A5B54; }
+.cover .meta div { margin-bottom: 3px; }
+
+.lede { font-size: 11pt; color: #37463F; border-left: 3px solid #1F4D3D; padding-left: 12px; margin: 0 0 18px; }
+
+.note {
+  background: #FBFAF7; border: 1px solid #E2DED4; border-left: 3px solid #3E5C7A;
+  padding: 9px 12px; margin: 0 0 13px; font-size: 9.4pt; page-break-inside: avoid;
+}
+.note strong { color: #3E5C7A; }
+
+.rule-box {
+  background: #F7F4EC; border: 1px solid #D8D2C2; border-left: 3px solid #9E3B26;
+  padding: 9px 12px; margin: 0 0 13px; font-size: 9.4pt; page-break-inside: avoid;
+}
+.rule-box strong { color: #9E3B26; }
+
+.tier1 { color: #1F4D3D; font-weight: 600; }
+.tier3 { color: #3E5C7A; font-weight: 600; }
+.flag  { color: #9E3B26; font-weight: 600; }
+
+.toc { page-break-after: always; }
+.toc ol { padding-left: 20px; }
+.toc li { margin-bottom: 5px; font-size: 10.4pt; }
+.toc ul { margin-top: 4px; }
+.toc ul li { font-size: 9.4pt; color: #4A5B54; margin-bottom: 2px; list-style: none; }
+
+.step {
+  border: 1px solid #E2DED4; border-radius: 3px; padding: 11px 13px;
+  margin: 0 0 11px; page-break-inside: avoid; background: #FEFDFB;
+}
+.step .hd { font-family: Georgia, serif; font-weight: 600; font-size: 11pt; margin-bottom: 5px; }
+.step .tag {
+  font-family: Consolas, monospace; font-size: 8pt; background: #1F4D3D; color: #fff;
+  padding: 1.5px 6px; border-radius: 2px; margin-right: 7px; letter-spacing: 0.04em;
+}
+.step .tag.opt { background: #6B7B74; }
+.step .tag.gate { background: #9E3B26; }
+
+.pagebreak { page-break-before: always; }
+.avoid { page-break-inside: avoid; }
+.small { font-size: 9pt; color: #5A6862; }
+.footer-note { margin-top: 26px; padding-top: 10px; border-top: 1px solid #E2DED4; font-size: 8.6pt; color: #6B6B60; }
+</style></head><body><div class="cover">
+  <div class="eyebrow">Trisheet · Document 1 of 3</div>
+  <h1>The Codebase, File by File</h1>
+  <div class="sub">What every file in the project does, and why it exists</div>
+  <div class="meta">
+    <div><strong>Project</strong> — Trisheet: company profiles, sourced from filings</div>
+    <div><strong>Covers</strong> — 31 backend files, 73 frontend files, 8 database tables</div>
+    <div><strong>Stack</strong> — Next.js 15 + TypeScript (frontend), FastAPI + Python 3.11 (backend), Supabase (database)</div>
+    <div><strong>Date</strong> — 5 August 2026</div>
+  </div>
+</div>
+
+<h2>How to read this document</h2>
+
+<p class="lede">This document is a map. It lists every file in the project and explains in plain
+English what that file is responsible for. You should be able to open any file in the codebase,
+find it here, and understand what it is for without reading its code.</p>
+
+<p>The project is split into two halves that run as separate programs:</p>
+
+<ul>
+  <li><strong>The frontend</strong> — the website you see in the browser. Written in TypeScript
+  using Next.js. It draws the screens and never does any financial work of its own.</li>
+  <li><strong>The backend</strong> — the engine. Written in Python using FastAPI. It fetches
+  filings from the government, does all the maths, asks the language model for prose, checks the
+  result, and stores it.</li>
+</ul>
+
+<p>They talk to each other over HTTP. The browser never talks to the SEC or to the language
+model directly — everything goes through the backend, which is what makes the rules in this
+project enforceable.</p>
+
+<div class="note">
+<strong>One naming convention to know.</strong> The backend's main logic lives in thirteen files
+named <code>m01</code> through <code>m13</code>. The numbers are the order they run in. This is
+deliberate: you can read the pipeline top to bottom and each module only ever uses what the
+earlier ones produced. No module reaches backwards.
+</div>
+
+<h2>Repository map</h2>
+
+<pre>trisheet/
+  frontend/          the website            → deployed to Vercel
+  backend/           the engine             → deployed to Railway
+  db/schema.sql      the database structure → runs on Supabase
+  docs/              design and decision notes
+  CLAUDE.md          the project's binding rules
+  README.md          setup instructions
+  CHANGELOG.md       history of changes</pre>
+
+<h2 class="pagebreak">Part 1 — The backend</h2>
+
+<p>Thirty-one Python files, about 24,000 lines. Grouped into three layers: the application core
+(wiring), the modules (the actual work), and the services (talking to the outside world).</p>
+
+<h3>1.1 Application core</h3>
+
+<p>These files hold the app together. None of them knows anything about filings or financial
+figures — that knowledge lives in the modules.</p>
+
+<table>
+  <tr><th style="width:27%">File</th><th style="width:8%">Lines</th><th>What it does</th></tr>
+
+  <tr><td class="file">app/main.py</td><td class="num">550</td>
+  <td><strong>The front door.</strong> Defines every web address the backend answers on
+  (<code>/health</code>, <code>/resolve</code>, <code>/reports</code>, and so on). It is wiring
+  only — it contains no report logic at all. Its most important design decision: generating a
+  report takes minutes, far longer than a browser will wait, so asking for a report does not
+  wait for one. It registers the job, immediately hands back a job ID, and the work continues in
+  the background.</td></tr>
+
+  <tr><td class="file">app/pipeline.py</td><td class="num">774</td>
+  <td><strong>The conductor.</strong> Runs the thirteen modules in order, moves the report
+  through its statuses, and records what each step produced and how long it took. It holds no
+  opinion about the content. It also defines the failure policy in one place: the SEC is the only
+  thing that cannot fail; everything else is allowed to produce nothing and the report still
+  finishes.</td></tr>
+
+  <tr><td class="file">app/models.py</td><td class="num">1,290</td>
+  <td><strong>The shapes of all data.</strong> Defines every object that crosses a boundary. The
+  most important one is <code>Fact</code> — a single sourced figure. Its five provenance fields
+  have no default values, which means a fact that cannot name its source physically cannot be
+  created. That is a property of the type, not a check someone must remember to run.</td></tr>
+
+  <tr><td class="file">app/config.py</td><td class="num">2,585</td>
+  <td><strong>Every setting in one place.</strong> 217 named constants. No number or text literal
+  is allowed anywhere else in the codebase. This is where the XBRL tag fallback lists live, the
+  tier rules, the rate limits, the prompt templates and the depth profiles. Secrets are read from
+  the environment and wrapped so an accidental log line cannot leak them.</td></tr>
+
+  <tr><td class="file">app/logging_config.py</td><td class="num">121</td>
+  <td><strong>Structured logging.</strong> Every log line is a single line of JSON so hosting
+  platforms can parse it. The report ID is carried automatically, so every line written while
+  handling a report is tagged with which report it belongs to. <code>print()</code> is never used
+  anywhere in the codebase.</td></tr>
+
+  <tr><td class="file">app/cli.py</td><td class="num">525</td>
+  <td><strong>Command line tool.</strong> Lets an operator run the pipeline without the website —
+  useful for testing and debugging. This is the single place in the codebase where writing to the
+  screen is the point rather than a mistake.</td></tr>
+
+  <tr><td class="file">app/__init__.py</td><td class="num">1</td>
+  <td>Marks the folder as a Python package.</td></tr>
+</table>
+
+<h3 class="pagebreak">1.2 The thirteen modules — where the work happens</h3>
+
+<p>Each module has one job and one documented interface. Below, each is described in the order
+it runs.</p>
+
+<h4>m01_resolver.py — who is this company? <span class="small">(450 lines)</span></h4>
+<p>Turns what the user typed — a ticker like <code>AAPL</code> or a name like "Taiwan
+Semiconductor" — into a confirmed company identity: its CIK (the SEC's ID number, always padded
+to 10 digits), whether it is a US or foreign filer, its industry code, its financial year end and
+the currency it reports in.</p>
+<p>Two decisions matter here. Filer type is decided by looking at the annual form the company
+actually filed most recently, not by guessing from its address. And if the input matches more
+than one company, it returns the list of candidates and picks nothing — guessing which company
+the reader meant would produce a correct-looking report about the wrong business.</p>
+
+<h4>m02_discovery.py — which filings may we use? <span class="small">(412 lines)</span></h4>
+<p>Takes the company's entire filing history and narrows it to the documents this report is
+allowed to draw on. Three things happen so no later module has to repeat them: irrelevant forms
+(insider trades, employee share plans) are dropped; amendments take precedence over the originals
+they replace, because a restated figure is the correct one; and every filing gets a full absolute
+URL and accession number attached.</p>
+
+<h4>m03_financials.py — the numbers <span class="small">(1,118 lines)</span></h4>
+<p>Pulls reported figures out of the SEC's XBRL data — revenue, operating income, assets, cash
+flow and so on — and turns each into a <code>Fact</code> with full provenance and a record of
+which tag actually produced it.</p>
+<p>Its rules: never rely on a single XBRL tag, because companies tag the same concept
+differently; each metric has an ordered list of fallbacks. Try the US accounting taxonomy first,
+fall back to the international one for foreign filers. Remove duplicates, keeping the most
+recently filed. Prefer amendments. And a metric that cannot be found anywhere produces a
+"not disclosed" marker — never an estimate, never an interpolation.</p>
+
+<h4>m04_narrative.py — the words <span class="small">(607 lines)</span></h4>
+<p>Extracts the text sections of the annual report: the business description, the risk factors,
+and management's discussion. It does not summarise, rank or interpret. A risk is stated as the
+company headed it. This text is later shown to the language model rather than the model being
+asked to recall anything, which is what keeps the written sections sourced.</p>
+
+<h4>m05_market.py — share price and valuation <span class="small">(493 lines)</span></h4>
+<div class="rule-box">
+<strong>This is the only file in the entire project permitted to fetch market data.</strong>
+If any other file reached a market data provider, that would be a bug. This single choke point is
+the physical expression of the source-tier rule — everything this module produces is Tier 3 and is
+therefore banned from the financial highlights section by two independent later checks.
+</div>
+<p>Fetches current share price, market capitalisation and trading multiples. If the market data
+provider is down, the report still generates without the valuation table.</p>
+
+<h4>m06_factstore.py — the write gate <span class="small">(529 lines)</span></h4>
+<div class="rule-box">
+<strong>The wall.</strong> Every single fact in the system passes through this file, and this is
+where provenance is enforced in code rather than by prompting or convention.
+</div>
+<p>Two refusals happen here, and both are logged rather than silently swallowed:</p>
+<ul>
+  <li>A fact missing any provenance field — tier, source type, source URL, accession number or
+  filing date — is discarded. It is never stored blank.</li>
+  <li>A Tier 3 or Tier 4 fact offered for a financial-highlights metric is hard-blocked. Market
+  data and news cannot enter the financial statements section, by construction.</li>
+</ul>
+<p>It deliberately accepts raw untyped data rather than only well-formed objects. The reason is
+subtle and important: a <code>Fact</code> object cannot be built without provenance, so a gate
+that only accepted <code>Fact</code> objects would never reject anything and the wall would be
+somewhere else. This gate checks what actually arrived.</p>
+
+<h4>m07_analysis.py — all the arithmetic <span class="small">(3,231 lines)</span></h4>
+<div class="rule-box">
+<strong>Every calculation in the entire system happens in this one file.</strong> The language
+model never performs arithmetic. It receives what this module computed and writes prose about it.
+</div>
+<p>Computes growth rates, margins, ratios, bridges, discounted cash flow valuations, sensitivity
+tables and scenario analysis using pandas and numpy. Every function is pure — no file access, no
+global state, no side effects — which means identical input always produces byte-identical output.
+That is what makes a report reproducible. Every derived value carries the formula that produced
+it, so the interface can show its working.</p>
+
+<h4>m08_peers.py — who are the comparable companies? <span class="small">(1,562 lines)</span></h4>
+<p>Picks comparable companies using a ladder of decreasing authority, and records which rung
+answered:</p>
+<ol>
+  <li><strong>The compensation peer group in the proxy statement.</strong> A pay committee that
+  benchmarks executive salaries against a named group has stated on the record who it believes
+  its peers are. Nothing the system could infer beats that.</li>
+  <li><strong>The competition section of the annual report</strong> — the company naming its own
+  competitors, in its own words.</li>
+  <li><strong>Industry code match</strong> — the SEC's own classification.</li>
+</ol>
+
+<h4>m09_developments.py — recent events <span class="small">(462 lines)</span></h4>
+<p>Builds a dated timeline from current-report filings (8-K for US companies, 6-K for foreign
+ones), each entry sourced to the filing it came from. It filters by the filing's own item numbers
+— a material agreement, a completed acquisition, results of operations, a change of officers —
+and drops everything else.</p>
+
+<h4>m10_writer.py — the language model writes <span class="small">(393 lines)</span></h4>
+<p>Hands the model a set of already-computed facts and asks it to write the narrative around
+them. What reaches the prompt is <code>Fact</code> objects and nothing else — every one has
+already passed the provenance gate. No raw web text, no filing HTML and no market payload is ever
+put into a prompt in this module.</p>
+
+<h4>m11_factcheck.py — the verification gate <span class="small">(900 lines)</span></h4>
+<div class="rule-box">
+<strong>The audit.</strong> This module is the reason the product's claim is true rather than
+merely intended. Everything upstream is a control; this is the check on them. Violations are
+graded: blocking findings mark the report as failed verification, and each is shown beside the
+figure it concerns rather than hidden.
+</div>
+<p>It checks that every number appearing in the prose exists in the fact store — a figure matching
+nothing is a fabrication, whatever produced it. It checks that every figure is supported by a
+citation. It checks segment figures sum to the consolidated total within tolerance, and that
+assets equal liabilities plus equity.</p>
+
+<h4>m12_assembler.py — the outputs <span class="small">(3,092 lines)</span></h4>
+<p>Turns a verified report into the three forms it is consumed in: the JSON document the browser
+renders, a PDF styled as an analyst tearsheet, and an Excel workbook whose ratios are live
+formulas over the reported figures rather than pasted values. The canonical document is built
+once and all three are rendered from it, so a figure cannot appear in the PDF having failed
+verification for the screen.</p>
+
+<h4>m13_sources.py — links the reader attached <span class="small">(295 lines)</span></h4>
+<p>If the reader attaches a link — an investor relations page, a press release — this module
+reads it and quotes what it says. Crucially, it cannot produce a <code>Fact</code>. It produces a
+separate <code>SourceNote</code> type instead, because a company web page would otherwise pass the
+tier rules and be rendered in the financial highlights table beside figures traceable to filings.
+The distinction is enforced by the type, not by a reviewer's care.</p>
+
+<h3 class="pagebreak">1.3 Services — talking to the outside world</h3>
+
+<table>
+  <tr><th style="width:27%">File</th><th style="width:8%">Lines</th><th>What it does</th></tr>
+
+  <tr><td class="file">services/edgar.py</td><td class="num">425</td>
+  <td><strong>The SEC client.</strong> Every request to the government's servers goes through
+  here; nothing else in the codebase builds an SEC URL. It enforces the SEC's rules: send an
+  identifying User-Agent (they return an error without one), never exceed 10 requests per second
+  across all workers using a shared token bucket, retry rate-limit responses with backoff up to
+  three attempts, and cache filing responses permanently because filings never change.</td></tr>
+
+  <tr><td class="file">services/llm.py</td><td class="num">548</td>
+  <td><strong>The Anthropic client.</strong> The only file that talks to the language model. It
+  transports prompts and returns text and holds no opinion about content. Output is constrained
+  to a JSON schema the caller supplies, so the model answers in a shape that can be verified
+  rather than in free prose. Randomness is held low so results are near-reproducible.</td></tr>
+
+  <tr><td class="file">services/db.py</td><td class="num">109</td>
+  <td><strong>The database client.</strong> The only file that opens a database connection. It
+  uses the service-role key which bypasses row-level security — which is exactly why nothing
+  reachable from the browser may import it.</td></tr>
+
+  <tr><td class="file">services/runlog.py</td><td class="num">725</td>
+  <td><strong>The run record.</strong> Everything a running report writes about <em>itself</em> —
+  its status, its steps, timings and artifacts. Two consumers read it: the browser's live progress
+  feed, and the metrics endpoint.</td></tr>
+
+  <tr><td class="file">services/storage.py</td><td class="num">165</td>
+  <td><strong>File uploads.</strong> The only file that uploads a rendered PDF or spreadsheet.
+  Storage is treated as a sink, not a source: a report whose PDF failed to upload is a complete
+  report with a missing download link, and the interface says so. It is never a failed
+  report.</td></tr>
+
+  <tr><td class="file">services/document.py</td><td class="num">234</td>
+  <td><strong>Filing text extraction.</strong> Turns the HTML the SEC serves into readable text
+  and sentences. Two modules need this, so neither carries its own parser. It is explicitly not a
+  fact source — provenance is attached by whichever module called it.</td></tr>
+
+  <tr><td class="file">services/webfetch.py</td><td class="num">205</td>
+  <td><strong>Fetching a user-supplied page.</strong> The only module that opens a connection to
+  an address a user typed rather than to a fixed known host. Every other network client points at
+  exactly one place and never needs to defend against where it is aimed. This one is aimed
+  somewhere new on every call, so it carries its own guards.</td></tr>
+
+  <tr><td class="file">services/metrics.py</td><td class="num">187</td>
+  <td><strong>Operational statistics.</strong> Success rate, latency, citation coverage and cost,
+  counted from actual run records rather than sampled. Notably: a period with no runs reports
+  "no data" rather than "0%", because those are different statements.</td></tr>
+
+  <tr><td class="file">modules/chat_agent.py</td><td class="num">2,056</td>
+  <td><strong>The report assistant.</strong> Answers a reader's question about a finished report,
+  using only facts that already carry provenance. It works in tiers, stopping at the first that
+  has an answer: first the facts already stored for this report (matched by plain Python word
+  overlap, not by asking the model to decide), then metrics derivable from them. Questions asking
+  for investment advice are redirected rather than answered.</td></tr>
+</table>
+
+<h2 class="pagebreak">Part 2 — The frontend</h2>
+
+<p>Seventy-three TypeScript files. The website has two visual identities on purpose: the landing
+page is colourful and modern to invite a first-time visitor in; the report itself is austere and
+paper-like, because it must read as a research document rather than a dashboard.</p>
+
+<h3>2.1 Routes — the actual pages</h3>
+
+<table>
+  <tr><th style="width:34%">File</th><th style="width:8%">Lines</th><th>What it does</th></tr>
+  <tr><td class="file">app/layout.tsx</td><td class="num">52</td><td>The shell every page sits inside — fonts, colours, page metadata.</td></tr>
+  <tr><td class="file">app/page.tsx</td><td class="num">12</td><td>The home page at <code>/</code>. Renders the input screen.</td></tr>
+  <tr><td class="file">app/r/[id]/page.tsx</td><td class="num">49</td><td>The report page at <code>/r/&lt;id&gt;</code>. Loads a generated report by its ID and renders it.</td></tr>
+  <tr><td class="file">app/preview/page.tsx</td><td class="num">103</td><td>An index of the preview routes, used for interface testing.</td></tr>
+  <tr><td class="file">app/preview/input/page.tsx</td><td class="num">141</td><td>The input screen with test data.</td></tr>
+  <tr><td class="file">app/preview/progress/[script]/page.tsx</td><td class="num">67</td><td>Replays a scripted pipeline run — normal, degraded and failed — so the progress screen can be verified without a backend.</td></tr>
+  <tr><td class="file">app/preview/report/[fixture]/page.tsx</td><td class="num">31</td><td>Renders a full report from fixture data. Two fixtures: a US filer and a foreign filer.</td></tr>
+</table>
+
+<h3>2.2 Shared logic (lib)</h3>
+
+<table>
+  <tr><th style="width:34%">File</th><th style="width:8%">Lines</th><th>What it does</th></tr>
+  <tr><td class="file">lib/types.ts</td><td class="num">648</td><td>Every shared data shape, mirroring the backend's models. When one changes, both change.</td></tr>
+  <tr><td class="file">lib/api.ts</td><td class="num">226</td><td>The typed client for the backend. Transport only — no business logic, no formatting. Every call returns a success-or-failure result rather than throwing.</td></tr>
+  <tr><td class="file">lib/provenance.ts</td><td class="num">150</td><td>The join between figures and their sources. Builds the mapping that gives every figure a superscript marker pointing at a card in the provenance rail. Pure logic, nothing else.</td></tr>
+  <tr><td class="file">lib/format.ts</td><td class="num">157</td><td>Turns final values into display strings. It never scales, sums or divides — every figure arrives already computed by the backend.</td></tr>
+  <tr><td class="file">lib/constants.ts</td><td class="num">129</td><td>Every piece of text the interface shows, in one reviewable place. Nothing hardcoded to one company.</td></tr>
+  <tr><td class="file">lib/supabase.ts</td><td class="num">32</td><td>The browser's database connection — reads and live updates only. All writes go through the backend so provenance rules cannot be bypassed from the browser.</td></tr>
+  <tr><td class="file">lib/logo.ts</td><td class="num">24</td><td>Company logos by ticker. Returns nothing when unconfigured so the caller falls back gracefully — a logo is decoration, never a dependency.</td></tr>
+  <tr><td class="file">lib/utils.ts</td><td class="num">6</td><td>A small helper for combining CSS class names.</td></tr>
+  <tr><td class="file">lib/mock/*.ts</td><td class="num">2,425</td><td>Six files of fixture data used only by the preview routes. Every one carries a header stating the figures are placeholders and not sourced from filings, so a screenshot can never be mistaken for a real report.</td></tr>
+</table>
+
+<h3 class="pagebreak">2.3 Report components — the research document</h3>
+
+<table>
+  <tr><th style="width:34%">File</th><th style="width:8%">Lines</th><th>What it does</th></tr>
+  <tr><td class="file">report/report-view.tsx</td><td class="num">123</td><td>Assembles the whole report page from its sections.</td></tr>
+  <tr><td class="file">report/report-header.tsx</td><td class="num">128</td><td>The masthead. States who the filer is, which annual form they file and what currency they report in — before any figure appears, because a reader who does not know whether this is a 10-K or a 20-F cannot read the rest correctly.</td></tr>
+  <tr><td class="file">report/provenance-rail.tsx</td><td class="num">223</td><td><strong>The signature element.</strong> The persistent column of source cards beside the report. Each shows form type, accession number, filing date and a link. It is never collapsed into a footer.</td></tr>
+  <tr><td class="file">report/provenance-context.tsx</td><td class="num">103</td><td>Carries the figure-to-source mapping down the component tree so hovering a figure can highlight its source.</td></tr>
+  <tr><td class="file">report/figure.tsx</td><td class="num">155</td><td>A single figure with its citation marker. Right-aligned, monospace, tabular numerals.</td></tr>
+  <tr><td class="file">report/figure-table.tsx</td><td class="num">101</td><td>A table of figures across periods.</td></tr>
+  <tr><td class="file">report/compliance-strip.tsx</td><td class="num">288</td><td>What the verification gate found: how many facts the report rests on, how they spread across the four source tiers, and how many figures carry a citation. Every number arrives already computed; the only arithmetic here is turning a count into a bar width.</td></tr>
+  <tr><td class="file">report/report-section.tsx</td><td class="num">99</td><td>The wrapper around each numbered section.</td></tr>
+  <tr><td class="file">report/prose.tsx</td><td class="num">58</td><td>Renders written paragraphs with their inline citation markers.</td></tr>
+  <tr><td class="file">report/risk-list.tsx</td><td class="num">86</td><td>Risk factors as the filer headed them.</td></tr>
+  <tr><td class="file">report/developments-timeline.tsx</td><td class="num">114</td><td>The dated timeline of recent filings.</td></tr>
+  <tr><td class="file">report/source-notes.tsx</td><td class="num">79</td><td>Statements read from links the reader attached — rendered apart from and after every other section, headed "supplied" and marked "not verified", because they are not part of the filed record.</td></tr>
+  <tr><td class="file">report/section-sidebar.tsx</td><td class="num">89</td><td>The section navigation list.</td></tr>
+  <tr><td class="file">report/artifact-downloads.tsx</td><td class="num">100</td><td>The PDF and Excel download links.</td></tr>
+  <tr><td class="file">report/company-logo.tsx</td><td class="num">39</td><td>The company mark, with a graceful fallback.</td></tr>
+  <tr><td class="file">report/report-unavailable.tsx</td><td class="num">40</td><td>What renders when there is no report. States what happened and what to do, in the interface's voice — never a stack trace, never a blank screen.</td></tr>
+  <tr><td class="file">report/chat-panel.tsx</td><td class="num">290</td><td>The assistant panel where a reader asks questions about the report.</td></tr>
+  <tr><td class="file">report/chat-message.tsx</td><td class="num">169</td><td>One message in that conversation, with its citations.</td></tr>
+  <tr><td class="file">report/chat-composer.tsx</td><td class="num">110</td><td>The question input box.</td></tr>
+</table>
+
+<h3>2.4 Input screen components</h3>
+
+<table>
+  <tr><th style="width:34%">File</th><th style="width:8%">Lines</th><th>What it does</th></tr>
+  <tr><td class="file">input/input-screen.tsx</td><td class="num">251</td><td>The landing page layout.</td></tr>
+  <tr><td class="file">input/ticker-form.tsx</td><td class="num">299</td><td>The search form that starts a report.</td></tr>
+  <tr><td class="file">input/ticker-combobox.tsx</td><td class="num">271</td><td>The search box with live ticker suggestions as you type.</td></tr>
+  <tr><td class="file">input/disambiguation.tsx</td><td class="num">106</td><td>Shown when a search matches several companies — the reader chooses, the system never guesses.</td></tr>
+  <tr><td class="file">input/depth-selector.tsx / depth-menu.tsx</td><td class="num">390</td><td>Choosing how deep the analysis goes. Depth never changes a provenance rule — only how many periods are examined.</td></tr>
+  <tr><td class="file">input/report-preview.tsx</td><td class="num">86</td><td>A sample of a finished report, labelled "Sample report" throughout, so a first-time visitor sees the citation pattern before generating anything.</td></tr>
+  <tr><td class="file">input/trust-section.tsx</td><td class="num">57</td><td>Three claims a reader can verify. Each names the control that makes it true rather than asserting the outcome alone.</td></tr>
+  <tr><td class="file">input/monolith-canvas.tsx</td><td class="num">846</td><td>The animated hero graphic on the landing page.</td></tr>
+  <tr><td class="file">input/hero-illustration.tsx</td><td class="num">67</td><td>A decorative graphic, marked as decorative for screen readers. Carries no real figures.</td></tr>
+  <tr><td class="file">input/example-chips.tsx</td><td class="num">47</td><td>Example tickers a visitor can click to start.</td></tr>
+  <tr><td class="file">input/ai-financial-agent-*.tsx</td><td class="num">164</td><td>The section showcasing the assistant on the landing page.</td></tr>
+  <tr><td class="file">input/monolith-annotations.tsx</td><td class="num">154</td><td>Labels over the hero graphic.</td></tr>
+</table>
+
+<h3>2.5 Charts, progress, and shared parts</h3>
+
+<table>
+  <tr><th style="width:34%">File</th><th style="width:8%">Lines</th><th>What it does</th></tr>
+  <tr><td class="file">charts/revenue-margin-chart.tsx</td><td class="num">136</td><td>Revenue and margin over time.</td></tr>
+  <tr><td class="file">charts/cash-flow-chart.tsx</td><td class="num">136</td><td>Cash flow across periods.</td></tr>
+  <tr><td class="file">charts/segment-mix-chart.tsx</td><td class="num">114</td><td>Revenue split by business segment.</td></tr>
+  <tr><td class="file">charts/peer-valuation-chart.tsx</td><td class="num">129</td><td>Valuation against comparable companies.</td></tr>
+  <tr><td class="file">charts/chart-primitives.tsx</td><td class="num">206</td><td>Shared axes, gridlines and tooltips so all four charts match.</td></tr>
+  <tr><td class="file">progress/progress-screen.tsx</td><td class="num">76</td><td>The live screen shown while a report generates.</td></tr>
+  <tr><td class="file">progress/step-feed.tsx</td><td class="num">165</td><td>The list of pipeline steps updating in real time, each saying what it produced.</td></tr>
+  <tr><td class="file">chrome/site-header.tsx</td><td class="num">114</td><td>The header, in two variants so the wordmark is identical on both surfaces — dark over the landing hero, hairline-bordered over the report.</td></tr>
+  <tr><td class="file">preview/preview-notice.tsx</td><td class="num">33</td><td>The standing banner on every preview page, in the colour reserved for things needing a flag, so a screenshot can never pass as a real report.</td></tr>
+  <tr><td class="file">preview/scripted-step-feed.tsx</td><td class="num">69</td><td>Replays a recorded run for interface testing.</td></tr>
+  <tr><td class="file">ui/*.tsx</td><td class="num">419</td><td>Nine small building blocks — button, input, table, badge, alert, label, separator, skeleton, textarea. Standard components, restyled to the project's design system rather than used as shipped.</td></tr>
+</table>
+
+<h2 class="pagebreak">Part 3 — The database</h2>
+
+<p>One file, <code>db/schema.sql</code>, defines eight tables on Supabase (PostgreSQL).</p>
+
+<table>
+  <tr><th style="width:22%">Table</th><th>What it stores</th></tr>
+  <tr><td class="file">companies</td><td>Resolved company identities — CIK, ticker, filer type, industry code, currency.</td></tr>
+  <tr><td class="file">filings</td><td>The filing manifest: which documents each report may draw on.</td></tr>
+  <tr><td class="file">reports</td><td>One row per report — its status, ticker, depth and timings.</td></tr>
+  <tr><td class="file">facts</td><td>Every sourced figure. All five provenance columns are declared NOT NULL, so the database itself refuses a fact without a source. This is the same rule as the code gate, enforced a second time one layer down.</td></tr>
+  <tr><td class="file">market_cache</td><td>Cached market data, so a repeated report does not re-fetch prices.</td></tr>
+  <tr><td class="file">run_logs</td><td>Every pipeline step with its state, duration and output count. Feeds the live progress screen and the metrics endpoint.</td></tr>
+  <tr><td class="file">artifacts</td><td>Links to the generated PDF and Excel files.</td></tr>
+  <tr><td class="file">chat_messages</td><td>The conversation history for a report's assistant.</td></tr>
+</table>
+
+<h2>Part 4 — Supporting files</h2>
+
+<table>
+  <tr><th style="width:30%">File</th><th>What it does</th></tr>
+  <tr><td class="file">backend/tests/</td><td>457 automated tests. Concentrated on the two modules where correctness is non-negotiable: the arithmetic module and the verification gate.</td></tr>
+  <tr><td class="file">backend/pyproject.toml</td><td>Python project settings, type-checking and linting rules.</td></tr>
+  <tr><td class="file">backend/requirements.txt</td><td>Python dependencies, pinned to exact versions.</td></tr>
+  <tr><td class="file">backend/Dockerfile</td><td>How the backend is packaged for deployment.</td></tr>
+  <tr><td class="file">frontend/package.json</td><td>Frontend dependencies and the build, lint and typecheck commands.</td></tr>
+  <tr><td class="file">.env.example</td><td>An annotated list of every environment variable, with no real values.</td></tr>
+  <tr><td class="file">CLAUDE.md</td><td>The project's binding rules — architectural constraints, not preferences.</td></tr>
+</table>
+
+<div class="footer-note">
+Document 1 of 3 · Trisheet codebase reference · Figures for file sizes are line counts taken from
+the working tree on 5 August 2026. Descriptions are drawn from each file's own documented
+interface.
+</div>
+</body></html>
