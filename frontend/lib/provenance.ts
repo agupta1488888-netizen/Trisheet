@@ -49,8 +49,24 @@ export interface SourceCard {
   accessionNo: string;
   filedDate: string;
   periodOfReport: string | null;
-  /** The filing index when known, otherwise the fact's own source URL. */
+  /**
+   * Where the accession link goes: the filing document itself.
+   *
+   * The manifest's primary document is preferred because it lands the reader
+   * on the filing rather than on EDGAR's list of the forty files inside it —
+   * `m03_financials._source_url` makes the same choice for the same reason,
+   * and this used to discard that work by preferring `filingIndexUrl`.
+   * A fact whose accession is not in the manifest falls back to its own
+   * source URL, which is already document-level for every producer.
+   */
   url: string;
+  /**
+   * EDGAR's file list for this accession, when the manifest names it.
+   *
+   * Still worth reaching — the exhibits and the XBRL instance live there — so
+   * the rail offers it beside the document rather than in place of it.
+   */
+  indexUrl: string | null;
   /** Every fact attributed to this card, in document order. */
   factIds: readonly string[];
 }
@@ -117,7 +133,8 @@ export function buildSourceIndex(
       accessionNo: fact.accessionNo,
       filedDate: filing?.filedDate ?? fact.filedDate,
       periodOfReport: filing?.periodOfReport ?? null,
-      url: filing?.filingIndexUrl ?? fact.sourceUrl,
+      url: filing?.primaryDocUrl ?? fact.sourceUrl,
+      indexUrl: filing?.filingIndexUrl ?? null,
       factIds,
     };
 
@@ -128,6 +145,29 @@ export function buildSourceIndex(
   }
 
   return { cards, cardByFactId, factById };
+}
+
+/**
+ * Where one figure's citation should point, most precise first.
+ *
+ * The chain is: the figure's own position in the filing, then the filing
+ * document, then whatever its card resolved to. Every step lands the reader
+ * somewhere true; they differ only in how much scrolling is left. Callers use
+ * this rather than reading `anchorUrl` themselves so a fact without an anchor
+ * — market data, a pre-2019 filing — cannot produce a dead link anywhere.
+ *
+ * Returns null only for a fact the index does not know, which is the same
+ * condition under which `Figure` renders "Not disclosed".
+ */
+export function sourceUrlFor(
+  index: SourceIndex,
+  factId: string,
+): string | null {
+  const fact = index.factById.get(factId);
+  if (fact === undefined) {
+    return index.cardByFactId.get(factId)?.url ?? null;
+  }
+  return fact.anchorUrl ?? fact.sourceUrl;
 }
 
 /**
