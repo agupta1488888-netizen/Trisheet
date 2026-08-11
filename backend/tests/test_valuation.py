@@ -234,6 +234,38 @@ def test_the_forward_mode_projects_from_the_supplied_assumptions(
     assert estimate["fcfGrowthRate"]["source"] == "user_supplied"
 
 
+def test_value_per_share_is_not_rendered_at_the_millions_scale(
+    completed_report: list[Fact],
+) -> None:
+    """A share price is not a balance-sheet aggregate.
+
+    Equity value and enterprise value render in millions of the reporting
+    currency, same as the rest of the document. Value per share must not:
+    dividing a $120 estimate by the same million-scale divisor would print
+    every DCF figure as "0.00", in the estimate, the grid and every scenario
+    alike.
+    """
+    with _client() as client:
+        body = client.get(
+            f"/reports/{REPORT_ID}/valuation",
+            params={"mode": "forward", "r": 9, "g": 6, "tg": 2.5, "n": 5},
+        ).json()
+
+    def assert_rendered_as_a_share_price(figure: dict[str, Any]) -> None:
+        assert figure["display"] != "0.00"
+        assert figure["display"] == f"{figure['value']:.2f}"
+
+    assert_rendered_as_a_share_price(body["estimate"]["valuePerShare"])
+
+    for cell in body["sensitivity"]["cells"]:
+        if cell["valuePerShare"] is not None:
+            assert_rendered_as_a_share_price(cell["valuePerShare"])
+
+    for case in body["scenarios"]:
+        if case["estimate"]["valuePerShare"] is not None:
+            assert_rendered_as_a_share_price(case["estimate"]["valuePerShare"])
+
+
 def test_an_out_of_range_assumption_is_refused_rather_than_clamped_silently(
     completed_report: list[Fact],
 ) -> None:

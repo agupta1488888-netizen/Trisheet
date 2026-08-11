@@ -169,6 +169,13 @@ def _amount(value: float | None, currency: str | None) -> ValuationFigure | None
     return ValuationFigure(value=rounded, display=display, unit=unit)
 
 
+def _per_share(value: float | None, currency: str | None) -> ValuationFigure | None:
+    if value is None:
+        return None
+    rounded, display, unit = m07_analysis.render_per_share(value, currency)
+    return ValuationFigure(value=rounded, display=display, unit=unit)
+
+
 def _assumption(assumption: m07_analysis.DcfAssumption) -> AssumptionOut:
     _, display, _ = m07_analysis.render_rate(assumption.value)
     return AssumptionOut(
@@ -186,7 +193,7 @@ def _estimate(
     return DcfEstimate(
         enterprise_value=_amount(result.enterprise_value, currency),
         equity_value=_amount(result.equity_value, currency),
-        value_per_share=_amount(result.value_per_share, currency),
+        value_per_share=_per_share(result.value_per_share, currency),
         projected_free_cash_flow=tuple(
             figure
             for value in result.projected_free_cash_flow
@@ -238,7 +245,7 @@ def _grid(
             SensitivityCell(
                 discount_rate=_assumption(cell.discount_rate),
                 fcf_growth_rate=_assumption(cell.fcf_growth_rate),
-                value_per_share=_amount(cell.result.value_per_share, currency),
+                value_per_share=_per_share(cell.result.value_per_share, currency),
                 equity_value=_amount(cell.result.equity_value, currency),
             )
             for cell in result.cells

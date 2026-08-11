@@ -394,6 +394,21 @@ def render_amount(
     return _render(_Kind.CURRENCY, value, currency)
 
 
+def render_per_share(
+    value: float, currency: str | None
+) -> tuple[float, str, str | None]:
+    """A per-share amount, exempt from the millions scale `render_amount` uses.
+
+    A discounted cash flow's value per share is a single share's price, not a
+    balance-sheet aggregate — dividing it by `DISPLAY_SCALE_DIVISOR` the way
+    `render_amount` does would print every DCF estimate as "0.00". This is
+    the same `_Kind.PER_SHARE` path EPS, book value and FFO per share already
+    render through as ordinary facts; the DCF result is not a `Fact`, so it
+    needs its own way in from across the HTTP boundary.
+    """
+    return _render(_Kind.PER_SHARE, value, currency)
+
+
 def render_rate(value: float) -> tuple[float, str, str | None]:
     """A rate held as a fraction, rendered as the percentage a reader reads."""
     return _render(_Kind.PERCENT, value * PERCENT_SCALE, None)
