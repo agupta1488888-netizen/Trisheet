@@ -2435,9 +2435,12 @@ MARKET_CAP_MAX_SHARE_COUNT_AGE_DAYS = 400
 # page, no market payload reaches the prompt — only figures that have already
 # passed m06's provenance gate, rendered as a table.
 
-#: Latest and most capable. The writing task is bounded — restate supplied
-#: figures in prose — so capability here buys faithfulness, not creativity.
-LLM_MODEL = "claude-opus-5"
+#: The writing task is bounded — restate supplied figures in prose — and every
+#: guarantee that matters is enforced in Python rather than by the model: m11
+#: is not an LLM, m10 drops citations to facts it did not supply, and no
+#: arithmetic ever reaches the prompt. Frontier capability therefore buys
+#: little here, so the mid tier is chosen for cost.
+LLM_MODEL = "claude-sonnet-5"
 
 #: Ceiling on sampling temperature. The writer must restate what it is given,
 #: so variance is a defect rather than a feature. Applied with min(), so a
@@ -2475,8 +2478,12 @@ LLM_MAX_RETRIES = 2
 # Change these when the published rates change. A run priced before the change
 # keeps the figure it was given.
 
-LLM_INPUT_COST_PER_MTOK = 5.00
-LLM_OUTPUT_COST_PER_MTOK = 25.00
+#: Introductory rates, in force until 2026-08-31. They revert to 3.00 and
+#: 15.00 on 2026-09-01 — update them then. Nothing bills differently on that
+#: date because of this file; leaving it stale would simply make every report
+#: priced afterwards understate its own cost by a third.
+LLM_INPUT_COST_PER_MTOK = 2.00
+LLM_OUTPUT_COST_PER_MTOK = 10.00
 
 #: A cached read is billed at a tenth of the input rate.
 LLM_CACHE_READ_MULTIPLIER = 0.1
