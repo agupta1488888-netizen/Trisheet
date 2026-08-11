@@ -1240,6 +1240,26 @@ XBRLDI_NAMESPACE = "http://xbrl.org/2006/xbrldi"
 #: report for no benefit.
 MAX_INSTANCE_DOCUMENT_BYTES = 64 * 1024 * 1024
 
+# --- Anchoring a figure to its position in the filing -----------------------
+# A cited figure links to the exact number inside the filing rather than to the
+# top of a hundred-page document. The link is an element id, and the ids only
+# line up for inline XBRL: EDGAR extracts `aapl-20240928_htm.xml` from
+# `aapl-20240928.htm`, preserving each fact's id, so `…/aapl-20240928.htm#f-60`
+# addresses the rendered number. A pre-inline filing ships a standalone
+# instance whose ids appear in no rendered document, which is why the suffix
+# below is a requirement for anchoring and not merely a preference.
+
+#: The extracted-instance suffix that marks a filing as inline XBRL, and the
+#: rendered document's extension. `aapl-20240928_htm.xml` -> `aapl-20240928.htm`.
+XBRL_INLINE_INSTANCE_SUFFIX = "_htm.xml"
+XBRL_INLINE_DOCUMENT_SUFFIX = ".htm"
+
+#: How many filings to open for anchoring, most recently filed first. Anchors
+#: are a convenience on top of provenance that is already complete, so the
+#: work is bounded: a report citing thirty filings does not spend thirty
+#: instance downloads improving links the reader will mostly never click.
+ANCHOR_MAX_FILINGS = 8
+
 # --- Extraction confidence --------------------------------------------------
 # Confidence records how far down the fallback ladder a figure was found. It is
 # never a guess about whether the figure is right — a resolved tag is exact.
