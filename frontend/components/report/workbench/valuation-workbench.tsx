@@ -190,7 +190,7 @@ export function ValuationWorkbench({
               onClick={() =>
                 setMode(assumptions.mode === "reverse" ? "forward" : "reverse")
               }
-              className="text-sm text-certified underline-offset-4 hover:underline focus-visible:underline"
+              className="rounded-xs border border-rule px-2.5 py-1 text-sm text-certified transition-colors hover:bg-wash focus-visible:bg-wash"
             >
               {assumptions.mode === "reverse"
                 ? "Use your own assumptions"
@@ -203,7 +203,7 @@ export function ValuationWorkbench({
                 onClick={() => {
                   setAssumptions(DEFAULT_ASSUMPTIONS);
                 }}
-                className="text-sm text-muted-foreground underline-offset-4 hover:text-ink hover:underline focus-visible:text-ink focus-visible:underline"
+                className="rounded-xs border border-rule px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:bg-wash hover:text-ink focus-visible:bg-wash focus-visible:text-ink"
               >
                 Reset to defaults
               </button>
@@ -229,7 +229,7 @@ export function ValuationWorkbench({
                     setCopied(false);
                   });
               }}
-              className="text-sm text-muted-foreground underline-offset-4 hover:text-ink hover:underline focus-visible:text-ink focus-visible:underline"
+              className="rounded-xs border border-rule px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:bg-wash hover:text-ink focus-visible:bg-wash focus-visible:text-ink"
             >
               {copied ? "Link copied" : "Copy link to these assumptions"}
             </button>

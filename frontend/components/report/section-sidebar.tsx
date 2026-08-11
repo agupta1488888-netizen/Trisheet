@@ -11,11 +11,19 @@
  */
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
-import { SECTION_NAV_LABEL } from "@/lib/constants";
+import { SECTION_NAV_LABEL, WORKBENCH_NAV_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
-export function SectionSidebar({ ids }: { ids: readonly string[] }) {
+export function SectionSidebar({
+  ids,
+  valuationHref,
+}: {
+  ids: readonly string[];
+  /** The 8th entry: a real navigation, not a scroll anchor. Omitted when absent. */
+  valuationHref?: string;
+}) {
   const [activeId, setActiveId] = useState<string | null>(ids[0] ?? null);
 
   useEffect(() => {
@@ -58,7 +66,7 @@ export function SectionSidebar({ ids }: { ids: readonly string[] }) {
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-sm font-medium text-ink">Sections</h2>
         <span className="figure text-[0.68rem] text-muted-foreground">
-          {ids.length}
+          {ids.length + (valuationHref === undefined ? 0 : 1)}
         </span>
       </div>
 
@@ -83,6 +91,16 @@ export function SectionSidebar({ ids }: { ids: readonly string[] }) {
             </li>
           );
         })}
+        {valuationHref === undefined ? null : (
+          <li>
+            <Link
+              href={valuationHref}
+              className="-ml-px block border-l border-l-transparent py-1.5 pl-3 text-sm text-muted-foreground transition-colors hover:border-l-rule hover:text-ink motion-reduce:transition-none"
+            >
+              {WORKBENCH_NAV_LABEL}
+            </Link>
+          </li>
+        )}
       </ul>
     </nav>
   );

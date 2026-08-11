@@ -1,9 +1,4 @@
-import {
-  fetchReport,
-  fetchReportDocument,
-  fetchValuation,
-} from "@/lib/api";
-import { fromQuery, toQuery } from "@/lib/valuation-url";
+import { fetchReport, fetchReportDocument } from "@/lib/api";
 import { ProgressScreen } from "@/components/progress/progress-screen";
 import { ReportUnavailable } from "@/components/report/report-unavailable";
 import { ReportView } from "@/components/report/report-view";
@@ -20,19 +15,15 @@ import { ReportView } from "@/components/report/report-view";
  * round trip. The progress screen refreshes this route once its run settles,
  * which is what promotes the first outcome into the second.
  *
- * The workbench's assumptions arrive in the query string, and its first
- * response is fetched here rather than in the browser. That is what lets a
- * shared link paint with the scenario it was shared to carry, instead of
- * showing the defaults and correcting itself a moment later.
+ * The valuation workbench lives on its own route (`./valuation`), reached
+ * from the 8th nav entry, so this page never fetches valuation data.
  */
 export const dynamic = "force-dynamic";
 
 export default async function ReportPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
 
@@ -57,16 +48,5 @@ export default async function ReportPage({
     return <ReportUnavailable error={document.error} />;
   }
 
-  // A valuation is an enrichment, never a precondition. A filer whose figures
-  // do not support one still gets its whole report; the section says why.
-  const assumptions = fromQuery(await searchParams);
-  const valuation = await fetchValuation(id, toQuery(assumptions));
-
-  return (
-    <ReportView
-      document={document.data}
-      valuation={valuation.ok ? valuation.data : null}
-      assumptions={assumptions}
-    />
-  );
+  return <ReportView document={document.data} />;
 }
