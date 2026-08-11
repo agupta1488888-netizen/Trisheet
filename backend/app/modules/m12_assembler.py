@@ -434,6 +434,10 @@ _COMMON_SIZE_BALANCE_ROWS = _common_size_rows(COMMON_SIZE_BALANCE_METRICS)
 #: The trailing twelve months. Rendered as its own single column because it is
 #: not a fiscal year and must not sit in one — its window ends at the filer's
 #: most recent quarter, which is the entire reason a reader wants it.
+#: The sources appendix, named once so the contents entry, the section heading
+#: and the workbook tab cannot drift apart.
+_SOURCES_TITLE = "Sources"
+
 _TTM_ROWS: tuple[_Row, ...] = (
     _Row("ttm.income.revenue", "Revenue", FigureEmphasis.TOTAL),
     _Row("ttm.income.gross_profit", "Gross profit"),
@@ -2309,7 +2313,15 @@ def _render_contents(document: ReportDocument) -> str:
         + "</li>"
         for section in document.sections
     )
-    return f"<section class='contents'><h2>Contents</h2><ol>{items}</ol></section>"
+    # The appendix is numbered with the sections because it is one of them to a
+    # reader: it is where every figure above resolves to a filing, which is the
+    # part of this document that makes the rest checkable. Leaving it off the
+    # contents made the report look as though it ended at the risks.
+    appendix = f"<li>{_escape(_SOURCES_TITLE)}</li>" if document.facts else ""
+    return (
+        "<section class='contents'><h2>Contents</h2>"
+        f"<ol>{items}{appendix}</ol></section>"
+    )
 
 
 def _render_masthead(document: ReportDocument) -> str:
@@ -2513,7 +2525,7 @@ def _render_sources(cards: Sequence[_SourceCard]) -> str:
         for card in cards
     )
     return (
-        "<section id='sources'><h2>Sources</h2>"
+        f"<section id='sources'><h2>{_SOURCES_TITLE}</h2>"
         "<table class='sources'><thead><tr>"
         "<th>#</th><th>Tier</th><th>Form</th><th>Accession</th>"
         "<th>Filed</th><th>Document</th>"
@@ -2625,7 +2637,7 @@ _SHEET_CASHFLOW = "Cash flow"
 _SHEET_ANALYSIS = "Analysis"
 _SHEET_SEGMENTS = "Segments"
 _SHEET_ASSUMPTIONS = "Assumptions"
-_SHEET_SOURCES = "Sources"
+_SHEET_SOURCES = _SOURCES_TITLE
 
 #: Where the days-in-year assumption lives, so working-capital formulas can
 #: reference it rather than hard-coding 365.
