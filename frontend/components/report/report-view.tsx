@@ -15,16 +15,11 @@
  */
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 
-import { SECTION_NAV_LABEL } from "@/lib/constants";
+import { SECTION_NAV_LABEL, WORKBENCH_NAV_LABEL } from "@/lib/constants";
 import { buildSourceIndex } from "@/lib/provenance";
-import {
-  SECTION_ORDER,
-  type Fact,
-  type ReportDocument,
-  type ValuationAssumptions,
-  type ValuationResponse,
-} from "@/lib/types";
+import { SECTION_ORDER, type ReportDocument } from "@/lib/types";
 import { ArtifactDownloads } from "@/components/report/artifact-downloads";
 import { ChatPanel } from "@/components/report/chat-panel";
 import { ComplianceStrip } from "@/components/report/compliance-strip";
@@ -34,12 +29,16 @@ import { ReportHeader } from "@/components/report/report-header";
 import { ReportSection } from "@/components/report/report-section";
 import { SectionSidebar } from "@/components/report/section-sidebar";
 import { SourceNotes } from "@/components/report/source-notes";
-import { ValuationWorkbench } from "@/components/report/workbench/valuation-workbench";
-import { DEFAULT_ASSUMPTIONS } from "@/lib/valuation-url";
 import { SiteHeader } from "@/components/chrome/site-header";
 
 /** Mobile/tablet fallback: the sidebar takes over at `lg`, see SectionSidebar. */
-function SectionNav({ ids }: { ids: readonly string[] }) {
+function SectionNav({
+  ids,
+  valuationHref,
+}: {
+  ids: readonly string[];
+  valuationHref: string;
+}) {
   return (
     <nav aria-label="Sections" className="border-b border-rule py-3 lg:hidden">
       <ul className="flex flex-wrap gap-x-5 gap-y-1">
@@ -53,36 +52,26 @@ function SectionNav({ ids }: { ids: readonly string[] }) {
             </a>
           </li>
         ))}
+        <li>
+          <Link
+            href={valuationHref}
+            className="text-xs text-muted-foreground underline-offset-4 hover:text-ink hover:underline focus-visible:text-ink focus-visible:underline"
+          >
+            {WORKBENCH_NAV_LABEL}
+          </Link>
+        </li>
       </ul>
     </nav>
   );
 }
 
-export function ReportView({
-  document,
-  valuation = null,
-  assumptions = DEFAULT_ASSUMPTIONS,
-}: {
-  document: ReportDocument;
-  valuation?: ValuationResponse | null;
-  assumptions?: ValuationAssumptions;
-}) {
-  // The workbench rests on real facts, and they earn real cards. Held in
-  // state because a recompute can name a fact the first response did not.
-  const [valuationInputs, setValuationInputs] = useState<readonly Fact[]>(
-    valuation?.inputs ?? [],
-  );
-
+export function ReportView({ document }: { document: ReportDocument }) {
   // Safe to append: buildSourceIndex numbers markers in first-appearance order
   // and reuses a card per accession, so adding inputs can only add cards at
   // the end. It can never renumber a marker already on the page.
   const index = useMemo(
-    () =>
-      buildSourceIndex(
-        [...document.facts, ...valuationInputs],
-        document.filings,
-      ),
-    [document.facts, valuationInputs, document.filings],
+    () => buildSourceIndex(document.facts, document.filings),
+    [document.facts, document.filings],
   );
   // Lifted here rather than kept inside ChatPanel so the site header's own
   // "Ask" control opens the same panel instead of a second, disconnected one.
@@ -96,12 +85,17 @@ export function ReportView({
     document.sections.find((section) => section.id === id),
   ).filter((section) => section !== undefined);
 
+  const valuationHref = `/r/${document.report.id}/valuation`;
+
   return (
     <ProvenanceProvider index={index}>
       <SiteHeader variant="paper" backHref="/" onAskClick={toggleAssistant} />
 
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-x-10 px-5 py-10 pb-40 sm:px-8 lg:grid-cols-[9rem_minmax(0,1fr)_17rem] lg:pb-16">
-        <SectionSidebar ids={sections.map((section) => section.id)} />
+        <SectionSidebar
+          ids={sections.map((section) => section.id)}
+          valuationHref={valuationHref}
+        />
 
         <main id="report" className="min-w-0">
           <div>
@@ -120,7 +114,10 @@ export function ReportView({
             <ComplianceStrip compliance={document.compliance} />
           </div>
 
-          <SectionNav ids={sections.map((section) => section.id)} />
+          <SectionNav
+            ids={sections.map((section) => section.id)}
+            valuationHref={valuationHref}
+          />
 
           <div className="mt-10 space-y-12">
             {sections.map((section, position) => (
@@ -137,19 +134,6 @@ export function ReportView({
               to the record rather than part of it, and renders nothing when
               no link was supplied. */}
           <SourceNotes notes={document.sourceNotes} />
-
-          {/* Appended for the same reason: what follows from the filings under
-              stated assumptions is not itself a filed section. */}
-          <div className="mt-12">
-            <ValuationWorkbench
-              reportId={document.report.id}
-              initial={valuation}
-              initialAssumptions={assumptions}
-              onInputsChange={(response) => {
-                setValuationInputs(response.inputs);
-              }}
-            />
-          </div>
         </main>
 
         <ProvenanceRail index={index} />

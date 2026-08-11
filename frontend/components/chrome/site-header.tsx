@@ -15,8 +15,10 @@ import { cn } from "@/lib/utils";
 
 export interface SiteHeaderProps {
   variant: "dark" | "paper";
-  /** Report view only: a way back to search, rendered beside the wordmark. */
+  /** Report view only: a way back, rendered beside the wordmark. */
   backHref?: string;
+  /** Label for the `backHref` link. Defaults to the input screen's wording. */
+  backLabel?: string;
   /**
    * The "Ask" control. An `href` scrolls to the assistant showcase (input
    * screen, where there is no live report to chat about yet); `onAskClick`
@@ -29,6 +31,7 @@ export interface SiteHeaderProps {
 export function SiteHeader({
   variant,
   backHref,
+  backLabel = "Back to search",
   askHref,
   onAskClick,
 }: SiteHeaderProps) {
@@ -69,7 +72,7 @@ export function SiteHeader({
             href={backHref}
             className="text-sm text-certified underline underline-offset-4 hover:text-ink"
           >
-            ← Back to search
+            ← {backLabel}
           </Link>
         )}
       </div>

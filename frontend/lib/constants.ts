@@ -196,6 +196,9 @@ export const VALUATION_DEBOUNCE_MS = 200;
 /** The workbench's heading. */
 export const WORKBENCH_HEADING = "Valuation workbench";
 
+/** The section sidebar's 8th entry — a link, not a scroll anchor. */
+export const WORKBENCH_NAV_LABEL = "Valuation";
+
 /**
  * Shown under that heading, always, and never dismissible.
  *

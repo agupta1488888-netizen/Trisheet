@@ -61,7 +61,7 @@ function Download({ artifact }: { artifact: ArtifactRef }) {
     <a
       href={artifact.url}
       download
-      className="flex items-center gap-1.5 text-xs text-certified underline underline-offset-4 hover:text-ink focus-visible:text-ink"
+      className="flex items-center gap-1.5 rounded-xs border border-rule px-2.5 py-1 text-xs text-certified transition-colors hover:bg-wash hover:text-ink focus-visible:bg-wash focus-visible:text-ink"
     >
       <Icon aria-hidden="true" strokeWidth={2} className="size-3.5" />
       Download {label}
