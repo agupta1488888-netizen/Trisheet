@@ -33,6 +33,7 @@ import { AssumptionFigure } from "@/components/report/workbench/assumption-figur
 import { AssumptionInputs } from "@/components/report/workbench/assumption-inputs";
 import { ImpliedGrowth } from "@/components/report/workbench/implied-growth";
 import { ScenarioComparison } from "@/components/report/workbench/scenario-comparison";
+import { ScenarioValueChart } from "@/components/report/workbench/scenario-value-chart";
 import { SensitivityGrid } from "@/components/report/workbench/sensitivity-grid";
 
 export const WORKBENCH_SECTION_ID = "valuation-workbench";
@@ -252,10 +253,13 @@ export function ValuationWorkbench({
         ) : null}
 
         {response != null ? (
-          <ScenarioComparison
-            scenarios={response.scenarios}
-            note={WORKBENCH_ASSUMPTION_NOTE}
-          />
+          <>
+            <ScenarioComparison
+              scenarios={response.scenarios}
+              note={WORKBENCH_ASSUMPTION_NOTE}
+            />
+            <ScenarioValueChart scenarios={response.scenarios} />
+          </>
         ) : null}
 
         <p className="text-xs text-muted-foreground" aria-live="polite">

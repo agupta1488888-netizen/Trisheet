@@ -121,6 +121,83 @@ export function axisTickFormatter(value: number): string {
 }
 
 /**
+ * A value drawn inside its own bar, sized against the box Recharts hands it.
+ *
+ * A bar too small to hold its own label gets no label rather than an
+ * overlapping or clipped one — a segment worth a few pixels of a stack is
+ * still readable from its tooltip, and a crammed number nobody can read is
+ * worse than the hover a reader already knows this report uses. The estimate
+ * is a character count against IBM Plex Mono's fixed width, not a DOM
+ * measurement, so it costs no extra render pass.
+ *
+ * Paper fill with an ink halo, rather than one flat colour: most bars in this
+ * palette are dark, where paper-on-fill reads cleanly and the halo all but
+ * disappears — but a peer chart's unweighted bars are a light tint of the
+ * same hue, where the halo is what keeps the text legible. One label style
+ * that survives both without asking each chart to know its own fill's
+ * lightness.
+ */
+export function BarValueLabel({
+  x,
+  y,
+  width,
+  height,
+  value,
+  formatter,
+}: {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  value?: number | string;
+  formatter: (value: number) => string;
+}): ReactNode {
+  if (
+    x === undefined ||
+    y === undefined ||
+    width === undefined ||
+    height === undefined ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) {
+    return null;
+  }
+
+  const text = formatter(numeric);
+  const CHAR_WIDTH_PX = 6.2;
+  const LABEL_PADDING_PX = 4;
+  const LABEL_HEIGHT_PX = 13;
+  if (
+    width < text.length * CHAR_WIDTH_PX + LABEL_PADDING_PX ||
+    height < LABEL_HEIGHT_PX
+  ) {
+    return null;
+  }
+
+  return (
+    <text
+      x={x + width / 2}
+      y={y + height / 2}
+      textAnchor="middle"
+      dominantBaseline="central"
+      fill="var(--paper)"
+      stroke="var(--ink)"
+      strokeWidth={2.5}
+      strokeLinejoin="round"
+      paintOrder="stroke"
+      fontSize={11}
+      fontFamily="var(--font-plex-mono)"
+    >
+      {text}
+    </text>
+  );
+}
+
+/**
  * The frame every chart sits in: a title, the unit it is measured in, the
  * markers naming the facts it plots, and a fixed height so the page does not
  * reflow while the chart mounts.

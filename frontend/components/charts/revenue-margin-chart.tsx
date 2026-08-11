@@ -21,10 +21,11 @@ import {
   YAxis,
 } from "recharts";
 
-import { formatPercent, formatSeriesValue } from "@/lib/format";
+import { formatAxisValue, formatPercent, formatSeriesValue } from "@/lib/format";
 import type { ReportCharts } from "@/lib/types";
 import {
   AXIS_TICK,
+  BarValueLabel,
   CERTIFIED,
   CHART_MARGIN,
   ChartFrame,
@@ -106,6 +107,7 @@ export function RevenueMarginChart({ series }: { series: Series }) {
             name={KEY_LABELS.revenue}
             fill={CERTIFIED}
             maxBarSize={44}
+            label={<BarValueLabel formatter={formatAxisValue} />}
             {...NO_ANIMATION}
           />
           <Line

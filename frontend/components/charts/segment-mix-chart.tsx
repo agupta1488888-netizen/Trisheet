@@ -20,10 +20,11 @@ import {
   YAxis,
 } from "recharts";
 
-import { formatSeriesValue } from "@/lib/format";
+import { formatAxisValue, formatSeriesValue } from "@/lib/format";
 import type { ReportCharts } from "@/lib/types";
 import {
   AXIS_TICK,
+  BarValueLabel,
   CHART_MARGIN,
   ChartFrame,
   ChartLegend,
@@ -104,6 +105,7 @@ export function SegmentMixChart({ series }: { series: Series }) {
               stackId="segments"
               fill={seriesColor(i)}
               maxBarSize={56}
+              label={<BarValueLabel formatter={formatAxisValue} />}
               {...NO_ANIMATION}
             />
           ))}
