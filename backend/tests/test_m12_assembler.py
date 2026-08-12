@@ -319,6 +319,134 @@ def test_a_standard_depth_run_still_shows_only_its_five_extracted_years() -> Non
     assert index.years == tuple(years)
 
 
+# --- Segment axis selection ---------------------------------------------------
+#
+# A filer may report revenue along more than one axis in the same filing —
+# by business segment, by product, by geography — and every one of them sums
+# to the same consolidated revenue on its own. Showing more than one axis at
+# once in the same chart or table counts that revenue two or three times
+# over (the reported case: a segment mix chart plotting to roughly 3x
+# consolidated revenue because it stacked product, region and country
+# breakdowns together). Exactly one axis must ever be shown at a time.
+
+
+def _segment_fact(
+    *, axis: str, member: str, label: str, value: float, year: int = 2025
+) -> Fact:
+    return Fact(
+        metric="segment.revenue",
+        label="Segment revenue",
+        value=value,
+        display_value=f"{value:,.0f}",
+        unit="USD",
+        period_start=dt.date(year - 1, 1, 1),
+        period_end=dt.date(year, 12, 31),
+        fiscal_year=year,
+        segment_axis=axis,
+        segment_member=member,
+        segment_label=label,
+        tier=SourceTier.FILING,
+        source_type=SourceType.SEC_XBRL,
+        source_url="https://www.sec.gov/Archives/nke-x.htm",
+        accession_no="0000320187-25-000039",
+        filed_date=dt.date(year, 12, 31),
+        extraction_method=ExtractionMethod.XBRL_COMPANY_FACTS,
+        confidence=1.0,
+    )
+
+
+def test_chosen_segment_axis_prefers_business_segment_first() -> None:
+    from app.modules.m12_assembler import _chosen_segment_axis
+
+    facts = [
+        _segment_fact(
+            axis="srt:ProductOrServiceAxis", member="a", label="A", value=1.0
+        ),
+        _segment_fact(
+            axis="us-gaap:StatementBusinessSegmentsAxis",
+            member="b",
+            label="B",
+            value=2.0,
+        ),
+        _segment_fact(
+            axis="srt:StatementGeographicalAxis", member="c", label="C", value=3.0
+        ),
+    ]
+
+    assert _chosen_segment_axis(facts) == "us-gaap:StatementBusinessSegmentsAxis"
+
+
+def test_chosen_segment_axis_is_none_without_segment_facts() -> None:
+    from app.modules.m12_assembler import _chosen_segment_axis
+
+    assert _chosen_segment_axis([_annual_fact("income.revenue", 2025)]) is None
+
+
+def test_segment_mix_no_longer_sums_two_axes_at_once() -> None:
+    # Regression: this used to merge every axis's facts into one dict, so a
+    # filer reporting both a product and a geographic breakdown had its
+    # revenue counted twice (three times, with a country axis added).
+    revenue = _annual_fact("income.revenue", 2025)
+    product_a = _segment_fact(
+        axis="srt:ProductOrServiceAxis", member="a", label="Product A", value=100.0
+    )
+    product_b = _segment_fact(
+        axis="srt:ProductOrServiceAxis", member="b", label="Product B", value=150.0
+    )
+    geography_x = _segment_fact(
+        axis="srt:StatementGeographicalAxis", member="x", label="Region X", value=90.0
+    )
+    geography_y = _segment_fact(
+        axis="srt:StatementGeographicalAxis",
+        member="y",
+        label="Region Y",
+        value=160.0,
+    )
+
+    index = _build_index(
+        [revenue, product_a, product_b, geography_x, geography_y]
+    )
+
+    assert index.segment_axis == "srt:ProductOrServiceAxis"
+    assert set(index.segments) == {"Product A", "Product B"}
+    total = sum(
+        by_year[2025].value
+        for by_year in index.segments.values()
+        if 2025 in by_year and by_year[2025].value is not None
+    )
+    assert total == pytest.approx(250.0)
+
+
+def test_segment_table_caption_names_the_chosen_axis() -> None:
+    from app.modules.m12_assembler import _segment_table
+
+    revenue = _annual_fact("income.revenue", 2025)
+    product_a = _segment_fact(
+        axis="srt:ProductOrServiceAxis", member="a", label="Product A", value=100.0
+    )
+    index = _build_index([revenue, product_a])
+
+    table = _segment_table(index, [])
+
+    assert table is not None
+    assert table.caption == "Revenue by product and service"
+
+
+def test_segment_mix_series_carries_the_axis_label() -> None:
+    from app.modules.m12_assembler import _segment_mix_series
+
+    revenue = _annual_fact("income.revenue", 2025)
+    product_a = _segment_fact(
+        axis="srt:ProductOrServiceAxis", member="a", label="Product A", value=100.0
+    )
+    index = _build_index([revenue, product_a])
+
+    series = _segment_mix_series(index)
+
+    assert series is not None
+    assert series.axis_label == "product and service"
+
+
 # --- The analysis tables ------------------------------------------------------
 #
 # m07 computes considerably more than m12 once rendered: DuPont, common size,

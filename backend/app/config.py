@@ -1206,6 +1206,17 @@ GEOGRAPHIC_SEGMENT_AXES: tuple[str, ...] = (
     "us-gaap:StatementGeographicalAxis",
 )
 
+#: How each SEGMENT_AXES entry reads in a chart title. A filer that reports
+#: revenue along more than one axis has exactly one shown at a time (m12
+#: picks by SEGMENT_AXES' order), and the label says which breakdown a reader
+#: is looking at rather than leaving "segment mix" ambiguous between them.
+SEGMENT_AXIS_LABELS: dict[str, str] = {
+    "us-gaap:StatementBusinessSegmentsAxis": "business segment",
+    "srt:ProductOrServiceAxis": "product and service",
+    "srt:StatementGeographicalAxis": "geography",
+    "us-gaap:StatementGeographicalAxis": "geography",
+}
+
 #: (axis, member) pairs that qualify a segment context without subdividing it
 #: further. A context of {ConsolidationItemsAxis: OperatingSegmentsMember,
 #: StatementBusinessSegmentsAxis: AmericasSegmentMember} is the Americas

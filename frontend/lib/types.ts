@@ -456,6 +456,12 @@ export interface ReportCharts {
     /** Draw order, bottom to top. Fixed by the backend so colours are stable. */
     segments: readonly string[];
     points: readonly SegmentMixPoint[];
+    /**
+     * Which breakdown this is, e.g. "product and service". A filer may
+     * report revenue along more than one axis; exactly one is ever shown at
+     * once, and this names which — never assume "by segment".
+     */
+    axisLabel: string | null;
   } | null;
   cashFlow: {
     meta: SeriesMeta;

@@ -51,6 +51,8 @@ from app.config import (
     MAX_CHART_SEGMENTS,
     NOT_DISCLOSED_TEXT,
     RISK_CATEGORY_MARKERS,
+    SEGMENT_AXES,
+    SEGMENT_AXIS_LABELS,
     SEGMENT_METRIC,
     UNSCALED_METRIC_PREFIXES,
 )
@@ -603,10 +605,13 @@ class _Index:
     #: Latest fact per metric, for figures that have no fiscal year (market
     #: data, peers, narrative).
     latest: dict[str, Fact] = field(default_factory=dict)
-    #: Segment revenue by member label then fiscal year. Held apart because a
-    #: segment shares its metric with its siblings and cannot be addressed by
-    #: metric alone.
+    #: Segment revenue by member label then fiscal year, along the one axis
+    #: `segment_axis` names. Held apart because a segment shares its metric
+    #: with its siblings and cannot be addressed by metric alone.
     segments: dict[str, dict[int, Fact]] = field(default_factory=dict)
+    #: The axis `segments` is grouped along, e.g. "srt:ProductOrServiceAxis".
+    #: None when no fact reports along any configured axis.
+    segment_axis: str | None = None
     years: tuple[int, ...] = ()
     currency: str | None = None
 
@@ -637,7 +642,8 @@ def _build_index(facts: Sequence[Fact]) -> _Index:
         if incumbent is None or _is_later(fact, incumbent):
             index.by_metric_year[key] = fact
 
-    index.segments = _segment_series(facts)
+    index.segment_axis = _chosen_segment_axis(facts)
+    index.segments = _segment_series(facts, index.segment_axis)
     index.years = _periods(index)
     index.currency = _currency(facts)
     return index
@@ -1256,11 +1262,49 @@ def _analysis_section(
     )
 
 
-def _segment_series(facts: Sequence[Fact]) -> dict[str, dict[int, Fact]]:
-    """Segment revenue by member label and fiscal year, in disclosure order."""
+def _chosen_segment_axis(facts: Sequence[Fact]) -> str | None:
+    """The one axis a segment breakdown is shown along.
+
+    A filer may report revenue along more than one axis at once — by
+    business segment, by product, by geography — and every one of them sums
+    to the same consolidated revenue. Showing more than one at a time would
+    count that revenue two or three times over, so exactly one is chosen.
+    SEGMENT_AXES states the preference order; comparison is case-insensitive
+    because filers differ on the exact casing of a standard axis's QName.
+    """
+    present = {
+        fact.segment_axis.strip().lower()
+        for fact in facts
+        if fact.metric == SEGMENT_METRIC and fact.segment_axis
+    }
+    for axis in SEGMENT_AXES:
+        if axis.strip().lower() in present:
+            return axis
+    return None
+
+
+def _segment_series(
+    facts: Sequence[Fact], axis: str | None
+) -> dict[str, dict[int, Fact]]:
+    """Segment revenue by member label and fiscal year, along one axis only.
+
+    `axis` is `_chosen_segment_axis`'s answer — every fact reporting along a
+    different axis is left out entirely, the same way a cross-tab dimension
+    already is, so what remains is one breakdown of revenue rather than
+    several stacked on top of each other.
+    """
+    if axis is None:
+        return {}
+    normalised_axis = axis.strip().lower()
+
     grouped: dict[str, dict[int, Fact]] = {}
     for fact in facts:
         if fact.metric != SEGMENT_METRIC or fact.segment_member is None:
+            continue
+        if (
+            fact.segment_axis is None
+            or fact.segment_axis.strip().lower() != normalised_axis
+        ):
             continue
         if fact.fiscal_year is None:
             continue
@@ -1293,9 +1337,10 @@ def _segment_table(index: _Index, cited: list[str]) -> FigureTable | None:
     if not rows:
         return None
 
+    axis_label = SEGMENT_AXIS_LABELS.get(index.segment_axis or "", "segment")
     return FigureTable(
         id="analysis-segments",
-        caption="Revenue by segment",
+        caption=f"Revenue by {axis_label}",
         periods=tuple(_period_label(year) for year in index.years),
         rows=tuple(rows),
         unit_note=(
@@ -1745,6 +1790,7 @@ def _segment_mix_series(index: _Index) -> SegmentMixSeries | None:
             unit_label=f"{index.currency or 'Reporting'} millions",
             fact_ids=tuple(ids),
         ),
+        axis_label=SEGMENT_AXIS_LABELS.get(index.segment_axis or ""),
         segments=tuple(label for label, _ in ranked),
         points=tuple(points),
     )

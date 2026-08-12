@@ -16,7 +16,12 @@ import { AlertTriangle, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TIER_NAME } from "@/lib/constants";
 import { formatCount } from "@/lib/format";
-import type { CheckResult, ComplianceSummary, SourceTier } from "@/lib/types";
+import type {
+  CheckResult,
+  ComplianceSummary,
+  SourceTier,
+  Violation,
+} from "@/lib/types";
 
 const TIERS: readonly SourceTier[] = [1, 2, 3, 4];
 
@@ -111,6 +116,43 @@ function Metric({
 }
 
 /**
+ * What a reconciliation found, in the interface's own voice rather than a
+ * bare pass/fail. A blocking violation withheld the report; an advisory one
+ * did not, but both are why a check reads "Discrepancy" above, and neither
+ * belongs buried in a log a reader cannot see.
+ */
+function ViolationList({ violations }: { violations: readonly Violation[] }) {
+  if (violations.length === 0) {
+    return null;
+  }
+
+  return (
+    <ul className="mt-1 flex flex-col gap-1 pl-4">
+      {violations.map((violation, index) => (
+        <li
+          // Violations carry no id of their own; the pair is stable within
+          // one check's list, which is all a React key needs to be.
+          key={`${violation.check}-${index}`}
+          className={cn(
+            "text-[0.68rem] leading-snug",
+            violation.severity === "blocking"
+              ? "text-flag"
+              : "text-muted-foreground",
+          )}
+        >
+          {violation.message}
+          {violation.detail ? (
+            <span className="figure ml-1 text-[0.65rem]">
+              ({violation.detail})
+            </span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
  * What m11 reconciled, and against what tolerance.
  *
  * The counts above say how much was checked; these say what was checked.
@@ -132,38 +174,46 @@ function Reconciliations({ checks }: { checks: readonly CheckResult[] }) {
       <span className="text-[0.68rem] text-muted-foreground">
         Reconciliations
       </span>
-      <ul className="mt-1.5 flex flex-col gap-1">
+      <ul className="mt-1.5 flex flex-col gap-1.5">
         {checks.map((check) => (
-          <li
-            key={check.check}
-            className="flex items-center gap-1.5 text-[0.7rem]"
-          >
-            <span
-              className={cn(
-                "ref flex items-center gap-1",
-                check.examined === 0
-                  ? "text-muted-foreground"
+          <li key={check.check} className="flex flex-col gap-1 text-[0.7rem]">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={cn(
+                  "ref flex items-center gap-1",
+                  check.examined === 0
+                    ? "text-muted-foreground"
+                    : check.passed
+                      ? "text-certified"
+                      : "text-flag",
+                )}
+              >
+                {check.examined === 0 ? null : check.passed ? (
+                  <Check
+                    aria-hidden="true"
+                    strokeWidth={2}
+                    className="size-3"
+                  />
+                ) : (
+                  <AlertTriangle
+                    aria-hidden="true"
+                    strokeWidth={2}
+                    className="size-3"
+                  />
+                )}
+                {check.examined === 0
+                  ? "Not applicable"
                   : check.passed
-                    ? "text-certified"
-                    : "text-flag",
-              )}
-            >
-              {check.examined === 0 ? null : check.passed ? (
-                <Check aria-hidden="true" strokeWidth={2} className="size-3" />
-              ) : (
-                <AlertTriangle
-                  aria-hidden="true"
-                  strokeWidth={2}
-                  className="size-3"
-                />
-              )}
-              {check.examined === 0
-                ? "Not applicable"
-                : check.passed
-                  ? "Reconciled"
-                  : "Discrepancy"}
-            </span>
-            <span className="text-muted-foreground">{check.description}</span>
+                    ? "Reconciled"
+                    : "Discrepancy"}
+              </span>
+              <span className="text-muted-foreground">
+                {check.description}
+              </span>
+            </div>
+            {!check.passed ? (
+              <ViolationList violations={check.violations} />
+            ) : null}
           </li>
         ))}
       </ul>
