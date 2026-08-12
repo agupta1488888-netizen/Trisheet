@@ -2540,7 +2540,12 @@ WRITER_SECTIONS: tuple[WriterSection, ...] = (
     WriterSection(
         section_id="snapshot",
         title="Snapshot",
-        metric_sections=(1, 5),
+        # Section 1 (profile) and 5 (market/valuation) alone left this section
+        # unable to state revenue, cash conversion or balance-sheet shape —
+        # exactly what its own brief asks for — because that is section 3.
+        # Adding it is a strict superset: every other section's own
+        # metric_sections is untouched.
+        metric_sections=(1, 3, 5),
         brief=(
             "Open the report the way an equity research note opens: what the "
             "company is and what it sells, the scale and direction of revenue, "

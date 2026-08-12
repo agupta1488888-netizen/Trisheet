@@ -13,7 +13,11 @@ from typing import Any
 
 import pytest
 
-from app.config import LLM_WRITER_SELF_CHECK_MAX_RETRIES, WriterSection
+from app.config import (
+    LLM_WRITER_SELF_CHECK_MAX_RETRIES,
+    WRITER_SECTIONS,
+    WriterSection,
+)
 from app.modules import m10_writer
 from app.services import llm
 from tests.conftest import make_company, make_fact
@@ -206,3 +210,51 @@ async def test_a_year_reference_is_not_treated_as_a_fabricated_figure(
     assert len(section.sentences) == 1
     assert warnings == ()
     assert len(prompts) == 1
+
+
+# --- Snapshot: section 1 must see section 3's facts ---------------------------
+#
+# Snapshot's own brief asks for revenue scale, cash conversion and balance
+# sheet shape, but its metric_sections once left out section 3 (income,
+# balance, cashflow) entirely — so the model correctly, and unhelpfully, said
+# none of that was disclosed. Regression coverage for the fix, not the
+# self-check.
+
+
+def _snapshot_section() -> WriterSection:
+    return next(s for s in WRITER_SECTIONS if s.section_id == "snapshot")
+
+
+def test_snapshot_metric_sections_include_financial_highlights() -> None:
+    assert 3 in _snapshot_section().metric_sections
+
+
+def test_snapshot_facts_for_include_income_facts() -> None:
+    revenue = make_fact(metric="income.revenue")
+
+    available = m10_writer._facts_for(_snapshot_section(), [revenue])
+
+    assert revenue in available
+
+
+async def test_snapshot_writes_from_financial_facts_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The exact reported symptom: a fact set with no profile./market./
+    # valuation. facts at all — only what section 3 owns — used to leave
+    # Snapshot's fact table empty and the section omitted.
+    revenue = make_fact(metric="income.revenue")
+    clean_answer = _answer(
+        (f"Revenue was {revenue.display_value}.", (revenue.fact_id,)),
+    )
+    _stub_llm(monkeypatch, clean_answer)
+
+    section, warnings = await m10_writer._write_section(
+        make_company(), _snapshot_section(), [revenue]
+    )
+
+    assert section.unavailable_reason is None
+    assert [s.text for s in section.sentences] == [
+        f"Revenue was {revenue.display_value}."
+    ]
+    assert warnings == ()
