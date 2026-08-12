@@ -118,6 +118,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 import re
 import uuid
 from collections.abc import Sequence
@@ -126,7 +127,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from app.config import (
-    CHAT_FACT_MATCH_MIN_OVERLAP,
+    CHAT_FACT_MATCH_MIN_COVERAGE,
     CHAT_GENERAL_CHAT_ENABLED,
     CHAT_RATE_LIMIT_MAX_TURNS,
     CHAT_RATE_LIMIT_WINDOW_MINUTES,
@@ -302,21 +303,32 @@ def _match_facts(question: str, facts: Sequence[Fact]) -> list[Fact]:
     the simplest thing that works, because what matters is that this decision
     is legible and made in code, not that it is clever.
 
-    The overlap required scales down to the question's own length: a
-    single-word question like "revenue" can only ever overlap by 1 no matter
-    how it is asked, so demanding `CHAT_FACT_MATCH_MIN_OVERLAP` regardless
-    would make every single-metric question unmatchable by construction. A
-    longer question still needs the fuller overlap, which is what keeps a
-    stray shared word from misfiring a match.
+    The overlap required is a share of the *fact's* own vocabulary
+    (CHAT_FACT_MATCH_MIN_COVERAGE), not the question's. Sizing it off the
+    question instead once meant a compound question ("What was Apple's total
+    revenue in fiscal 2025 and what drove the growth?") needed as much
+    overlap as its longest reading regardless of how few of those words any
+    fact's short label could ever contain — "income.revenue" is two tokens,
+    so a two-word floor made it unmatchable by any question with six or more
+    words in it, which most real questions have. A short, two-token fact like
+    "Revenue" is now found by either of its own words alone; a longer, more
+    specific label still needs proportionally more of its own words present,
+    which is what keeps a single stray shared word from misfiring a match.
     """
     q_tokens = _question_tokens(question)
     if not q_tokens:
         return []
-    required = min(CHAT_FACT_MATCH_MIN_OVERLAP, len(q_tokens))
 
     scored: list[tuple[int, dt.date, Fact]] = []
     for fact in facts:
-        overlap = len(q_tokens & _fact_tokens(fact))
+        f_tokens = _fact_tokens(fact)
+        if not f_tokens:
+            continue
+        required = min(
+            len(q_tokens),
+            max(1, math.ceil(len(f_tokens) * CHAT_FACT_MATCH_MIN_COVERAGE)),
+        )
+        overlap = len(q_tokens & f_tokens)
         if overlap >= required:
             scored.append((overlap, fact.period_end, fact))
 

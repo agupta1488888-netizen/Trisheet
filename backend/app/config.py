@@ -2972,10 +2972,15 @@ CHAT_MESSAGE_MAX_CHARS = 2_000
 #: limit, which is out of scope for this pass.
 CHAT_MAX_TOOL_CALLS_PER_TURN = 4
 
-#: Token overlap between a question and a fact's metric path or label
-#: required before the cheap pre-check answers directly from the fact store,
-#: skipping the model loop entirely for the common case.
-CHAT_FACT_MATCH_MIN_OVERLAP = 2
+#: Share of a fact's own identifying tokens (its metric path plus its label)
+#: a question must overlap before the cheap pre-check offers that fact to the
+#: model. Relative to the fact's own vocabulary, not the question's: a
+#: two-token fact like "Revenue" (income, revenue) is found by any question
+#: that says either word, however many other words — "fiscal", "2025",
+#: "drove", "growth" — the question also uses. A longer, more specific label
+#: still needs proportionally more of its own words present, which is what
+#: keeps a single stray shared word from misfiring a match.
+CHAT_FACT_MATCH_MIN_COVERAGE = 0.5
 
 #: Facts described to the model in one tool result. A tool call that matches
 #: far more than this is not a targeted lookup, and the rest would only spend
