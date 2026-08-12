@@ -60,9 +60,13 @@ export function SegmentMixChart({ series }: { series: Series }) {
     [series],
   );
 
+  const title = series.axisLabel
+    ? `Segment mix — by ${series.axisLabel}`
+    : "Segment mix";
+
   return (
     <ChartFrame
-      title="Segment mix"
+      title={title}
       unitLabel={series.meta.unitLabel}
       factIds={series.meta.factIds}
       legend={

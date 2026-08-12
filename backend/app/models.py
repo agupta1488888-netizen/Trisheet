@@ -1057,6 +1057,11 @@ class SegmentMixSeries(WireModel):
     #: Draw order, bottom to top. Fixed here so colours are stable.
     segments: tuple[str, ...] = ()
     points: tuple[SegmentMixPoint, ...] = ()
+    #: Which breakdown this is, e.g. "product and service". A filer may
+    #: report revenue along more than one axis; exactly one is ever shown at
+    #: once, and this names which, so the chart title never leaves it
+    #: ambiguous between "by product" and "by geography".
+    axis_label: str | None = None
 
 
 class CashFlowSeries(WireModel):

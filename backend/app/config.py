@@ -1206,6 +1206,17 @@ GEOGRAPHIC_SEGMENT_AXES: tuple[str, ...] = (
     "us-gaap:StatementGeographicalAxis",
 )
 
+#: How each SEGMENT_AXES entry reads in a chart title. A filer that reports
+#: revenue along more than one axis has exactly one shown at a time (m12
+#: picks by SEGMENT_AXES' order), and the label says which breakdown a reader
+#: is looking at rather than leaving "segment mix" ambiguous between them.
+SEGMENT_AXIS_LABELS: dict[str, str] = {
+    "us-gaap:StatementBusinessSegmentsAxis": "business segment",
+    "srt:ProductOrServiceAxis": "product and service",
+    "srt:StatementGeographicalAxis": "geography",
+    "us-gaap:StatementGeographicalAxis": "geography",
+}
+
 #: (axis, member) pairs that qualify a segment context without subdividing it
 #: further. A context of {ConsolidationItemsAxis: OperatingSegmentsMember,
 #: StatementBusinessSegmentsAxis: AmericasSegmentMember} is the Americas
@@ -2498,6 +2509,12 @@ TOKENS_PER_MILLION = 1_000_000
 #: written separately anyway.
 LLM_MAX_FACTS_IN_PROMPT = 200
 
+#: Extra completions m10 spends on a section whose self-check found a figure
+#: the fact table does not support, before it gives up and strips the
+#: offending sentence instead. Bounded, so one stubborn section cannot turn
+#: into an unbounded loop of model calls.
+LLM_WRITER_SELF_CHECK_MAX_RETRIES = 1
+
 
 @dataclass(frozen=True, slots=True)
 class WriterSection:
@@ -2523,7 +2540,12 @@ WRITER_SECTIONS: tuple[WriterSection, ...] = (
     WriterSection(
         section_id="snapshot",
         title="Snapshot",
-        metric_sections=(1, 5),
+        # Section 1 (profile) and 5 (market/valuation) alone left this section
+        # unable to state revenue, cash conversion or balance-sheet shape —
+        # exactly what its own brief asks for — because that is section 3.
+        # Adding it is a strict superset: every other section's own
+        # metric_sections is untouched.
+        metric_sections=(1, 3, 5),
         brief=(
             "Open the report the way an equity research note opens: what the "
             "company is and what it sells, the scale and direction of revenue, "
@@ -2950,10 +2972,15 @@ CHAT_MESSAGE_MAX_CHARS = 2_000
 #: limit, which is out of scope for this pass.
 CHAT_MAX_TOOL_CALLS_PER_TURN = 4
 
-#: Token overlap between a question and a fact's metric path or label
-#: required before the cheap pre-check answers directly from the fact store,
-#: skipping the model loop entirely for the common case.
-CHAT_FACT_MATCH_MIN_OVERLAP = 2
+#: Share of a fact's own identifying tokens (its metric path plus its label)
+#: a question must overlap before the cheap pre-check offers that fact to the
+#: model. Relative to the fact's own vocabulary, not the question's: a
+#: two-token fact like "Revenue" (income, revenue) is found by any question
+#: that says either word, however many other words — "fiscal", "2025",
+#: "drove", "growth" — the question also uses. A longer, more specific label
+#: still needs proportionally more of its own words present, which is what
+#: keeps a single stray shared word from misfiring a match.
+CHAT_FACT_MATCH_MIN_COVERAGE = 0.5
 
 #: Facts described to the model in one tool result. A tool call that matches
 #: far more than this is not a targeted lookup, and the rest would only spend

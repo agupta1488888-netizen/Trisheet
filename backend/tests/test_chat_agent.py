@@ -134,6 +134,113 @@ async def test_no_matching_fact_is_not_found_without_calling_the_model(
     assert turn.claims[0].tier is None
 
 
+async def test_a_compound_question_still_matches_a_short_metric_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reported bug: a question with several words no fact's label could
+    ever contain ("fiscal", "2025", "drove", "growth") must not need as much
+    overlap as a question consisting only of the fact's own words. A
+    two-token fact like "Revenue" is found by either of its own words being
+    present, regardless of how many other words surround them."""
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _stub_llm(
+        monkeypatch,
+        {
+            "claims": [
+                {"text": "Revenue was 391,035,000,000.", "fact_id": revenue.fact_id}
+            ],
+            "not_found": False,
+        },
+    )
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID,
+        "What was Apple's total revenue in fiscal 2025 and what drove the "
+        "growth?",
+    )
+
+    assert not turn.not_found
+    assert turn.claims[0].fact_id == revenue.fact_id
+
+
+async def test_a_short_single_word_question_still_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _stub_llm(
+        monkeypatch,
+        {
+            "claims": [
+                {"text": "Revenue was 391,035,000,000.", "fact_id": revenue.fact_id}
+            ],
+            "not_found": False,
+        },
+    )
+
+    turn = await chat_agent.answer_question(REPORT_ID, "Revenue?")
+
+    assert not turn.not_found
+
+
+async def test_an_unrelated_compound_question_still_does_not_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guards the coverage rule's whole point: a longer question sharing no
+    word with a fact's label must not match it just for being long."""
+    revenue = make_fact(metric="income.revenue", label="Revenue")
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [revenue]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID,
+        "What is the capital of France and how tall is the Eiffel Tower?",
+    )
+
+    assert turn.not_found
+
+
+async def test_one_shared_word_does_not_match_a_longer_more_specific_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fact with more identifying words still needs proportionally more of
+    them present — one coincidentally shared word ("capital") must not be
+    enough on its own, which is the thing CHAT_FACT_MATCH_MIN_COVERAGE exists
+    to prevent."""
+    roic = make_fact(
+        metric="return.on_invested_capital",
+        label="Return on invested capital",
+        value=18.4,
+        display_value="18.4%",
+        unit="percent",
+    )
+
+    async def _load_facts(report_id: str) -> list[Any]:
+        return [roic]
+
+    monkeypatch.setattr(chat_agent.m06_factstore, "load_facts", _load_facts)
+    _refuse_llm(monkeypatch)
+
+    turn = await chat_agent.answer_question(
+        REPORT_ID, "What is the capital of France?"
+    )
+
+    assert turn.not_found
+
+
 async def test_model_citing_an_unsupplied_fact_id_is_dropped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

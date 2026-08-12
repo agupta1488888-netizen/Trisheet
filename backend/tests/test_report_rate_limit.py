@@ -141,11 +141,24 @@ def test_the_endpoint_refuses_past_the_limit_in_the_interface_voice(
     from app import main as main_module
     from app.config import REPORT_RATE_LIMIT_MAX_RUNS, Settings
     from app.main import create_app
+    from app.services import db
 
     async def _no_run(*args: object, **kwargs: object) -> None:
         return None
 
     monkeypatch.setattr(main_module, "run_pipeline", _no_run)
+
+    # `Settings(...)` below only reaches `create_app`'s own request handling
+    # (EDGAR config, CORS) — it is not what `runlog.create_report` checks.
+    # That goes through `db.is_configured()`, which reads `app.config`'s
+    # process-wide, lru_cache'd `get_settings()`, entirely independent of the
+    # `Settings` instance built here. Patching `db.is_configured` directly is
+    # what actually keeps this test from touching Supabase, the same pattern
+    # `test_chat_agent.py` and `test_m06_factstore.py` use. Without it, this
+    # test posts REPORT_RATE_LIMIT_MAX_RUNS real report rows every run — which
+    # is exactly how 160 orphaned NKE reports ended up stuck at "queued" in
+    # production.
+    monkeypatch.setattr(db, "is_configured", lambda: False)
 
     settings = Settings(
         environment="development",

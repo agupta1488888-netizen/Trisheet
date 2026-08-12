@@ -901,6 +901,7 @@ export const DOMESTIC_FIXTURE: ReportDocument = {
         ),
       },
       segments: [...SEGMENT_NAMES],
+      axisLabel: "product and service",
       points: PERIODS.map((period, i) => ({
         period: period.label,
         values: Object.fromEntries(
