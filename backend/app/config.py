@@ -2498,6 +2498,12 @@ TOKENS_PER_MILLION = 1_000_000
 #: written separately anyway.
 LLM_MAX_FACTS_IN_PROMPT = 200
 
+#: Extra completions m10 spends on a section whose self-check found a figure
+#: the fact table does not support, before it gives up and strips the
+#: offending sentence instead. Bounded, so one stubborn section cannot turn
+#: into an unbounded loop of model calls.
+LLM_WRITER_SELF_CHECK_MAX_RETRIES = 1
+
 
 @dataclass(frozen=True, slots=True)
 class WriterSection:

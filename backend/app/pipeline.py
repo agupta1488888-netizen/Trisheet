@@ -373,7 +373,7 @@ async def run(
             "facts": len(work.facts),
             "coverage": compliance.coverage_display if compliance else None,
             "cost_usd": round(usage.usage.cost_usd, 4),
-            "warnings": len(tracker.warnings),
+            "warnings": len(tracker.warnings) + len(work.warnings),
         },
     )
 
@@ -383,7 +383,7 @@ async def run(
         compliance=compliance,
         duration_ms=duration,
         facts=len(work.facts),
-        warnings=tuple(tracker.warnings),
+        warnings=(*tracker.warnings, *work.warnings),
     )
 
 
@@ -652,8 +652,11 @@ async def _write_and_verify(
                 0,
             )
             return
-        generated = await m10_writer.write_sections(company, work.facts)
+        generated, prose_warnings = await m10_writer.write_sections(
+            company, work.facts
+        )
         work.prose = generated
+        work.warnings.extend(prose_warnings)
         written = sum(1 for s in generated.sections if s.sentences)
         if not written:
             outcome.skip("No section could be written.", 0)
